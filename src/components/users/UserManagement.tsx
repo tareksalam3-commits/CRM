@@ -59,10 +59,37 @@ export default function UserManagement() {
       }
       toast.success('تم تحديث المستخدم بنجاح');
     } else {
+      // BUG FIX #15 (improved): supabase.auth.signUp() hijacks the current session.
+      // We save the admin's tokens first, call signUp, then restore via setSession.
+      // If restoring fails (e.g. token expired), we force a page reload so the admin
+      // is prompted to log in again rather than silently losing their session.
+      let adminTokens: { access_token: string; refresh_token: string } | null = null;
+      try {
+        const { data: { session: adminSession } } = await supabase.auth.getSession();
+        if (adminSession) {
+          adminTokens = {
+            access_token: adminSession.access_token,
+            refresh_token: adminSession.refresh_token,
+          };
+        }
+      } catch { /* ignore */ }
+
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: formData.email,
         password: formData.password,
+        options: { emailRedirectTo: undefined },
       });
+
+      // Always restore the admin session immediately
+      if (adminTokens) {
+        try {
+          await supabase.auth.setSession(adminTokens);
+        } catch {
+          // If restore fails, reload to force re-login rather than leaving a broken state
+          window.location.reload();
+          return;
+        }
+      }
 
       if (authError || !authData.user) {
         toast.error(authError?.message || 'خطأ في إنشاء المستخدم');
@@ -73,13 +100,13 @@ export default function UserManagement() {
         id: authData.user.id,
         email: formData.email,
         full_name: formData.full_name,
-        phone: formData.phone,
+        phone: formData.phone || null,
         role: formData.role,
         manager_id: formData.manager_id || null,
       });
 
       if (profileError) {
-        toast.error('خطأ في إنشاء الملف الشخصي');
+        toast.error('خطأ في إنشاء الملف الشخصي: ' + profileError.message);
         return;
       }
       toast.success('تم إنشاء المستخدم بنجاح');
@@ -135,6 +162,18 @@ export default function UserManagement() {
   );
 
   if (loading) return <LoadingSpinner />;
+
+  // BUG FIX: Agents should not be able to reach this page at all
+  const canManageUsers = profile && ['super_admin', 'sales_manager', 'general_supervisor', 'supervisor', 'group_leader'].includes(profile.role);
+  if (!canManageUsers) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-slate-400">
+        <Users className="w-12 h-12 mb-3 opacity-30" />
+        <p className="text-lg font-medium">غير مصرح بالوصول</p>
+        <p className="text-sm mt-1">هذه الصفحة للمديرين فقط</p>
+      </div>
+    );
+  }
 
   return (
     <div>

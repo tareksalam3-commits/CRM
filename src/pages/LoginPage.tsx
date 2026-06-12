@@ -1,13 +1,13 @@
+// BUG FIX #5: Removed public self-registration form.
+// The system uses admin-created accounts only (manager creates via UserManagement).
 import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { Shield, Mail, Lock, Eye, EyeOff, UserPlus } from 'lucide-react';
+import { Shield, Mail, Lock, Eye, EyeOff } from 'lucide-react';
 
 export default function LoginPage() {
-  const { signIn, signUp } = useAuth();
-  const [isRegister, setIsRegister] = useState(false);
+  const { signIn } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [fullName, setFullName] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -16,18 +16,18 @@ export default function LoginPage() {
     e.preventDefault();
     setError('');
     setLoading(true);
-
-    if (isRegister) {
-      if (!fullName.trim()) {
-        setError('يرجى إدخال الاسم الكامل');
-        setLoading(false);
-        return;
+    const { error } = await signIn(email, password);
+    if (error) {
+      // Friendly Arabic error messages
+      if (error.includes('Invalid login credentials')) {
+        setError('البريد الإلكتروني أو كلمة المرور غير صحيحة');
+      } else if (error.includes('Email not confirmed')) {
+        setError('يرجى تأكيد البريد الإلكتروني أولاً');
+      } else if (error.includes('Too many requests')) {
+        setError('محاولات كثيرة، يرجى الانتظار قليلاً');
+      } else {
+        setError(error);
       }
-      const { error } = await signUp(email, password, fullName);
-      if (error) setError(error);
-    } else {
-      const { error } = await signIn(email, password);
-      if (error) setError(error);
     }
     setLoading(false);
   }
@@ -45,26 +45,10 @@ export default function LoginPage() {
 
         <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl shadow-slate-200/50 dark:shadow-slate-900/50 p-8 border border-slate-100 dark:border-slate-700">
           <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-6 text-center">
-            {isRegister ? 'إنشاء حساب جديد' : 'تسجيل الدخول'}
+            تسجيل الدخول
           </h2>
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            {isRegister && (
-              <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">الاسم الكامل</label>
-                <div className="relative">
-                  <UserPlus className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                  <input
-                    type="text"
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    className="w-full pr-10 pl-4 py-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                    placeholder="أدخل اسمك الكامل"
-                  />
-                </div>
-              </div>
-            )}
-
             <div>
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">البريد الإلكتروني</label>
               <div className="relative">
@@ -77,6 +61,7 @@ export default function LoginPage() {
                   placeholder="admin@example.com"
                   required
                   dir="ltr"
+                  autoComplete="email"
                 />
               </div>
             </div>
@@ -93,6 +78,7 @@ export default function LoginPage() {
                   placeholder="••••••••"
                   required
                   dir="ltr"
+                  autoComplete="current-password"
                 />
                 <button
                   type="button"
@@ -115,18 +101,13 @@ export default function LoginPage() {
               disabled={loading}
               className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium rounded-xl shadow-lg shadow-blue-600/30 hover:shadow-blue-600/40 transition-all duration-200 transform hover:scale-[1.02] active:scale-[0.98]"
             >
-              {loading ? 'جاري التحميل...' : isRegister ? 'إنشاء حساب' : 'تسجيل الدخول'}
+              {loading ? 'جاري التحميل...' : 'تسجيل الدخول'}
             </button>
           </form>
 
-          <div className="mt-6 text-center">
-            <button
-              onClick={() => { setIsRegister(!isRegister); setError(''); }}
-              className="text-blue-600 dark:text-blue-400 hover:underline text-sm font-medium"
-            >
-              {isRegister ? 'لديك حساب؟ تسجيل الدخول' : 'ليس لديك حساب؟ إنشاء حساب جديد'}
-            </button>
-          </div>
+          <p className="mt-6 text-center text-xs text-slate-400 dark:text-slate-500">
+            للحصول على حساب، تواصل مع مدير النظام
+          </p>
         </div>
       </div>
     </div>

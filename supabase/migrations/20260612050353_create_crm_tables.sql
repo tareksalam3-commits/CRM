@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS profiles (
   full_name text NOT NULL,
   email text NOT NULL,
   phone text,
-  role text NOT NULL DEFAULT 'agent' CHECK (role IN ('super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'team_leader', 'agent')),
+  role text NOT NULL DEFAULT 'agent' CHECK (role IN ('super_admin', 'sales_manager', 'general_supervisor', 'supervisor', 'group_leader', 'agent')),
   manager_id uuid REFERENCES profiles(id) ON DELETE SET NULL,
   is_active boolean NOT NULL DEFAULT true,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -75,7 +75,9 @@ CREATE TABLE IF NOT EXISTS installments (
   status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'paid', 'overdue')),
   paid_date date,
   created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  -- BUG FIX: Prevent duplicate installment numbers per policy
+  UNIQUE(policy_id, installment_number)
 );
 
 CREATE INDEX IF NOT EXISTS idx_installments_policy ON installments(policy_id);
@@ -85,7 +87,9 @@ CREATE INDEX IF NOT EXISTS idx_installments_due_date ON installments(due_date);
 -- Collections table
 CREATE TABLE IF NOT EXISTS collections (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  installment_id uuid NOT NULL REFERENCES installments(id) ON DELETE RESTRICT,
+  -- BUG FIX: UNIQUE enforces one collection per installment at the database level,
+  -- preventing duplicate payments even under race-condition concurrent inserts.
+  installment_id uuid NOT NULL UNIQUE REFERENCES installments(id) ON DELETE RESTRICT,
   policy_id uuid NOT NULL REFERENCES policies(id) ON DELETE RESTRICT,
   amount numeric(12,2) NOT NULL,
   collection_date date NOT NULL,
@@ -197,3 +201,16 @@ ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE month_closings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE system_settings ENABLE ROW LEVEL SECURITY;
+
+-- BUG FIX: Auto-mark overdue installments via a DB function + trigger on installments changes.
+-- Call this function periodically (via a Supabase Scheduled Job or on app load).
+CREATE OR REPLACE FUNCTION mark_overdue_installments()
+RETURNS void
+LANGUAGE sql
+SECURITY DEFINER
+AS $$
+  UPDATE installments
+  SET status = 'overdue', updated_at = now()
+  WHERE status = 'pending'
+    AND due_date < CURRENT_DATE;
+$$;

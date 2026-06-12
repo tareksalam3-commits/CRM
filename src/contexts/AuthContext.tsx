@@ -9,7 +9,6 @@ interface AuthContextType {
   profile: Profile | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
-  signUp: (email: string, password: string, fullName: string, role?: string) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
 }
 
@@ -28,6 +27,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (currentSession?.user) {
         fetchProfile(currentSession.user.id);
       } else {
+        // BUG FIX #14: Always set loading false even when no session
         setLoading(false);
       }
     }).catch(() => {
@@ -38,9 +38,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(newSession);
       setUser(newSession?.user ?? null);
       if (newSession?.user) {
-        (async () => {
-          await fetchProfile(newSession.user.id);
-        })();
+        fetchProfile(newSession.user.id);
       } else {
         setProfile(null);
         setLoading(false);
@@ -52,20 +50,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function fetchProfile(userId: string) {
     try {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', userId)
         .maybeSingle();
 
-      if (data) {
+      // BUG FIX #14: Handle both success and "not found" correctly
+      if (error) {
+        console.error('Error fetching profile:', error);
+      } else if (data) {
         setProfile(data);
       }
+      // If data is null (no profile row yet), profile stays null — don't crash
     } catch (err) {
-      console.error('Error fetching profile:', err);
+      console.error('Unexpected error fetching profile:', err);
     } finally {
+      // BUG FIX #14: Always release loading, no matter what happened
       setLoading(false);
     }
+
+    // BUG FIX: auto-update overdue installments on every login/session restore
+    try {
+      await supabase.rpc('mark_overdue_installments');
+    } catch { /* non-critical, ignore */ }
   }
 
   async function signIn(email: string, password: string) {
@@ -73,22 +81,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { error: error?.message ?? null };
   }
 
-  async function signUp(email: string, password: string, fullName: string, role = 'agent') {
-    const { data, error } = await supabase.auth.signUp({ email, password });
-    if (error) return { error: error.message };
-
-    if (data.user) {
-      const { error: profileError } = await supabase.from('profiles').insert({
-        id: data.user.id,
-        email,
-        full_name: fullName,
-        role,
-      });
-      if (profileError) return { error: profileError.message };
-    }
-
-    return { error: null };
-  }
+  // BUG FIX #3 & #5: Removed signUp from AuthContext entirely.
+  // User creation is done via Supabase Admin API (or invite flow) in UserManagement,
+  // not through the public auth.signUp which would log out the current admin session.
+  // The public LoginPage no longer shows a registration form.
 
   async function signOut() {
     await supabase.auth.signOut();
@@ -96,7 +92,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ session, user, profile, loading, signIn, signUp, signOut }}>
+    <AuthContext.Provider value={{ session, user, profile, loading, signIn, signOut }}>
       {children}
     </AuthContext.Provider>
   );

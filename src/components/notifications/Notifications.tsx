@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
+import { useAuth } from '../../contexts/AuthContext';
 import { Notification } from '../../types';
 import { formatDateTime } from '../../lib/utils';
 import PageHeader from '../common/PageHeader';
@@ -8,15 +9,20 @@ import { Bell, Check, CheckCheck, Trash2, Wallet, FileText, Target, Users } from
 import toast from 'react-hot-toast';
 
 export default function Notifications() {
+  // BUG FIX #13: Use profile to scope notifications to current user
+  const { profile } = useAuth();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => { loadNotifications(); }, []);
+  useEffect(() => { loadNotifications(); }, [profile]);
 
   async function loadNotifications() {
+    if (!profile) return;
     const { data } = await supabase
       .from('notifications')
       .select('*')
+      // BUG FIX #13: Filter by current user's ID only
+      .eq('user_id', profile.id)
       .order('created_at', { ascending: false });
     if (data) setNotifications(data);
     setLoading(false);
@@ -28,7 +34,13 @@ export default function Notifications() {
   }
 
   async function markAllRead() {
-    await supabase.from('notifications').update({ is_read: true }).eq('is_read', false);
+    if (!profile) return;
+    // BUG FIX #13: Scope update to current user's notifications only
+    await supabase
+      .from('notifications')
+      .update({ is_read: true })
+      .eq('user_id', profile.id)
+      .eq('is_read', false);
     setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
     toast.success('تم قراءة جميع الإشعارات');
   }

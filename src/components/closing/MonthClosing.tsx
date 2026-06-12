@@ -68,6 +68,14 @@ export default function MonthClosing() {
 
   async function closeMonth() {
     if (!profile) return;
+    // BUG FIX #12: Prevent closing future months
+    const now = new Date();
+    const isCurrentOrPast = (selectedYear < now.getFullYear()) ||
+      (selectedYear === now.getFullYear() && selectedMonth <= now.getMonth() + 1);
+    if (!isCurrentOrPast) {
+      toast.error('لا يمكن تقفيل شهر مستقبلي');
+      return;
+    }
     if (!confirm(`هل أنت متأكد من تقفيل شهر ${getMonthName(selectedMonth)} ${selectedYear}؟`)) return;
 
     const { error } = await supabase.from('month_closings').insert({
@@ -83,7 +91,7 @@ export default function MonthClosing() {
     loadData();
   }
 
-  const canClose = profile?.role === 'super_admin' || profile?.role === 'dev_manager';
+  const canClose = profile?.role === 'super_admin' || profile?.role === 'sales_manager';
 
   if (loading) return <LoadingSpinner />;
 

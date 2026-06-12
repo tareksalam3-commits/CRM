@@ -1,4 +1,6 @@
-export type UserRole = 'super_admin' | 'dev_manager' | 'general_supervisor' | 'supervisor' | 'team_leader' | 'agent';
+// BUG FIX #2 & #11: Renamed 'dev_manager' -> 'sales_manager' and 'team_leader' -> 'group_leader'
+// to match the actual insurance business hierarchy and previous sessions' agreed names.
+export type UserRole = 'super_admin' | 'sales_manager' | 'general_supervisor' | 'supervisor' | 'group_leader' | 'agent';
 
 export type PolicyStatus = 'under_issuance' | 'active' | 'suspended' | 'cancelled' | 'rejected';
 
@@ -162,19 +164,19 @@ export interface SystemSetting {
 
 export const ROLE_LABELS: Record<UserRole, string> = {
   super_admin: 'مدير النظام',
-  dev_manager: 'مدير تطوير',
+  sales_manager: 'مدير المبيعات',
   general_supervisor: 'مراقب عام',
   supervisor: 'مراقب',
-  team_leader: 'رئيس مجموعة',
+  group_leader: 'رئيس مجموعة',
   agent: 'مندوب',
 };
 
 export const ROLE_LEVELS: Record<UserRole, number> = {
   super_admin: 0,
-  dev_manager: 1,
+  sales_manager: 1,
   general_supervisor: 2,
   supervisor: 3,
-  team_leader: 4,
+  group_leader: 4,
   agent: 5,
 };
 

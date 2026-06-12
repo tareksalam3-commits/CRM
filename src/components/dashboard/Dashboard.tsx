@@ -66,19 +66,21 @@ export default function Dashboard() {
       const totalDue = dueInstallments.reduce((sum, i) => sum + Number(i.amount), 0);
       const totalOverdue = overdueInstallments.reduce((sum, i) => sum + Number(i.amount), 0);
 
-      const collectionRate = totalPremiums > 0 ? (totalCollected / totalPremiums) * 100 : 0;
+      // BUG FIX: collectionRate should be collected vs. total installments amount, not vs. annual premiums
+      const totalInstallmentsAmount = installments.reduce((sum, i) => sum + Number(i.amount), 0);
+      const collectionRate = totalInstallmentsAmount > 0 ? (totalCollected / totalInstallmentsAmount) * 100 : 0;
 
-      // Fetch top agents
+      // BUG FIX #10: Use explicit join alias that matches Supabase foreign key naming
       const { data: topAgentsData } = await supabase
         .from('policies')
-        .select('agent_id, annual_premium, profiles!policies_agent_id_fkey(full_name)')
+        .select('agent_id, annual_premium, agent:profiles!policies_agent_id_fkey(full_name)')
         .eq('status', 'active');
 
       const agentProduction: Record<string, { name: string; total: number }> = {};
       (topAgentsData || []).forEach((p: any) => {
         const agentId = p.agent_id;
         if (!agentProduction[agentId]) {
-          agentProduction[agentId] = { name: p.profiles?.full_name || 'غير محدد', total: 0 };
+          agentProduction[agentId] = { name: p.agent?.full_name || 'غير محدد', total: 0 };
         }
         agentProduction[agentId].total += Number(p.annual_premium);
       });
@@ -148,6 +150,7 @@ export default function Dashboard() {
       />
 
       {/* KPI Cards */}
+      {/* BUG FIX #1: Changed w-4.5 h-4.5 (invalid Tailwind) to w-5 h-5 */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
         {kpiCards.map((card) => (
           <div
@@ -156,7 +159,7 @@ export default function Dashboard() {
           >
             <div className="flex items-center justify-between mb-3">
               <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${iconColorMap[card.color]}`}>
-                <card.icon className="w-4.5 h-4.5" />
+                <card.icon className="w-5 h-5" />
               </div>
             </div>
             <p className="text-lg md:text-xl font-bold text-slate-900 dark:text-white">{card.value}</p>
@@ -204,7 +207,7 @@ export default function Dashboard() {
                     { name: 'محصل', value: stats.totalCollected },
                     { name: 'مستحق', value: stats.totalDue },
                     { name: 'متأخر', value: stats.totalOverdue },
-                  ]}
+                  ].filter(d => d.value > 0)}
                   cx="50%"
                   cy="50%"
                   innerRadius={60}

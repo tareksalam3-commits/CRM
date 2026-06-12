@@ -11,7 +11,7 @@ import {
 
 const navItems = [
   { path: '/', label: 'لوحة التحكم', icon: LayoutDashboard },
-  { path: '/users', label: 'المستخدمين', icon: Users, roles: ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'team_leader'] },
+  { path: '/users', label: 'المستخدمين', icon: Users, roles: ['super_admin', 'sales_manager', 'general_supervisor', 'supervisor', 'group_leader'] },
   { path: '/clients', label: 'العملاء', icon: UserCircle },
   { path: '/policies', label: 'الوثائق', icon: FileText },
   { path: '/collections', label: 'التحصيل', icon: Wallet },
@@ -20,7 +20,7 @@ const navItems = [
   { path: '/notifications', label: 'الإشعارات', icon: Bell },
   { path: '/closing', label: 'تقفيل الشهر', icon: Calendar },
   { path: '/reports', label: 'التقارير', icon: BarChart3 },
-  { path: '/audit', label: 'سجل العمليات', icon: ClipboardList, roles: ['super_admin', 'dev_manager'] },
+  { path: '/audit', label: 'سجل العمليات', icon: ClipboardList, roles: ['super_admin', 'sales_manager'] },
   { path: '/settings', label: 'الإعدادات', icon: Settings, roles: ['super_admin'] },
 ];
 

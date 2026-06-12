@@ -16,6 +16,7 @@ export default function CollectionManagement() {
   const [showForm, setShowForm] = useState(false);
   const [selectedInstallment, setSelectedInstallment] = useState<Installment | null>(null);
   const [filter, setFilter] = useState<'all' | 'pending' | 'overdue' | 'paid'>('all');
+  const [submitting, setSubmitting] = useState(false);
 
   const [formData, setFormData] = useState({
     amount: '', collection_date: new Date().toISOString().split('T')[0], receipt_number: '', notes: '',
@@ -36,6 +37,20 @@ export default function CollectionManagement() {
   async function handleCollect(e: React.FormEvent) {
     e.preventDefault();
     if (!selectedInstallment || !profile) return;
+    setSubmitting(true);
+
+    // BUG FIX #6: Check if this installment already has a collection record
+    const { data: existing } = await supabase
+      .from('collections')
+      .select('id')
+      .eq('installment_id', selectedInstallment.id)
+      .maybeSingle();
+
+    if (existing) {
+      toast.error('هذا القسط تم تحصيله مسبقاً');
+      setSubmitting(false);
+      return;
+    }
 
     const { error } = await supabase.from('collections').insert({
       installment_id: selectedInstallment.id,
@@ -47,20 +62,28 @@ export default function CollectionManagement() {
       notes: formData.notes || null,
     });
 
-    if (error) { toast.error('خطأ في تسجيل التحصيل'); return; }
+    if (error) { toast.error('خطأ في تسجيل التحصيل: ' + error.message); setSubmitting(false); return; }
 
-    await supabase.from('installments').update({ status: 'paid', paid_date: formData.collection_date, updated_at: new Date().toISOString() }).eq('id', selectedInstallment.id);
+    const { error: updateError } = await supabase
+      .from('installments')
+      .update({ status: 'paid', paid_date: formData.collection_date, updated_at: new Date().toISOString() })
+      .eq('id', selectedInstallment.id);
+
+    if (updateError) {
+      console.error('Failed to update installment status:', updateError);
+    }
 
     toast.success('تم تسجيل التحصيل بنجاح');
     setShowForm(false);
     setSelectedInstallment(null);
     setFormData({ amount: '', collection_date: new Date().toISOString().split('T')[0], receipt_number: '', notes: '' });
+    setSubmitting(false);
     loadData();
   }
 
   function openCollectForm(inst: Installment) {
     setSelectedInstallment(inst);
-    setFormData({ ...formData, amount: String(inst.amount) });
+    setFormData({ amount: String(inst.amount), collection_date: new Date().toISOString().split('T')[0], receipt_number: '', notes: '' });
     setShowForm(true);
   }
 
@@ -73,7 +96,9 @@ export default function CollectionManagement() {
 
   const statusIcons: Record<string, typeof CheckCircle> = { paid: CheckCircle, pending: Clock, overdue: AlertTriangle };
   const statusColors: Record<string, string> = {
-    paid: 'text-emerald-600 dark:text-emerald-400', pending: 'text-amber-600 dark:text-amber-400', overdue: 'text-red-600 dark:text-red-400',
+    paid: 'text-emerald-600 dark:text-emerald-400',
+    pending: 'text-amber-600 dark:text-amber-400',
+    overdue: 'text-red-600 dark:text-red-400',
   };
 
   if (loading) return <LoadingSpinner />;
@@ -128,7 +153,7 @@ export default function CollectionManagement() {
             <div key={inst.id} className="bg-white dark:bg-slate-800 rounded-xl p-4 border border-slate-100 dark:border-slate-700">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
-                  <Icon className={`w-5 h-5 ${statusColors[inst.status]}`} />
+                  <Icon className={`w-5 h-5 flex-shrink-0 ${statusColors[inst.status]}`} />
                   <div>
                     <p className="font-medium text-slate-900 dark:text-white">
                       {(inst.policy as any)?.policy_number} - القسط {inst.installment_number}
@@ -137,6 +162,7 @@ export default function CollectionManagement() {
                       <span>{(inst.policy as any)?.client?.name}</span>
                       <span>|</span>
                       <span>استحقاق: {formatDate(inst.due_date)}</span>
+                      {inst.paid_date && <span>| تحصيل: {formatDate(inst.paid_date)}</span>}
                     </div>
                   </div>
                 </div>
@@ -162,14 +188,22 @@ export default function CollectionManagement() {
       {showForm && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-md p-6">
-            <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-bold text-slate-900 dark:text-white">تسجيل تحصيل</h3>
-              <button onClick={() => { setShowForm(false); setSelectedInstallment(null); }} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg"><X className="w-5 h-5 text-slate-500" /></button>
+              <button onClick={() => { setShowForm(false); setSelectedInstallment(null); }} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg">
+                <X className="w-5 h-5 text-slate-500" />
+              </button>
             </div>
+            {selectedInstallment && (
+              <div className="mb-4 p-3 bg-slate-50 dark:bg-slate-700 rounded-xl text-sm text-slate-600 dark:text-slate-300">
+                <strong>{(selectedInstallment as any).policy?.policy_number}</strong> — القسط {selectedInstallment.installment_number}
+                <span className="mr-2 text-slate-500">({formatCurrency(selectedInstallment.amount)})</span>
+              </div>
+            )}
             <form onSubmit={handleCollect} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">المبلغ</label>
-                <input type="number" value={formData.amount} onChange={(e) => setFormData({ ...formData, amount: e.target.value })} required className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500" />
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">المبلغ المحصل</label>
+                <input type="number" value={formData.amount} onChange={(e) => setFormData({ ...formData, amount: e.target.value })} required min="0" step="0.01" className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500" />
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">تاريخ التحصيل</label>
@@ -184,7 +218,9 @@ export default function CollectionManagement() {
                 <textarea value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} rows={2} className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 resize-none" />
               </div>
               <div className="flex gap-3">
-                <button type="submit" className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-medium">تأكيد التحصيل</button>
+                <button type="submit" disabled={submitting} className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl font-medium">
+                  {submitting ? 'جاري الحفظ...' : 'تأكيد التحصيل'}
+                </button>
                 <button type="button" onClick={() => { setShowForm(false); setSelectedInstallment(null); }} className="flex-1 py-2.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl font-medium">إلغاء</button>
               </div>
             </form>
