@@ -1,0 +1,17 @@
+{
+  "name": "Insurance CRM Pro",
+  "short_name": "CRM Pro",
+  "description": "نظام إدارة الإنتاج والتحصيل لتأمينات الحياة",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#2563eb",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/vite.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
