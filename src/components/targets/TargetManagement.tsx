@@ -29,7 +29,7 @@ function getPeriodDateRange(periodType: TargetPeriod, year: number, periodNumber
   return { start: `${year}-01-01`, end: `${year + 1}-01-01` };
 }
 
-interface EnrichedTarget extends Omit<TargetType, 'user'> {
+interface EnrichedTarget extends TargetType {
   user?: Pick<Profile, 'full_name' | 'role'>;
   achieved?: number;
 }
