@@ -91,7 +91,7 @@ export default function MonthClosing() {
     loadData();
   }
 
-  const canClose = profile?.role === 'super_admin' || profile?.role === 'sales_manager';
+  const canClose = profile?.role === 'super_admin' || profile?.role === 'dev_manager';
 
   if (loading) return <LoadingSpinner />;
 
