@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS profiles (
   full_name text NOT NULL,
   email text NOT NULL,
   phone text,
-  role text NOT NULL DEFAULT 'agent' CHECK (role IN ('super_admin', 'sales_manager', 'general_supervisor', 'supervisor', 'group_leader', 'agent')),
+  role text NOT NULL DEFAULT 'agent' CHECK (role IN ('super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'team_leader', 'agent')),
   manager_id uuid REFERENCES profiles(id) ON DELETE SET NULL,
   is_active boolean NOT NULL DEFAULT true,
   created_at timestamptz NOT NULL DEFAULT now(),

@@ -2,25 +2,33 @@ import { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
-import { ROLE_LABELS } from '../../types';
+import { ROLE_LABELS, UserRole } from '../../types';
 import {
   LayoutDashboard, Users, UserCircle, FileText, Wallet, Target,
   CheckSquare, Bell, Calendar, BarChart3, ClipboardList, Settings,
-  Moon, Sun, LogOut, Menu, X, Shield, ChevronLeft
+  Moon, Sun, LogOut, Menu, X, Shield, ChevronLeft, GitBranch,
 } from 'lucide-react';
 
-const navItems = [
+interface NavItem {
+  path: string;
+  label: string;
+  icon: React.ElementType;
+  roles?: UserRole[];
+}
+
+const navItems: NavItem[] = [
   { path: '/', label: 'لوحة التحكم', icon: LayoutDashboard },
-  { path: '/users', label: 'المستخدمين', icon: Users, roles: ['super_admin', 'sales_manager', 'general_supervisor', 'supervisor', 'group_leader'] },
+  { path: '/users', label: 'المستخدمين', icon: Users, roles: ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'team_leader'] },
+  { path: '/org', label: 'الهيكل الوظيفي', icon: GitBranch, roles: ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'team_leader'] },
   { path: '/clients', label: 'العملاء', icon: UserCircle },
   { path: '/policies', label: 'الوثائق', icon: FileText },
   { path: '/collections', label: 'التحصيل', icon: Wallet },
   { path: '/targets', label: 'التارجتات', icon: Target },
   { path: '/tasks', label: 'المهام', icon: CheckSquare },
   { path: '/notifications', label: 'الإشعارات', icon: Bell },
-  { path: '/closing', label: 'تقفيل الشهر', icon: Calendar },
+  { path: '/closing', label: 'تقفيل الشهر', icon: Calendar, roles: ['super_admin', 'dev_manager'] },
   { path: '/reports', label: 'التقارير', icon: BarChart3 },
-  { path: '/audit', label: 'سجل العمليات', icon: ClipboardList, roles: ['super_admin', 'sales_manager'] },
+  { path: '/audit', label: 'سجل العمليات', icon: ClipboardList, roles: ['super_admin', 'dev_manager'] },
   { path: '/settings', label: 'الإعدادات', icon: Settings, roles: ['super_admin'] },
 ];
 
@@ -52,10 +60,7 @@ export default function Sidebar() {
 
       {/* Overlay */}
       {isOpen && (
-        <div
-          className="lg:hidden fixed inset-0 bg-black/50 z-40"
-          onClick={() => setIsOpen(false)}
-        />
+        <div className="lg:hidden fixed inset-0 bg-black/50 z-40" onClick={() => setIsOpen(false)} />
       )}
 
       {/* Sidebar */}
@@ -70,7 +75,7 @@ export default function Sidebar() {
                 </div>
                 <div>
                   <h2 className="font-bold text-slate-900 dark:text-white text-sm">Insurance CRM</h2>
-                  <span className="text-xs text-slate-500 dark:text-slate-400">Pro</span>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">Pro v2</span>
                 </div>
               </div>
               <button onClick={() => setIsOpen(false)} className="lg:hidden p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700">
@@ -88,21 +93,22 @@ export default function Sidebar() {
                 </span>
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-slate-900 dark:text-white truncate">{profile?.full_name}</p>
-                <p className="text-xs text-slate-500 dark:text-slate-400">{profile ? ROLE_LABELS[profile.role] : ''}</p>
+                <p className="text-sm font-semibold text-slate-900 dark:text-white truncate">{profile?.full_name}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">{profile ? ROLE_LABELS[profile.role as UserRole] : ''}</p>
               </div>
             </div>
           </div>
 
           {/* Navigation */}
-          <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
+          <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
             {filteredItems.map(item => (
               <NavLink
                 key={item.path}
                 to={item.path}
+                end={item.path === '/'}
                 onClick={() => setIsOpen(false)}
                 className={({ isActive }) =>
-                  `flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 group ${
+                  `flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 group ${
                     isActive
                       ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'
                       : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700/50 hover:text-slate-900 dark:hover:text-white'
@@ -111,7 +117,7 @@ export default function Sidebar() {
               >
                 <item.icon className="w-5 h-5 flex-shrink-0" />
                 <span className="flex-1">{item.label}</span>
-                <ChevronLeft className="w-4 h-4 opacity-0 group-hover:opacity-100 transition-opacity" />
+                <ChevronLeft className="w-4 h-4 opacity-0 group-hover:opacity-60 transition-opacity" />
               </NavLink>
             ))}
           </nav>

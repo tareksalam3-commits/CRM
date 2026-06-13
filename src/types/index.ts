@@ -1,19 +1,23 @@
-// BUG FIX #2 & #11: Renamed 'dev_manager' -> 'sales_manager' and 'team_leader' -> 'group_leader'
-// to match the actual insurance business hierarchy and previous sessions' agreed names.
-export type UserRole = 'super_admin' | 'sales_manager' | 'general_supervisor' | 'supervisor' | 'group_leader' | 'agent';
+// ============================================================
+// Insurance CRM Pro - Types & Constants
+// Roles aligned: super_admin > dev_manager > general_supervisor
+//                > supervisor > team_leader > agent
+// ============================================================
+
+export type UserRole =
+  | 'super_admin'
+  | 'dev_manager'
+  | 'general_supervisor'
+  | 'supervisor'
+  | 'team_leader'
+  | 'agent';
 
 export type PolicyStatus = 'under_issuance' | 'active' | 'suspended' | 'cancelled' | 'rejected';
-
 export type PaymentFrequency = 'monthly' | 'quarterly' | 'semi_annual' | 'annual';
-
 export type InstallmentStatus = 'pending' | 'paid' | 'overdue';
-
 export type TaskStatus = 'new' | 'in_progress' | 'completed' | 'overdue';
-
 export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
-
 export type MaritalStatus = 'single' | 'married' | 'divorced' | 'widowed';
-
 export type TargetPeriod = 'monthly' | 'quarterly' | 'semi_annual' | 'annual';
 
 export interface Profile {
@@ -162,22 +166,42 @@ export interface SystemSetting {
   updated_at: string;
 }
 
+// ─── Labels ────────────────────────────────────────────────
 export const ROLE_LABELS: Record<UserRole, string> = {
   super_admin: 'مدير النظام',
-  sales_manager: 'مدير المبيعات',
+  dev_manager: 'مدير التطوير',
   general_supervisor: 'مراقب عام',
   supervisor: 'مراقب',
-  group_leader: 'رئيس مجموعة',
+  team_leader: 'رئيس فريق',
   agent: 'مندوب',
 };
 
+/** Higher number = lower in hierarchy */
 export const ROLE_LEVELS: Record<UserRole, number> = {
   super_admin: 0,
-  sales_manager: 1,
+  dev_manager: 1,
   general_supervisor: 2,
   supervisor: 3,
-  group_leader: 4,
+  team_leader: 4,
   agent: 5,
+};
+
+/** Roles that can manage users below them */
+export const MANAGER_ROLES: UserRole[] = [
+  'super_admin',
+  'dev_manager',
+  'general_supervisor',
+  'supervisor',
+  'team_leader',
+];
+
+/** What role a given manager creates */
+export const SUBORDINATE_ROLE: Partial<Record<UserRole, UserRole>> = {
+  super_admin: 'dev_manager',
+  dev_manager: 'general_supervisor',
+  general_supervisor: 'supervisor',
+  supervisor: 'team_leader',
+  team_leader: 'agent',
 };
 
 export const POLICY_STATUS_LABELS: Record<PolicyStatus, string> = {

@@ -49,7 +49,7 @@ DROP POLICY IF EXISTS "profiles_insert" ON profiles;
 CREATE POLICY "profiles_insert" ON profiles FOR INSERT
   TO authenticated
   WITH CHECK (
-    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('super_admin', 'sales_manager', 'general_supervisor', 'supervisor', 'group_leader'))
+    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'team_leader'))
     OR auth.uid() = id
   );
 
@@ -162,7 +162,7 @@ DROP POLICY IF EXISTS "targets_insert" ON targets;
 CREATE POLICY "targets_insert" ON targets FOR INSERT
   TO authenticated
   WITH CHECK (
-    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('super_admin', 'sales_manager', 'general_supervisor', 'supervisor', 'group_leader'))
+    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'team_leader'))
   );
 
 DROP POLICY IF EXISTS "targets_update" ON targets;
@@ -174,7 +174,7 @@ CREATE POLICY "targets_update" ON targets FOR UPDATE
 DROP POLICY IF EXISTS "targets_delete" ON targets;
 CREATE POLICY "targets_delete" ON targets FOR DELETE
   TO authenticated
-  USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('super_admin', 'sales_manager')));
+  USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('super_admin', 'dev_manager')));
 
 -- RLS Policies for tasks
 DROP POLICY IF EXISTS "tasks_select" ON tasks;
@@ -196,7 +196,7 @@ CREATE POLICY "tasks_update" ON tasks FOR UPDATE
 DROP POLICY IF EXISTS "tasks_delete" ON tasks;
 CREATE POLICY "tasks_delete" ON tasks FOR DELETE
   TO authenticated
-  USING (created_by = auth.uid() OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('super_admin', 'sales_manager')));
+  USING (created_by = auth.uid() OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('super_admin', 'dev_manager')));
 
 -- RLS Policies for notifications
 DROP POLICY IF EXISTS "notifications_select" ON notifications;
@@ -229,13 +229,13 @@ CREATE POLICY "month_closings_select" ON month_closings FOR SELECT
 DROP POLICY IF EXISTS "month_closings_insert" ON month_closings;
 CREATE POLICY "month_closings_insert" ON month_closings FOR INSERT
   TO authenticated
-  WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('super_admin', 'sales_manager')));
+  WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('super_admin', 'dev_manager')));
 
 DROP POLICY IF EXISTS "month_closings_update" ON month_closings;
 CREATE POLICY "month_closings_update" ON month_closings FOR UPDATE
   TO authenticated
-  USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('super_admin', 'sales_manager')))
-  WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('super_admin', 'sales_manager')));
+  USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('super_admin', 'dev_manager')))
+  WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('super_admin', 'dev_manager')));
 
 DROP POLICY IF EXISTS "month_closings_delete" ON month_closings;
 CREATE POLICY "month_closings_delete" ON month_closings FOR DELETE
@@ -247,7 +247,7 @@ DROP POLICY IF EXISTS "audit_logs_select" ON audit_logs;
 CREATE POLICY "audit_logs_select" ON audit_logs FOR SELECT
   TO authenticated
   USING (
-    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('super_admin', 'sales_manager'))
+    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('super_admin', 'dev_manager'))
     OR user_id = auth.uid()
   );
 

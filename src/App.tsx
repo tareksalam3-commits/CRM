@@ -8,6 +8,7 @@ import LoginPage from './pages/LoginPage';
 
 const Dashboard = lazy(() => import('./components/dashboard/Dashboard'));
 const UserManagement = lazy(() => import('./components/users/UserManagement'));
+const OrgChart = lazy(() => import('./components/org/OrgChart'));
 const ClientManagement = lazy(() => import('./components/clients/ClientManagement'));
 const PolicyManagement = lazy(() => import('./components/policies/PolicyManagement'));
 const CollectionManagement = lazy(() => import('./components/collections/CollectionManagement'));
@@ -29,7 +30,6 @@ function PageLoader() {
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { session, loading } = useAuth();
-
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-900">
@@ -37,14 +37,12 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
       </div>
     );
   }
-
   if (!session) return <Navigate to="/login" replace />;
   return <>{children}</>;
 }
 
 function AppRoutes() {
   const { session, loading } = useAuth();
-
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-900" dir="rtl">
@@ -59,15 +57,10 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={session ? <Navigate to="/" replace /> : <LoginPage />} />
-      <Route
-        element={
-          <ProtectedRoute>
-            <Layout />
-          </ProtectedRoute>
-        }
-      >
+      <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
         <Route path="/" element={<Suspense fallback={<PageLoader />}><Dashboard /></Suspense>} />
         <Route path="/users" element={<Suspense fallback={<PageLoader />}><UserManagement /></Suspense>} />
+        <Route path="/org" element={<Suspense fallback={<PageLoader />}><OrgChart /></Suspense>} />
         <Route path="/clients" element={<Suspense fallback={<PageLoader />}><ClientManagement /></Suspense>} />
         <Route path="/policies" element={<Suspense fallback={<PageLoader />}><PolicyManagement /></Suspense>} />
         <Route path="/collections" element={<Suspense fallback={<PageLoader />}><CollectionManagement /></Suspense>} />

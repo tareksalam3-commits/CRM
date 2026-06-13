@@ -1,217 +1,263 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
-import { Target as TargetType, TARGET_PERIOD_LABELS, ROLE_LABELS, TargetPeriod } from '../../types';
-import { formatCurrency, formatPercent } from '../../lib/utils';
+import { Target as TargetType, TARGET_PERIOD_LABELS, ROLE_LABELS, TargetPeriod, Profile } from '../../types';
+import { canManageTargets } from '../../lib/rbac';
+import { formatCurrency } from '../../lib/utils';
 import PageHeader from '../common/PageHeader';
 import LoadingSpinner from '../common/LoadingSpinner';
-import { Target, Plus, X, TrendingUp, TrendingDown } from 'lucide-react';
+import { Target, Plus, X, TrendingUp, TrendingDown, Edit2, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
-// BUG FIX #7: Helper to compute date range for a given target period
-function getPeriodDateRange(periodType: TargetPeriod, year: number, periodNumber: number): { start: string; end: string } {
+function getPeriodDateRange(periodType: TargetPeriod, year: number, periodNumber: number) {
   if (periodType === 'monthly') {
     const start = `${year}-${String(periodNumber).padStart(2, '0')}-01`;
-    const nextMonth = periodNumber === 12 ? 1 : periodNumber + 1;
-    const nextYear = periodNumber === 12 ? year + 1 : year;
-    const end = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
-    return { start, end };
+    const nm = periodNumber === 12 ? 1 : periodNumber + 1;
+    const ny = periodNumber === 12 ? year + 1 : year;
+    return { start, end: `${ny}-${String(nm).padStart(2, '0')}-01` };
   }
   if (periodType === 'quarterly') {
-    // period_number 1..4
-    const startMonth = (periodNumber - 1) * 3 + 1;
-    const endMonth = startMonth + 3;
-    const start = `${year}-${String(startMonth).padStart(2, '0')}-01`;
-    const endYear = endMonth > 12 ? year + 1 : year;
-    const end = `${endYear}-${String(endMonth > 12 ? endMonth - 12 : endMonth).padStart(2, '0')}-01`;
-    return { start, end };
+    const sm = (periodNumber - 1) * 3 + 1;
+    const em = sm + 3;
+    return { start: `${year}-${String(sm).padStart(2, '0')}-01`, end: `${em > 12 ? year + 1 : year}-${String(em > 12 ? em - 12 : em).padStart(2, '0')}-01` };
   }
   if (periodType === 'semi_annual') {
-    // period_number 1 or 2
-    const startMonth = (periodNumber - 1) * 6 + 1;
-    const endMonth = startMonth + 6;
-    const start = `${year}-${String(startMonth).padStart(2, '0')}-01`;
-    const endYear = endMonth > 12 ? year + 1 : year;
-    const end = `${endYear}-${String(endMonth > 12 ? endMonth - 12 : endMonth).padStart(2, '0')}-01`;
-    return { start, end };
+    const sm = (periodNumber - 1) * 6 + 1;
+    const em = sm + 6;
+    return { start: `${year}-${String(sm).padStart(2, '0')}-01`, end: `${em > 12 ? year + 1 : year}-${String(em > 12 ? em - 12 : em).padStart(2, '0')}-01` };
   }
-  // annual
   return { start: `${year}-01-01`, end: `${year + 1}-01-01` };
+}
+
+interface EnrichedTarget extends Omit<TargetType, 'user'> {
+  user?: Pick<Profile, 'full_name' | 'role'>;
+  achieved?: number;
 }
 
 export default function TargetManagement() {
   const { profile } = useAuth();
-  const [targets, setTargets] = useState<(TargetType & { user?: { full_name: string; role: string } })[]>([]);
-  const [users, setUsers] = useState<{ id: string; full_name: string; role: string }[]>([]);
+  const [targets, setTargets] = useState<EnrichedTarget[]>([]);
+  const [users, setUsers] = useState<Pick<Profile, 'id' | 'full_name' | 'role'>[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  // BUG FIX #7: productions keyed by "userId_periodType_year_periodNumber"
-  const [productions, setProductions] = useState<Record<string, number>>({});
+  const [editingTarget, setEditingTarget] = useState<EnrichedTarget | null>(null);
+  const [filterYear, setFilterYear] = useState(new Date().getFullYear());
+  const [filterPeriodType, setFilterPeriodType] = useState<TargetPeriod | ''>('monthly');
 
-  const [formData, setFormData] = useState({
+  const [form, setForm] = useState({
     user_id: '', period_type: 'monthly' as TargetPeriod,
     year: new Date().getFullYear(), period_number: new Date().getMonth() + 1, target_amount: '',
   });
 
-  useEffect(() => { loadData(); }, []);
+  const canManage = profile ? canManageTargets(profile.role) : false;
 
-  async function loadData() {
+  const loadData = useCallback(async () => {
+    let tQuery = supabase
+      .from('targets')
+      .select('*, user:profiles(full_name, role)')
+      .order('year', { ascending: false })
+      .order('period_number', { ascending: false });
+
+    if (filterYear) tQuery = tQuery.eq('year', filterYear);
+    if (filterPeriodType) tQuery = tQuery.eq('period_type', filterPeriodType);
+
     const [targetsRes, usersRes, policiesRes] = await Promise.all([
-      supabase.from('targets').select('*, user:profiles(full_name, role)').order('year', { ascending: false }).order('period_number', { ascending: false }),
-      supabase.from('profiles').select('id, full_name, role').eq('is_active', true),
-      // BUG FIX #7: Fetch created_at so we can filter by period
-      supabase.from('policies').select('agent_id, annual_premium, created_at').eq('status', 'active'),
+      tQuery,
+      supabase.from('profiles').select('id, full_name, role').eq('is_active', true).order('role').order('full_name'),
+      supabase.from('policies').select('agent_id, annual_premium, created_at'),
     ]);
 
-    if (targetsRes.data) setTargets(targetsRes.data as any);
-    if (usersRes.data) setUsers(usersRes.data);
-
-    // BUG FIX #7: Build productions map keyed by target identity
-    const policies = policiesRes.data || [];
-    const prods: Record<string, number> = {};
-
-    // We'll populate this after we have targets — done below after setTargets
-    // Store raw policies so we can compute per-target
-    (targetsRes.data || []).forEach((target: any) => {
-      const { start, end } = getPeriodDateRange(target.period_type, target.year, target.period_number);
-      const key = `${target.user_id}_${target.period_type}_${target.year}_${target.period_number}`;
-      const periodPolicies = policies.filter((p: any) =>
-        p.agent_id === target.user_id &&
-        p.created_at >= start &&
-        p.created_at < end
-      );
-      prods[key] = periodPolicies.reduce((sum: number, p: any) => sum + Number(p.annual_premium), 0);
+    const pList = policiesRes.data || [];
+    const enriched: EnrichedTarget[] = (targetsRes.data || []).map((t) => {
+      const { start, end } = getPeriodDateRange(t.period_type as TargetPeriod, t.year, t.period_number);
+      const achieved = pList
+        .filter(p => p.agent_id === t.user_id && p.created_at >= start && p.created_at < end)
+        .reduce((s, p) => s + Number(p.annual_premium), 0);
+      return { ...t, achieved } as EnrichedTarget;
     });
 
-    setProductions(prods);
+    setTargets(enriched);
+    if (usersRes.data) setUsers(usersRes.data);
     setLoading(false);
+  }, [filterYear, filterPeriodType]);
+
+  useEffect(() => { loadData(); }, [loadData]);
+
+  async function handleSubmit() {
+    if (!form.user_id || !form.target_amount) { toast.error('يرجى ملء جميع الحقول'); return; }
+
+    const payload = {
+      user_id: form.user_id,
+      period_type: form.period_type,
+      year: form.year,
+      period_number: form.period_number,
+      target_amount: Number(form.target_amount),
+    };
+
+    const { error } = editingTarget
+      ? await supabase.from('targets').update({ ...payload, updated_at: new Date().toISOString() }).eq('id', editingTarget.id)
+      : await supabase.from('targets').upsert(payload, { onConflict: 'user_id,period_type,year,period_number' });
+
+    if (error) { toast.error('خطأ: ' + error.message); }
+    else { toast.success(editingTarget ? 'تم التحديث' : 'تم الحفظ'); resetForm(); loadData(); }
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    const { error } = await supabase.from('targets').upsert({
-      user_id: formData.user_id,
-      period_type: formData.period_type,
-      year: formData.year,
-      period_number: formData.period_number,
-      target_amount: Number(formData.target_amount),
-    }, { onConflict: 'user_id,period_type,year,period_number' });
-
-    if (error) { toast.error('خطأ في حفظ التارجت: ' + error.message); return; }
-    toast.success('تم حفظ التارجت');
-    setShowForm(false);
-    setFormData({ user_id: '', period_type: 'monthly', year: new Date().getFullYear(), period_number: new Date().getMonth() + 1, target_amount: '' });
-    loadData();
+  async function deleteTarget(id: string) {
+    if (!confirm('حذف هذا التارجت؟')) return;
+    const { error } = await supabase.from('targets').delete().eq('id', id);
+    if (!error) { toast.success('تم الحذف'); loadData(); }
   }
 
-  // BUG FIX #9: agents can see their own targets too — show all targets but filtered to self if agent
-  const visibleTargets = profile?.role === 'agent'
-    ? targets.filter(t => t.user_id === profile.id)
-    : targets;
+  function resetForm() { setShowForm(false); setEditingTarget(null); setForm({ user_id: '', period_type: 'monthly', year: new Date().getFullYear(), period_number: new Date().getMonth() + 1, target_amount: '' }); }
+
+  function startEdit(t: EnrichedTarget) {
+    setEditingTarget(t);
+    setForm({ user_id: t.user_id, period_type: t.period_type, year: t.year, period_number: t.period_number, target_amount: String(t.target_amount) });
+    setShowForm(true);
+  }
+
+  const totalTarget = targets.reduce((s, t) => s + t.target_amount, 0);
+  const totalAchieved = targets.reduce((s, t) => s + (t.achieved || 0), 0);
+  const overallPct = totalTarget > 0 ? (totalAchieved / totalTarget) * 100 : 0;
 
   if (loading) return <LoadingSpinner />;
 
+  const periodNumbers = form.period_type === 'monthly' ? 12
+    : form.period_type === 'quarterly' ? 4
+    : form.period_type === 'semi_annual' ? 2 : 1;
+
   return (
     <div>
-      <PageHeader title="إدارة التارجتات" description="المستهدفات والإنجاز" icon={Target}
-        actions={
-          profile?.role !== 'agent' ? (
-            <button onClick={() => setShowForm(true)} className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-medium">
-              <Plus className="w-4 h-4" /><span className="hidden sm:inline">تعيين تارجت</span>
-            </button>
-          ) : undefined
-        }
+      <PageHeader
+        title="إدارة التارجتات"
+        description={`${targets.length} تارجت`}
+        icon={Target}
+        actions={canManage ? (
+          <button onClick={() => { setEditingTarget(null); resetForm(); setShowForm(true); }} className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-medium transition-colors">
+            <Plus className="w-4 h-4" /><span className="hidden sm:inline">إضافة تارجت</span>
+          </button>
+        ) : undefined}
       />
 
-      <div className="space-y-3">
-        {visibleTargets.map(target => {
-          const key = `${target.user_id}_${target.period_type}_${target.year}_${target.period_number}`;
-          const achieved = productions[key] || 0;
-          const rate = target.target_amount > 0 ? (achieved / target.target_amount) * 100 : 0;
-          const remaining = target.target_amount - achieved;
+      {/* Summary KPIs */}
+      <div className="grid grid-cols-3 gap-4 mb-6">
+        {[
+          { label: 'إجمالي التارجت', value: formatCurrency(totalTarget), icon: Target, color: 'text-blue-600' },
+          { label: 'إجمالي المحقق', value: formatCurrency(totalAchieved), icon: TrendingUp, color: 'text-emerald-600' },
+          { label: 'نسبة الإنجاز', value: `${overallPct.toFixed(1)}%`, icon: overallPct >= 80 ? TrendingUp : TrendingDown, color: overallPct >= 80 ? 'text-emerald-600' : 'text-red-600' },
+        ].map((k, i) => (
+          <div key={i} className="bg-white dark:bg-slate-800 rounded-2xl p-4 border border-slate-100 dark:border-slate-700 flex items-center gap-3">
+            <div className={`w-10 h-10 rounded-xl bg-slate-50 dark:bg-slate-700 flex items-center justify-center ${k.color}`}>
+              <k.icon className="w-5 h-5" />
+            </div>
+            <div>
+              <p className="text-xs text-slate-500 dark:text-slate-400">{k.label}</p>
+              <p className="font-bold text-slate-900 dark:text-white">{k.value}</p>
+            </div>
+          </div>
+        ))}
+      </div>
 
+      {/* Filters */}
+      <div className="flex gap-3 mb-4 flex-wrap">
+        <select value={filterYear} onChange={e => { setFilterYear(Number(e.target.value)); }} className="px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none">
+          {[2024, 2025, 2026, 2027].map(y => <option key={y} value={y}>{y}</option>)}
+        </select>
+        <select value={filterPeriodType} onChange={e => setFilterPeriodType(e.target.value as TargetPeriod | '')} className="px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none">
+          <option value="">كل الفترات</option>
+          {(Object.entries(TARGET_PERIOD_LABELS) as [TargetPeriod, string][]).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </select>
+      </div>
+
+      {/* Targets list */}
+      <div className="space-y-3">
+        {targets.map(t => {
+          const pct = t.target_amount > 0 ? Math.min(((t.achieved || 0) / t.target_amount) * 100, 100) : 0;
+          const userObj = t.user as { full_name: string; role: string } | undefined;
           return (
-            <div key={target.id} className="bg-white dark:bg-slate-800 rounded-xl p-4 border border-slate-100 dark:border-slate-700">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+            <div key={t.id} className="bg-white dark:bg-slate-800 rounded-xl p-4 border border-slate-100 dark:border-slate-700">
+              <div className="flex items-start justify-between gap-3 mb-3">
                 <div>
-                  <p className="font-medium text-slate-900 dark:text-white">{(target.user as any)?.full_name}</p>
+                  <p className="font-semibold text-slate-900 dark:text-white">{userObj?.full_name || '—'}</p>
                   <p className="text-xs text-slate-500 dark:text-slate-400">
-                    {(target.user as any)?.role && ROLE_LABELS[(target.user as any).role as keyof typeof ROLE_LABELS]} — {TARGET_PERIOD_LABELS[target.period_type]}{' '}
-                    {target.period_type !== 'annual' ? `${target.period_number}/` : ''}{target.year}
+                    {userObj?.role ? ROLE_LABELS[userObj.role as keyof typeof ROLE_LABELS] : ''} — {TARGET_PERIOD_LABELS[t.period_type]} {t.period_number}/{t.year}
                   </p>
                 </div>
-                <div className="flex items-center gap-2">
-                  {rate >= 100 ? (
-                    <span className="flex items-center gap-1 text-xs font-medium text-emerald-600 dark:text-emerald-400"><TrendingUp className="w-4 h-4" /> تحقق {formatPercent(rate)}</span>
-                  ) : (
-                    <span className="flex items-center gap-1 text-xs font-medium text-amber-600 dark:text-amber-400"><TrendingDown className="w-4 h-4" /> {formatPercent(rate)}</span>
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  {canManage && (
+                    <>
+                      <button onClick={() => startEdit(t)} className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"><Edit2 className="w-4 h-4 text-slate-500" /></button>
+                      <button onClick={() => deleteTarget(t.id)} className="p-1.5 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"><Trash2 className="w-4 h-4 text-red-500" /></button>
+                    </>
                   )}
                 </div>
               </div>
-              <div className="w-full h-2 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden mb-2">
-                <div className={`h-full rounded-full transition-all ${rate >= 100 ? 'bg-emerald-500' : rate >= 70 ? 'bg-blue-500' : 'bg-amber-500'}`} style={{ width: `${Math.min(rate, 100)}%` }} />
+              <div className="flex items-center justify-between text-sm mb-2">
+                <span className="text-slate-600 dark:text-slate-400">التارجت: <span className="font-medium text-slate-900 dark:text-white">{formatCurrency(t.target_amount)}</span></span>
+                <span className="text-slate-600 dark:text-slate-400">المحقق: <span className={`font-medium ${(t.achieved || 0) >= t.target_amount ? 'text-emerald-600' : 'text-slate-900 dark:text-white'}`}>{formatCurrency(t.achieved || 0)}</span></span>
+                <span className={`font-bold ${pct >= 100 ? 'text-emerald-600' : pct >= 70 ? 'text-amber-600' : 'text-red-500'}`}>{pct.toFixed(1)}%</span>
               </div>
-              <div className="flex justify-between text-xs text-slate-500 dark:text-slate-400">
-                <span>المستهدف: {formatCurrency(target.target_amount)}</span>
-                <span>المحقق: {formatCurrency(achieved)}</span>
-                <span>المتبقي: {formatCurrency(Math.max(remaining, 0))}</span>
+              <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-2">
+                <div
+                  className={`h-2 rounded-full transition-all ${pct >= 100 ? 'bg-emerald-500' : pct >= 70 ? 'bg-amber-500' : 'bg-red-500'}`}
+                  style={{ width: `${pct}%` }}
+                />
               </div>
             </div>
           );
         })}
-        {visibleTargets.length === 0 && <div className="text-center py-12 text-slate-400">لا توجد تارجتات محددة</div>}
+        {targets.length === 0 && (
+          <div className="text-center py-16 text-slate-400"><Target className="w-12 h-12 mx-auto mb-3 opacity-30" /><p>لا توجد تارجتات</p></div>
+        )}
       </div>
 
+      {/* Modal */}
       {showForm && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-md p-6">
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="text-lg font-bold text-slate-900 dark:text-white">تعيين تارجت</h3>
-              <button onClick={() => setShowForm(false)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg"><X className="w-5 h-5 text-slate-500" /></button>
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white">{editingTarget ? 'تعديل التارجت' : 'إضافة تارجت'}</h3>
+              <button onClick={resetForm} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg"><X className="w-5 h-5 text-slate-500" /></button>
             </div>
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">المستخدم</label>
-                <select value={formData.user_id} onChange={(e) => setFormData({ ...formData, user_id: e.target.value })} required className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500">
-                  <option value="">اختر المستخدم</option>
-                  {users.map(u => <option key={u.id} value={u.id}>{u.full_name} — {ROLE_LABELS[u.role as keyof typeof ROLE_LABELS] || u.role}</option>)}
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">الموظف</label>
+                <select value={form.user_id} onChange={e => setForm({ ...form, user_id: e.target.value })} className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none">
+                  <option value="">اختر موظف</option>
+                  {users.map(u => <option key={u.id} value={u.id}>{u.full_name} — {ROLE_LABELS[u.role]}</option>)}
                 </select>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">نوع الفترة</label>
-                <select value={formData.period_type} onChange={(e) => setFormData({ ...formData, period_type: e.target.value as TargetPeriod })} className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500">
-                  {Object.entries(TARGET_PERIOD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                </select>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">نوع الفترة</label>
+                  <select value={form.period_type} onChange={e => setForm({ ...form, period_type: e.target.value as TargetPeriod, period_number: 1 })} className="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none">
+                    {(Object.entries(TARGET_PERIOD_LABELS) as [TargetPeriod, string][]).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">رقم الفترة</label>
+                  <select value={form.period_number} onChange={e => setForm({ ...form, period_number: Number(e.target.value) })} className="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none">
+                    {Array.from({ length: periodNumbers }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1}</option>)}
+                  </select>
+                </div>
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">السنة</label>
-                  <input type="number" value={formData.year} onChange={(e) => setFormData({ ...formData, year: Number(e.target.value) })} className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500" />
+                  <select value={form.year} onChange={e => setForm({ ...form, year: Number(e.target.value) })} className="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none">
+                    {[2024, 2025, 2026, 2027].map(y => <option key={y} value={y}>{y}</option>)}
+                  </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-                    {formData.period_type === 'monthly' ? 'رقم الشهر (1-12)' : formData.period_type === 'quarterly' ? 'الربع (1-4)' : formData.period_type === 'semi_annual' ? 'النصف (1-2)' : 'السنة فقط'}
-                  </label>
-                  <input
-                    type="number"
-                    value={formData.period_number}
-                    onChange={(e) => setFormData({ ...formData, period_number: Number(e.target.value) })}
-                    min={1}
-                    max={formData.period_type === 'monthly' ? 12 : formData.period_type === 'quarterly' ? 4 : formData.period_type === 'semi_annual' ? 2 : 1}
-                    disabled={formData.period_type === 'annual'}
-                    className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
-                  />
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">مبلغ التارجت</label>
+                  <input type="number" value={form.target_amount} onChange={e => setForm({ ...form, target_amount: e.target.value })} className="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="0" dir="ltr" />
                 </div>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">المبلغ المستهدف</label>
-                <input type="number" value={formData.target_amount} onChange={(e) => setFormData({ ...formData, target_amount: e.target.value })} required min="1" className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500" />
+              <div className="flex gap-3 pt-2">
+                <button onClick={handleSubmit} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium transition-colors">{editingTarget ? 'تحديث' : 'حفظ'}</button>
+                <button onClick={resetForm} className="flex-1 py-2.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl font-medium transition-colors">إلغاء</button>
               </div>
-              <div className="flex gap-3">
-                <button type="submit" className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium">حفظ</button>
-                <button type="button" onClick={() => setShowForm(false)} className="flex-1 py-2.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl font-medium">إلغاء</button>
-              </div>
-            </form>
+            </div>
           </div>
         </div>
       )}
