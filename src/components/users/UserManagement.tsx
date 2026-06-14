@@ -1,6 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
-import { createClient } from '@supabase/supabase-js';
 import { useAuth } from '../../contexts/AuthContext';
 import { Profile, ROLE_LABELS, UserRole } from '../../types';
 import { assignableRoles, canManageRole, isManager } from '../../lib/rbac';
@@ -11,14 +10,6 @@ import {
   Search, Key, ChevronDown, Shield, Phone, Mail,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-
-// Admin client uses service role key — can create/delete auth users
-// Key is stored in Vercel env vars and never shown in UI
-const supabaseAdmin = createClient(
-  import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY,
-  { auth: { autoRefreshToken: false, persistSession: false } }
-);
 
 interface FormData {
   email: string;
@@ -74,13 +65,11 @@ export default function UserManagement() {
     return matchSearch && matchRole;
   });
 
-  // ─── Create / Edit ──────────────────────────────────────
   async function handleSubmit() {
     if (!formData.full_name.trim()) { toast.error('الاسم مطلوب'); return; }
     setSubmitting(true);
 
     if (editingUser) {
-      // ── Edit existing user ──────────────────────────────
       const { error } = await supabase
         .from('profiles')
         .update({
@@ -96,7 +85,6 @@ export default function UserManagement() {
       else { toast.success('تم تحديث المستخدم بنجاح'); resetForm(); fetchUsers(); }
 
     } else {
-      // ── Create new user via Admin API ───────────────────
       if (!formData.email.trim() || !formData.password) {
         toast.error('البريد الإلكتروني وكلمة المرور مطلوبان');
         setSubmitting(false);
@@ -108,32 +96,17 @@ export default function UserManagement() {
         return;
       }
 
-      // createUser via admin — does NOT touch current admin session
-      const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
-        email: formData.email.trim(),
-        password: formData.password,
-        email_confirm: true,
+      const { data, error } = await supabase.rpc('create_user_by_manager', {
+        p_email: formData.email.trim(),
+        p_password: formData.password,
+        p_full_name: formData.full_name.trim(),
+        p_phone: formData.phone || '',
+        p_role: formData.role,
+        p_manager_id: formData.manager_id || null,
       });
 
-      if (authError || !authData?.user) {
-        toast.error(authError?.message || 'خطأ في إنشاء الحساب');
-        setSubmitting(false);
-        return;
-      }
-
-      const { error: profileError } = await supabaseAdmin.from('profiles').insert({
-        id: authData.user.id,
-        email: formData.email.trim(),
-        full_name: formData.full_name.trim(),
-        phone: formData.phone || null,
-        role: formData.role,
-        manager_id: formData.manager_id || null,
-      });
-
-      if (profileError) {
-        // Rollback auth user if profile insert failed
-        await supabaseAdmin.auth.admin.deleteUser(authData.user.id);
-        toast.error('خطأ في إنشاء الملف الشخصي: ' + profileError.message);
+      if (error || data?.error) {
+        toast.error(data?.error || error?.message || 'خطأ في إنشاء الحساب');
       } else {
         toast.success('تم إنشاء المستخدم بنجاح');
         resetForm();
@@ -162,11 +135,16 @@ export default function UserManagement() {
     if (user.id === profile?.id) { toast.error('لا يمكنك حذف حسابك'); return; }
     if (!confirm(`هل أنت متأكد من حذف "${user.full_name}"؟`)) return;
 
-    // Delete from auth first via admin, then profile cascades
-    const { error: authErr } = await supabaseAdmin.auth.admin.deleteUser(user.id);
-    if (authErr) { toast.error('خطأ: ' + authErr.message); return; }
-    toast.success('تم حذف المستخدم');
-    fetchUsers();
+    const { data, error } = await supabase.rpc('delete_user_by_manager', {
+      p_user_id: user.id,
+    });
+
+    if (error || data?.error) {
+      toast.error(data?.error || error?.message || 'خطأ في الحذف');
+    } else {
+      toast.success('تم حذف المستخدم');
+      fetchUsers();
+    }
   }
 
   async function handleResetPassword() {
@@ -174,13 +152,19 @@ export default function UserManagement() {
       toast.error('كلمة المرور يجب أن تكون 6 أحرف على الأقل');
       return;
     }
-    const { error } = await supabaseAdmin.auth.admin.updateUserById(resetPasswordId!, {
-      password: newPassword,
+
+    const { data, error } = await supabase.rpc('reset_user_password_by_manager', {
+      p_user_id: resetPasswordId,
+      p_new_password: newPassword,
     });
-    if (error) { toast.error('خطأ: ' + error.message); return; }
-    toast.success('تم تغيير كلمة المرور بنجاح');
-    setResetPasswordId(null);
-    setNewPassword('');
+
+    if (error || data?.error) {
+      toast.error(data?.error || error?.message || 'خطأ في تغيير كلمة المرور');
+    } else {
+      toast.success('تم تغيير كلمة المرور بنجاح');
+      setResetPasswordId(null);
+      setNewPassword('');
+    }
   }
 
   function resetForm() {
@@ -202,7 +186,6 @@ export default function UserManagement() {
     setShowForm(true);
   }
 
-  // ─── Guard ─────────────────────────────────────────────
   if (!profile || !isManager(profile.role)) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-slate-400">
@@ -243,7 +226,6 @@ export default function UserManagement() {
         }
       />
 
-      {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-3 mb-4">
         <div className="relative flex-1">
           <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -270,7 +252,6 @@ export default function UserManagement() {
         </div>
       </div>
 
-      {/* Stats */}
       <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-4">
         {(Object.keys(ROLE_LABELS) as UserRole[]).map(r => {
           const count = users.filter(u => u.role === r).length;
@@ -283,7 +264,6 @@ export default function UserManagement() {
         })}
       </div>
 
-      {/* Users List */}
       <div className="space-y-2">
         {filteredUsers.map(user => {
           const managerProfile = user.manager_id ? users.find(u => u.id === user.manager_id) : null;
@@ -348,7 +328,6 @@ export default function UserManagement() {
         )}
       </div>
 
-      {/* Add / Edit Modal */}
       {showForm && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-md max-h-[92vh] overflow-y-auto">
@@ -422,22 +401,29 @@ export default function UserManagement() {
         </div>
       )}
 
-      {/* Reset Password Modal */}
       {resetPasswordId && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-sm p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-slate-900 dark:text-white">إعادة تعيين كلمة المرور</h3>
+          <div className="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-sm">
+            <div className="flex items-center justify-between p-6 border-b border-slate-100 dark:border-slate-700">
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white">تغيير كلمة المرور</h3>
               <button onClick={() => setResetPasswordId(null)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg">
                 <X className="w-5 h-5 text-slate-500" />
               </button>
             </div>
-            <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)}
-              placeholder="كلمة المرور الجديدة (6 أحرف+)" dir="ltr"
-              className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none mb-4" />
-            <div className="flex gap-3">
-              <button onClick={handleResetPassword} className="flex-1 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-medium transition-colors">تعيين</button>
-              <button onClick={() => setResetPasswordId(null)} className="flex-1 py-2.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl font-medium transition-colors">إلغاء</button>
+            <div className="p-6 space-y-4">
+              <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="كلمة المرور الجديدة (6 أحرف على الأقل)" dir="ltr"
+                className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" />
+              <div className="flex gap-3">
+                <button onClick={handleResetPassword}
+                  className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium transition-colors">
+                  تغيير
+                </button>
+                <button onClick={() => setResetPasswordId(null)}
+                  className="flex-1 py-2.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl font-medium transition-colors">
+                  إلغاء
+                </button>
+              </div>
             </div>
           </div>
         </div>
