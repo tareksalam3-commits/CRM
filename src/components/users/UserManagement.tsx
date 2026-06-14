@@ -267,7 +267,7 @@ export default function UserManagement() {
       <div className="space-y-2">
         {filteredUsers.map(user => {
           const managerProfile = user.manager_id ? users.find(u => u.id === user.manager_id) : null;
-          const canEdit = myRole === 'super_admin' || canManageRole(myRole, user.role);
+          const canEdit = canManageRole(myRole, user.role);
           const subordinateCount = users.filter(u => u.manager_id === user.id).length;
           const badgeClass = roleBadge[user.role] ?? 'bg-slate-100 text-slate-700';
 
@@ -309,11 +309,9 @@ export default function UserManagement() {
                   <button onClick={() => toggleActive(user)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors" title={user.is_active ? 'إيقاف' : 'تفعيل'}>
                     {user.is_active ? <Ban className="w-4 h-4 text-orange-500" /> : <CheckCircle className="w-4 h-4 text-emerald-500" />}
                   </button>
-                  {myRole === 'super_admin' && (
-                    <button onClick={() => deleteUser(user)} className="p-2 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors" title="حذف">
-                      <Trash2 className="w-4 h-4 text-red-500" />
-                    </button>
-                  )}
+                  <button onClick={() => deleteUser(user)} className="p-2 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors" title="حذف">
+                    <Trash2 className="w-4 h-4 text-red-500" />
+                  </button>
                 </div>
               )}
             </div>
@@ -420,7 +418,7 @@ export default function UserManagement() {
                   تغيير
                 </button>
                 <button onClick={() => setResetPasswordId(null)}
-                  className="flex-1 py-2.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl font-medium transition-colors">
+                  className="flex-1 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-300 rounded-xl font-medium transition-colors">
                   إلغاء
                 </button>
               </div>
