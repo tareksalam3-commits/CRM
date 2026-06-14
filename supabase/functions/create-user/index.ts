@@ -1,132 +1,157 @@
-import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-}
+const cors = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
 
 serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders })
-  }
+  if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
 
   try {
-    const authHeader = req.headers.get('Authorization')
-    if (!authHeader) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
+    const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+    const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
+
+    // التحقق من هوية الطالب
+    const authHeader = req.headers.get("Authorization") ?? "";
+    const token = authHeader.replace("Bearer ", "");
+
+    // نتحقق من الجلسة مباشرة عبر Supabase REST API
+    const meRes = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        apikey: ANON_KEY,
+      },
+    });
+
+    if (!meRes.ok) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401, headers: { ...cors, "Content-Type": "application/json" },
+      });
     }
 
-    // Admin client using service role key (server-side only, never exposed to browser)
-    const supabaseAdmin = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
-      { auth: { autoRefreshToken: false, persistSession: false } }
-    )
+    const meData = await meRes.json();
+    const callerId = meData.id;
 
-    // Verify caller's identity
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-      { global: { headers: { Authorization: authHeader } } }
-    )
-    const { data: { user: caller }, error: callerError } = await supabaseClient.auth.getUser()
-    if (callerError || !caller) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
+    // نتحقق من دور الطالب
+    const profileRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/profiles?id=eq.${callerId}&select=role`,
+      {
+        headers: {
+          Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+          apikey: SERVICE_ROLE_KEY,
+        },
+      }
+    );
+    const profiles = await profileRes.json();
+    const callerRole = profiles?.[0]?.role;
+    const managerRoles = ["super_admin", "dev_manager", "general_supervisor", "supervisor", "team_leader"];
+
+    if (!callerRole || !managerRoles.includes(callerRole)) {
+      return new Response(JSON.stringify({ error: "Forbidden" }), {
+        status: 403, headers: { ...cors, "Content-Type": "application/json" },
+      });
     }
 
-    // Verify caller has manager role
-    const { data: callerProfile } = await supabaseAdmin
-      .from('profiles')
-      .select('role')
-      .eq('id', caller.id)
-      .single()
+    const body = await req.json();
 
-    const managerRoles = ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'team_leader']
-    if (!callerProfile || !managerRoles.includes(callerProfile.role)) {
-      return new Response(JSON.stringify({ error: 'Forbidden: manager role required' }), {
-        status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
-    }
-
-    const body = await req.json()
-
-    // ── Reset password mode ──────────────────────────────
+    // وضع إعادة تعيين كلمة المرور
     if (body.reset_password_for && body.new_password) {
-      if (body.new_password.length < 6) {
-        return new Response(JSON.stringify({ error: 'كلمة المرور يجب أن تكون 6 أحرف على الأقل' }), {
-          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        })
-      }
-      const { error } = await supabaseAdmin.auth.admin.updateUserById(body.reset_password_for, {
-        password: body.new_password,
-      })
-      if (error) {
-        return new Response(JSON.stringify({ error: error.message }), {
-          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        })
-      }
-      return new Response(JSON.stringify({ success: true }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
+      const res = await fetch(
+        `${SUPABASE_URL}/auth/v1/admin/users/${body.reset_password_for}`,
+        {
+          method: "PUT",
+          headers: {
+            Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+            apikey: SERVICE_ROLE_KEY,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ password: body.new_password }),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok) return new Response(JSON.stringify({ error: data.message || "فشل تغيير كلمة المرور" }), {
+        status: 400, headers: { ...cors, "Content-Type": "application/json" },
+      });
+      return new Response(JSON.stringify({ success: true }), { headers: { ...cors, "Content-Type": "application/json" } });
     }
 
-    // ── Create new user mode ─────────────────────────────
-    const { email, password, full_name, phone, role, manager_id } = body
+    // وضع إنشاء مستخدم جديد
+    const { email, password, full_name, phone, role, manager_id } = body;
 
     if (!email || !password || !full_name) {
-      return new Response(JSON.stringify({ error: 'email, password, full_name are required' }), {
-        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
-    }
-    if (password.length < 6) {
-      return new Response(JSON.stringify({ error: 'كلمة المرور يجب أن تكون 6 أحرف على الأقل' }), {
-        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
+      return new Response(JSON.stringify({ error: "email, password, full_name مطلوبة" }), {
+        status: 400, headers: { ...cors, "Content-Type": "application/json" },
+      });
     }
 
-    // Create auth user via Admin API — does NOT affect any existing session
-    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-    })
+    // إنشاء Auth user عبر Admin REST API
+    const createRes = await fetch(`${SUPABASE_URL}/auth/v1/admin/users`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+        apikey: SERVICE_ROLE_KEY,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        email,
+        password,
+        email_confirm: true,
+      }),
+    });
 
-    if (authError || !authData.user) {
-      return new Response(JSON.stringify({ error: authError?.message || 'Failed to create auth user' }), {
-        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
+    const createData = await createRes.json();
+
+    if (!createRes.ok || !createData.id) {
+      return new Response(JSON.stringify({ error: createData.message || "فشل إنشاء الحساب" }), {
+        status: 400, headers: { ...cors, "Content-Type": "application/json" },
+      });
     }
 
-    // Create profile record
-    const { error: profileError } = await supabaseAdmin.from('profiles').insert({
-      id: authData.user.id,
-      email,
-      full_name: full_name.trim(),
-      phone: phone || null,
-      role: role || 'agent',
-      manager_id: manager_id || null,
-    })
+    const newUserId = createData.id;
 
-    if (profileError) {
-      // Rollback: delete auth user if profile creation failed
-      await supabaseAdmin.auth.admin.deleteUser(authData.user.id)
-      return new Response(JSON.stringify({ error: profileError.message }), {
-        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
+    // إنشاء Profile
+    const profileInsertRes = await fetch(`${SUPABASE_URL}/rest/v1/profiles`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+        apikey: SERVICE_ROLE_KEY,
+        "Content-Type": "application/json",
+        Prefer: "return=minimal",
+      },
+      body: JSON.stringify({
+        id: newUserId,
+        email,
+        full_name: full_name.trim(),
+        phone: phone || null,
+        role: role || "agent",
+        manager_id: manager_id || null,
+      }),
+    });
+
+    if (!profileInsertRes.ok) {
+      const errText = await profileInsertRes.text();
+      // Rollback: حذف الـ auth user
+      await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${newUserId}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+          apikey: SERVICE_ROLE_KEY,
+        },
+      });
+      return new Response(JSON.stringify({ error: "فشل إنشاء الملف الشخصي: " + errText }), {
+        status: 400, headers: { ...cors, "Content-Type": "application/json" },
+      });
     }
 
-    return new Response(JSON.stringify({ success: true, userId: authData.user.id }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-    })
+    return new Response(JSON.stringify({ success: true, userId: newUserId }), {
+      headers: { ...cors, "Content-Type": "application/json" },
+    });
 
   } catch (err) {
     return new Response(JSON.stringify({ error: String(err) }), {
-      status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-    })
+      status: 500, headers: { ...cors, "Content-Type": "application/json" },
+    });
   }
-})
+});
