@@ -1,6 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
-import { createClient } from '@supabase/supabase-js';
 import { useAuth } from '../../contexts/AuthContext';
 import { Profile, ROLE_LABELS, UserRole } from '../../types';
 import { assignableRoles, canManageRole, isManager } from '../../lib/rbac';
@@ -12,14 +11,18 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
-// ─── Admin client ────────────────────────────────────────────────────────────
-// يستخدم service_role key الموجود في Vercel env vars
-// هذا الـ client يقدر ينشئ/يحذف auth users بدون ما يأثر على جلسة الأدمن
-const supabaseAdmin = createClient(
-  import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY,
-  { auth: { autoRefreshToken: false, persistSession: false } }
-);
+// ─── Helper: استدعاء Edge Function بأمان من السيرفر ─────────────────────────
+async function callAdminFunction(body: object): Promise<{ success?: boolean; userId?: string; error?: string }> {
+  const { data: sessionData } = await supabase.auth.getSession();
+  const token = sessionData?.session?.access_token;
+  if (!token) return { error: 'انتهت الجلسة، يرجى تسجيل الدخول مجدداً' };
+
+  const { data, error } = await supabase.functions.invoke('create-user', { body });
+
+  if (error) return { error: error.message || 'خطأ في الاتصال بالخادم' };
+  if (data?.error) return { error: data.error };
+  return { success: true, userId: data?.userId };
+}
 
 interface FormData {
   email: string;
@@ -81,7 +84,7 @@ export default function UserManagement() {
     setSubmitting(true);
 
     if (editingUser) {
-      // تعديل مستخدم موجود — بدون تغيير كلمة المرور
+      // تعديل مستخدم موجود
       const { error } = await supabase
         .from('profiles')
         .update({
@@ -102,48 +105,21 @@ export default function UserManagement() {
       }
 
     } else {
-      // إنشاء مستخدم جديد
-      if (!formData.email.trim()) {
-        toast.error('البريد الإلكتروني مطلوب');
-        setSubmitting(false);
-        return;
-      }
-      if (!formData.password || formData.password.length < 6) {
-        toast.error('كلمة المرور يجب أن تكون 6 أحرف على الأقل');
-        setSubmitting(false);
-        return;
-      }
+      // إنشاء مستخدم جديد عبر Edge Function
+      if (!formData.email.trim()) { toast.error('البريد الإلكتروني مطلوب'); setSubmitting(false); return; }
+      if (!formData.password || formData.password.length < 6) { toast.error('كلمة المرور 6 أحرف على الأقل'); setSubmitting(false); return; }
 
-      // الخطوة 1: إنشاء حساب Auth عبر Admin API
-      // هذا لا يؤثر على جلسة الأدمن الحالية إطلاقاً
-      const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
+      const result = await callAdminFunction({
         email: formData.email.trim(),
         password: formData.password,
-        email_confirm: true, // تأكيد الإيميل تلقائياً بدون انتظار
+        full_name: formData.full_name.trim(),
+        phone: formData.phone || null,
+        role: formData.role,
+        manager_id: formData.manager_id || null,
       });
 
-      if (authError || !authData?.user) {
-        toast.error(authError?.message || 'خطأ في إنشاء الحساب');
-        setSubmitting(false);
-        return;
-      }
-
-      // الخطوة 2: إنشاء الـ Profile المرتبط
-      const { error: profileError } = await supabaseAdmin
-        .from('profiles')
-        .insert({
-          id: authData.user.id,
-          email: formData.email.trim(),
-          full_name: formData.full_name.trim(),
-          phone: formData.phone || null,
-          role: formData.role,
-          manager_id: formData.manager_id || null,
-        });
-
-      if (profileError) {
-        // Rollback: احذف الـ auth user لو الـ profile فشل
-        await supabaseAdmin.auth.admin.deleteUser(authData.user.id);
-        toast.error('خطأ في إنشاء الملف الشخصي: ' + profileError.message);
+      if (result.error) {
+        toast.error(result.error);
       } else {
         toast.success('تم إنشاء المستخدم بنجاح — يمكنه تسجيل الدخول الآن');
         resetForm();
@@ -174,10 +150,9 @@ export default function UserManagement() {
     if (user.id === profile?.id) { toast.error('لا يمكنك حذف حسابك'); return; }
     if (!confirm(`هل أنت متأكد من حذف "${user.full_name}"؟`)) return;
 
-    // حذف من auth أولاً — الـ profile بيتحذف تلقائياً بـ cascade
-    const { error } = await supabaseAdmin.auth.admin.deleteUser(user.id);
-    if (error) {
-      toast.error('خطأ في الحذف: ' + error.message);
+    const result = await callAdminFunction({ delete_user_id: user.id });
+    if (result.error) {
+      toast.error('خطأ في الحذف: ' + result.error);
     } else {
       toast.success('تم حذف المستخدم');
       fetchUsers();
@@ -186,15 +161,15 @@ export default function UserManagement() {
 
   // ─── Reset Password ─────────────────────────────────────────────────────────
   async function handleResetPassword() {
-    if (!newPassword || newPassword.length < 6) {
-      toast.error('كلمة المرور يجب أن تكون 6 أحرف على الأقل');
-      return;
-    }
-    const { error } = await supabaseAdmin.auth.admin.updateUserById(resetPasswordId!, {
-      password: newPassword,
+    if (!newPassword || newPassword.length < 6) { toast.error('كلمة المرور 6 أحرف على الأقل'); return; }
+
+    const result = await callAdminFunction({
+      reset_password_for: resetPasswordId,
+      new_password: newPassword,
     });
-    if (error) {
-      toast.error('خطأ: ' + error.message);
+
+    if (result.error) {
+      toast.error('خطأ: ' + result.error);
     } else {
       toast.success('تم تغيير كلمة المرور بنجاح');
       setResetPasswordId(null);
@@ -267,19 +242,14 @@ export default function UserManagement() {
         <div className="relative flex-1">
           <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            type="text" value={search} onChange={(e) => setSearch(e.target.value)}
             placeholder="بحث بالاسم أو الإيميل أو الهاتف..."
-            className="w-full pr-9 pl-4 py-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white placeholder-slate-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+            className="w-full pr-9 pl-4 py-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white placeholder-slate-400 focus:ring-2 focus:ring-blue-500 text-sm"
           />
         </div>
         <div className="relative">
-          <select
-            value={roleFilter}
-            onChange={(e) => setRoleFilter(e.target.value as UserRole | '')}
-            className="appearance-none pr-4 pl-8 py-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 text-sm"
-          >
+          <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value as UserRole | '')}
+            className="appearance-none pr-4 pl-8 py-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 text-sm">
             <option value="">كل الأدوار</option>
             {(Object.keys(ROLE_LABELS) as UserRole[]).map(r => (
               <option key={r} value={r}>{ROLE_LABELS[r]}</option>
@@ -309,7 +279,6 @@ export default function UserManagement() {
           const canEdit = myRole === 'super_admin' || canManageRole(myRole, user.role);
           const subordinateCount = users.filter(u => u.manager_id === user.id).length;
           const badgeClass = roleBadge[user.role] ?? 'bg-slate-100 text-slate-700';
-
           return (
             <div key={user.id} className="bg-white dark:bg-slate-800 rounded-xl p-4 border border-slate-100 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -324,9 +293,7 @@ export default function UserManagement() {
                     <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${badgeClass}`}>
                       {ROLE_LABELS[user.role] ?? user.role}
                     </span>
-                    {!user.is_active && (
-                      <span className="px-2 py-0.5 bg-red-100 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-full text-xs">معطل</span>
-                    )}
+                    {!user.is_active && <span className="px-2 py-0.5 bg-red-100 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-full text-xs">معطل</span>}
                   </div>
                   <div className="flex items-center gap-3 mt-0.5 text-xs text-slate-500 dark:text-slate-400 flex-wrap">
                     <span className="flex items-center gap-1" dir="ltr"><Mail className="w-3 h-3" />{user.email}</span>
@@ -336,29 +303,21 @@ export default function UserManagement() {
                   </div>
                 </div>
               </div>
-
               {canEdit && (
                 <div className="flex items-center gap-1 flex-shrink-0">
-                  <button onClick={() => startEdit(user)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors" title="تعديل">
-                    <Edit2 className="w-4 h-4 text-slate-500" />
-                  </button>
-                  <button onClick={() => { setResetPasswordId(user.id); setNewPassword(''); }} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors" title="إعادة تعيين كلمة المرور">
-                    <Key className="w-4 h-4 text-amber-500" />
-                  </button>
-                  <button onClick={() => toggleActive(user)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors" title={user.is_active ? 'إيقاف' : 'تفعيل'}>
+                  <button onClick={() => startEdit(user)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg" title="تعديل"><Edit2 className="w-4 h-4 text-slate-500" /></button>
+                  <button onClick={() => { setResetPasswordId(user.id); setNewPassword(''); }} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg" title="إعادة تعيين كلمة المرور"><Key className="w-4 h-4 text-amber-500" /></button>
+                  <button onClick={() => toggleActive(user)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg" title={user.is_active ? 'إيقاف' : 'تفعيل'}>
                     {user.is_active ? <Ban className="w-4 h-4 text-orange-500" /> : <CheckCircle className="w-4 h-4 text-emerald-500" />}
                   </button>
                   {myRole === 'super_admin' && (
-                    <button onClick={() => deleteUser(user)} className="p-2 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors" title="حذف">
-                      <Trash2 className="w-4 h-4 text-red-500" />
-                    </button>
+                    <button onClick={() => deleteUser(user)} className="p-2 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg" title="حذف"><Trash2 className="w-4 h-4 text-red-500" /></button>
                   )}
                 </div>
               )}
             </div>
           );
         })}
-
         {filteredUsers.length === 0 && (
           <div className="text-center py-16 text-slate-400">
             <Users className="w-12 h-12 mx-auto mb-3 opacity-30" />
@@ -372,99 +331,57 @@ export default function UserManagement() {
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-md max-h-[92vh] overflow-y-auto">
             <div className="flex items-center justify-between p-6 border-b border-slate-100 dark:border-slate-700">
-              <h3 className="text-lg font-bold text-slate-900 dark:text-white">
-                {editingUser ? 'تعديل مستخدم' : 'إضافة مستخدم جديد'}
-              </h3>
-              <button onClick={resetForm} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg">
-                <X className="w-5 h-5 text-slate-500" />
-              </button>
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white">{editingUser ? 'تعديل مستخدم' : 'إضافة مستخدم جديد'}</h3>
+              <button onClick={resetForm} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg"><X className="w-5 h-5 text-slate-500" /></button>
             </div>
-
             <div className="p-6 space-y-4">
               <div>
                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">الاسم الكامل *</label>
-                <input
-                  type="text"
-                  value={formData.full_name}
-                  onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
-                  className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
-                />
+                <input type="text" value={formData.full_name} onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
+                  className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" />
               </div>
-
               {!editingUser && (
                 <>
                   <div>
                     <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">البريد الإلكتروني *</label>
-                    <input
-                      type="email"
-                      value={formData.email}
-                      onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                      dir="ltr"
-                      className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
-                    />
+                    <input type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} dir="ltr"
+                      className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" />
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">كلمة المرور *</label>
-                    <input
-                      type="password"
-                      value={formData.password}
-                      onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                      dir="ltr"
+                    <input type="password" value={formData.password} onChange={(e) => setFormData({ ...formData, password: e.target.value })} dir="ltr"
                       placeholder="6 أحرف على الأقل"
-                      className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
-                    />
+                      className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" />
                   </div>
                 </>
               )}
-
               <div>
                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">الهاتف</label>
-                <input
-                  type="tel"
-                  value={formData.phone}
-                  onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                  dir="ltr"
-                  className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
-                />
+                <input type="tel" value={formData.phone} onChange={(e) => setFormData({ ...formData, phone: e.target.value })} dir="ltr"
+                  className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" />
               </div>
-
               <div>
                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">الوظيفة</label>
-                <select
-                  value={formData.role}
-                  onChange={(e) => setFormData({ ...formData, role: e.target.value as UserRole, manager_id: '' })}
-                  className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
-                >
+                <select value={formData.role} onChange={(e) => setFormData({ ...formData, role: e.target.value as UserRole, manager_id: '' })}
+                  className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none">
                   {allowedRoles.map(r => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
                 </select>
               </div>
-
               <div>
                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">المدير المباشر</label>
-                <select
-                  value={formData.manager_id}
-                  onChange={(e) => setFormData({ ...formData, manager_id: e.target.value })}
-                  className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
-                >
+                <select value={formData.manager_id} onChange={(e) => setFormData({ ...formData, manager_id: e.target.value })}
+                  className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none">
                   <option value="">بدون مدير مباشر</option>
-                  {potentialManagers.map(m => (
-                    <option key={m.id} value={m.id}>{m.full_name} — {ROLE_LABELS[m.role]}</option>
-                  ))}
+                  {potentialManagers.map(m => <option key={m.id} value={m.id}>{m.full_name} — {ROLE_LABELS[m.role]}</option>)}
                 </select>
               </div>
-
               <div className="flex gap-3 pt-2">
-                <button
-                  onClick={handleSubmit}
-                  disabled={submitting}
-                  className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl font-medium transition-colors"
-                >
+                <button onClick={handleSubmit} disabled={submitting}
+                  className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl font-medium transition-colors">
                   {submitting ? 'جاري الحفظ...' : editingUser ? 'تحديث' : 'إنشاء'}
                 </button>
-                <button
-                  onClick={resetForm}
-                  className="flex-1 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-300 rounded-xl font-medium transition-colors"
-                >
+                <button onClick={resetForm}
+                  className="flex-1 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-300 rounded-xl font-medium transition-colors">
                   إلغاء
                 </button>
               </div>
@@ -479,31 +396,14 @@ export default function UserManagement() {
           <div className="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-sm p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-bold text-slate-900 dark:text-white">تغيير كلمة المرور</h3>
-              <button onClick={() => setResetPasswordId(null)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg">
-                <X className="w-5 h-5 text-slate-500" />
-              </button>
+              <button onClick={() => setResetPasswordId(null)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg"><X className="w-5 h-5 text-slate-500" /></button>
             </div>
-            <input
-              type="password"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              placeholder="كلمة المرور الجديدة (6 أحرف على الأقل)"
-              dir="ltr"
-              className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none mb-4"
-            />
+            <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)}
+              placeholder="كلمة المرور الجديدة (6 أحرف+)" dir="ltr"
+              className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none mb-4" />
             <div className="flex gap-3">
-              <button
-                onClick={handleResetPassword}
-                className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium transition-colors"
-              >
-                تغيير
-              </button>
-              <button
-                onClick={() => setResetPasswordId(null)}
-                className="flex-1 py-2.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl font-medium transition-colors"
-              >
-                إلغاء
-              </button>
+              <button onClick={handleResetPassword} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium transition-colors">تغيير</button>
+              <button onClick={() => setResetPasswordId(null)} className="flex-1 py-2.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl font-medium transition-colors">إلغاء</button>
             </div>
           </div>
         </div>
