@@ -63,16 +63,62 @@ export default function TargetManagement() {
 
     const [targetsRes, usersRes, policiesRes] = await Promise.all([
       tQuery,
-      supabase.from('profiles').select('id, full_name, role').eq('is_active', true).order('role').order('full_name'),
+      supabase
+        .from('profiles')
+        .select('id, full_name, role, manager_id')
+        .eq('is_active', true)
+        .neq('role', 'super_admin')
+        .order('role')
+        .order('full_name'),
       supabase.from('policies').select('agent_id, annual_premium, created_at'),
     ]);
 
-    const pList = policiesRes.data || [];
+    const usersData = usersRes.data || [];
+    const policies = policiesRes.data || [];
+
+    const getSubordinates = (managerId: string, users: any[]): string[] => {
+      const directSubs = users
+        .filter(u => u.manager_id === managerId)
+        .map(u => u.id);
+
+      let allSubs = [...directSubs];
+
+      directSubs.forEach(subId => {
+        allSubs.push(...getSubordinates(subId, users));
+      });
+
+      return allSubs;
+    };
+
     const enriched: EnrichedTarget[] = (targetsRes.data || []).map((t) => {
-      const { start, end } = getPeriodDateRange(t.period_type as TargetPeriod, t.year, t.period_number);
-      const achieved = pList
-        .filter(p => p.agent_id === t.user_id && p.created_at >= start && p.created_at < end)
-        .reduce((s, p) => s + Number(p.annual_premium), 0);
+      const user = usersData.find(u => u.id === t.user_id);
+
+      const { start, end } = getPeriodDateRange(
+        t.period_type as TargetPeriod,
+        t.year,
+        t.period_number
+      );
+
+      let productionUsers: string[] = [];
+
+      if (user?.role === 'super_admin') {
+        productionUsers = [];
+      } else {
+        productionUsers = [
+          t.user_id,
+          ...getSubordinates(t.user_id, usersData),
+        ];
+      }
+
+      const achieved = policies
+        .filter(
+          p =>
+            productionUsers.includes(p.agent_id) &&
+            p.created_at >= start &&
+            p.created_at < end
+        )
+        .reduce((sum, p) => sum + Number(p.annual_premium), 0);
+
       return { ...t, achieved } as EnrichedTarget;
     });
 
