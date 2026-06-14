@@ -31,31 +31,81 @@ export default function ClientManagement() {
       .from('clients')
       .select('*, agent:profiles!clients_agent_id_fkey(full_name)')
       .order('created_at', { ascending: false });
-    if (!error && data) setClients(data);
+    if (error) {
+      console.error('fetchClients error:', error);
+      toast.error('خطأ في تحميل العملاء: ' + error.message);
+    } else if (data) {
+      setClients(data);
+    }
     setLoading(false);
   }
 
   async function fetchAgents() {
-    const { data } = await supabase.from('profiles').select('id, full_name, role').eq('is_active', true);
-    if (data) setAgents(data);
+    // FIX: فلتر على الأدوار الصحيحة — كل الأدوار مسموح لها إضافة عملاء
+    // (الـ RLS تسمح بأي مستخدم مصادق عليه يضيف عميل بـ agent_id يملكه أو تابع له)
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id, full_name, role')
+      .eq('is_active', true)
+      .order('full_name');
+    if (error) {
+      console.error('fetchAgents error:', error);
+    } else if (data) {
+      setAgents(data);
+    }
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+
+    // FIX: التحقق من الحقول المطلوبة قبل الإرسال
+    if (!formData.name.trim()) {
+      toast.error('اسم العميل مطلوب');
+      return;
+    }
+    if (!formData.phone.trim()) {
+      toast.error('رقم الهاتف مطلوب');
+      return;
+    }
+
+    // FIX: agent_id يجب أن يكون دائماً معيّناً — fallback لـ profile?.id
+    const resolvedAgentId = formData.agent_id || profile?.id;
+    if (!resolvedAgentId) {
+      toast.error('تعذّر تحديد المندوب المسؤول');
+      return;
+    }
+
     const payload = {
-      ...formData,
-      agent_id: formData.agent_id || profile?.id,
-      marital_status: formData.marital_status || null,
+      name: formData.name.trim(),
+      national_id: formData.national_id.trim() || null,
+      phone: formData.phone.trim(),
+      phone2: formData.phone2.trim() || null,
+      address: formData.address.trim() || null,
+      job: formData.job.trim() || null,
       birth_date: formData.birth_date || null,
+      marital_status: formData.marital_status || null,
+      notes: formData.notes.trim() || null,
+      agent_id: resolvedAgentId,
     };
 
     if (editingClient) {
-      const { error } = await supabase.from('clients').update({ ...payload, updated_at: new Date().toISOString() }).eq('id', editingClient.id);
-      if (error) { toast.error('خطأ في تحديث العميل'); return; }
+      const { error } = await supabase
+        .from('clients')
+        .update({ ...payload, updated_at: new Date().toISOString() })
+        .eq('id', editingClient.id);
+      if (error) {
+        console.error('update client error:', error);
+        toast.error('خطأ في تحديث العميل: ' + error.message);
+        return;
+      }
       toast.success('تم تحديث العميل');
     } else {
       const { error } = await supabase.from('clients').insert(payload);
-      if (error) { toast.error('خطأ في إضافة العميل'); return; }
+      if (error) {
+        console.error('insert client error:', error);
+        toast.error('خطأ في إضافة العميل: ' + error.message);
+        return;
+      }
       toast.success('تم إضافة العميل');
     }
     resetForm();
@@ -65,7 +115,11 @@ export default function ClientManagement() {
   async function deleteClient(client: Client) {
     if (!confirm('هل أنت متأكد من حذف هذا العميل؟')) return;
     const { error } = await supabase.from('clients').delete().eq('id', client.id);
-    if (error) { toast.error('لا يمكن حذف عميل مرتبط بوثائق'); return; }
+    if (error) {
+      console.error('delete client error:', error);
+      toast.error('لا يمكن حذف عميل مرتبط بوثائق');
+      return;
+    }
     toast.success('تم حذف العميل');
     fetchClients();
   }
@@ -73,10 +127,16 @@ export default function ClientManagement() {
   function startEdit(client: Client) {
     setEditingClient(client);
     setFormData({
-      name: client.name, national_id: client.national_id || '', phone: client.phone,
-      phone2: client.phone2 || '', address: client.address || '', job: client.job || '',
-      birth_date: client.birth_date || '', marital_status: client.marital_status || '',
-      notes: client.notes || '', agent_id: client.agent_id,
+      name: client.name,
+      national_id: client.national_id || '',
+      phone: client.phone,
+      phone2: client.phone2 || '',
+      address: client.address || '',
+      job: client.job || '',
+      birth_date: client.birth_date || '',
+      marital_status: client.marital_status || '',
+      notes: client.notes || '',
+      agent_id: client.agent_id,
     });
     setShowForm(true);
   }
@@ -84,11 +144,16 @@ export default function ClientManagement() {
   function resetForm() {
     setShowForm(false);
     setEditingClient(null);
-    setFormData({ name: '', national_id: '', phone: '', phone2: '', address: '', job: '', birth_date: '', marital_status: '', notes: '', agent_id: '' });
+    setFormData({
+      name: '', national_id: '', phone: '', phone2: '', address: '',
+      job: '', birth_date: '', marital_status: '', notes: '', agent_id: '',
+    });
   }
 
   const filtered = clients.filter(c =>
-    c.name.includes(search) || c.phone.includes(search) || (c.national_id || '').includes(search)
+    c.name.includes(search) ||
+    c.phone.includes(search) ||
+    (c.national_id || '').includes(search)
   );
 
   if (loading) return <LoadingSpinner />;
@@ -100,7 +165,10 @@ export default function ClientManagement() {
         description={`${clients.length} عميل`}
         icon={UserCircle}
         actions={
-          <button onClick={() => setShowForm(true)} className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-medium transition-colors">
+          <button
+            onClick={() => setShowForm(true)}
+            className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-medium transition-colors"
+          >
             <Plus className="w-4 h-4" />
             <span className="hidden sm:inline">إضافة عميل</span>
           </button>
@@ -110,7 +178,9 @@ export default function ClientManagement() {
       <div className="relative mb-4">
         <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
         <input
-          type="text" value={search} onChange={(e) => setSearch(e.target.value)}
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
           placeholder="بحث بالاسم أو الهاتف أو الرقم القومي..."
           className="w-full pr-10 pl-4 py-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white placeholder-slate-400 focus:ring-2 focus:ring-blue-500"
         />
@@ -153,61 +223,141 @@ export default function ClientManagement() {
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6">
             <div className="flex items-center justify-between mb-6">
-              <h3 className="text-lg font-bold text-slate-900 dark:text-white">{editingClient ? 'تعديل عميل' : 'إضافة عميل'}</h3>
-              <button onClick={resetForm} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg"><X className="w-5 h-5 text-slate-500" /></button>
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white">
+                {editingClient ? 'تعديل عميل' : 'إضافة عميل'}
+              </h3>
+              <button onClick={resetForm} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg">
+                <X className="w-5 h-5 text-slate-500" />
+              </button>
             </div>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="sm:col-span-2">
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">الاسم</label>
-                  <input type="text" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} required className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500" />
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    الاسم <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.name}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                    required
+                    className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500"
+                  />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">الرقم القومي</label>
-                  <input type="text" value={formData.national_id} onChange={(e) => setFormData({ ...formData, national_id: e.target.value })} dir="ltr" className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500" />
+                  <input
+                    type="text"
+                    value={formData.national_id}
+                    onChange={(e) => setFormData({ ...formData, national_id: e.target.value })}
+                    dir="ltr"
+                    className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500"
+                  />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">الهاتف</label>
-                  <input type="tel" value={formData.phone} onChange={(e) => setFormData({ ...formData, phone: e.target.value })} required dir="ltr" className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500" />
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    الهاتف <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="tel"
+                    value={formData.phone}
+                    onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                    required
+                    dir="ltr"
+                    className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500"
+                  />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">هاتف إضافي</label>
-                  <input type="tel" value={formData.phone2} onChange={(e) => setFormData({ ...formData, phone2: e.target.value })} dir="ltr" className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500" />
+                  <input
+                    type="tel"
+                    value={formData.phone2}
+                    onChange={(e) => setFormData({ ...formData, phone2: e.target.value })}
+                    dir="ltr"
+                    className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500"
+                  />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">الوظيفة</label>
-                  <input type="text" value={formData.job} onChange={(e) => setFormData({ ...formData, job: e.target.value })} className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500" />
+                  <input
+                    type="text"
+                    value={formData.job}
+                    onChange={(e) => setFormData({ ...formData, job: e.target.value })}
+                    className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500"
+                  />
                 </div>
                 <div className="sm:col-span-2">
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">العنوان</label>
-                  <input type="text" value={formData.address} onChange={(e) => setFormData({ ...formData, address: e.target.value })} className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500" />
+                  <input
+                    type="text"
+                    value={formData.address}
+                    onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                    className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500"
+                  />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">تاريخ الميلاد</label>
-                  <input type="date" value={formData.birth_date} onChange={(e) => setFormData({ ...formData, birth_date: e.target.value })} className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500" />
+                  <input
+                    type="date"
+                    value={formData.birth_date}
+                    onChange={(e) => setFormData({ ...formData, birth_date: e.target.value })}
+                    className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500"
+                  />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">الحالة الاجتماعية</label>
-                  <select value={formData.marital_status} onChange={(e) => setFormData({ ...formData, marital_status: e.target.value })} className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500">
+                  <select
+                    value={formData.marital_status}
+                    onChange={(e) => setFormData({ ...formData, marital_status: e.target.value })}
+                    className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500"
+                  >
                     <option value="">غير محدد</option>
-                    {Object.entries(MARITAL_STATUS_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                    {Object.entries(MARITAL_STATUS_LABELS).map(([k, v]) => (
+                      <option key={k} value={k}>{v}</option>
+                    ))}
                   </select>
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">المندوب</label>
-                  <select value={formData.agent_id} onChange={(e) => setFormData({ ...formData, agent_id: e.target.value })} className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500">
-                    <option value="">أنا</option>
-                    {agents.map(a => <option key={a.id} value={a.id}>{a.full_name}</option>)}
+                <div className="sm:col-span-2">
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">المندوب المسؤول</label>
+                  <select
+                    value={formData.agent_id}
+                    onChange={(e) => setFormData({ ...formData, agent_id: e.target.value })}
+                    className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500"
+                  >
+                    {/* FIX: الخيار الافتراضي يُظهر اسم المستخدم الحالي وليس "أنا" المبهمة */}
+                    <option value="">{profile?.full_name ?? 'أنا'}</option>
+                    {agents
+                      .filter(a => a.id !== profile?.id) // لا تُكرر المستخدم الحالي
+                      .map(a => (
+                        <option key={a.id} value={a.id}>{a.full_name}</option>
+                      ))
+                    }
                   </select>
                 </div>
                 <div className="sm:col-span-2">
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">ملاحظات</label>
-                  <textarea value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} rows={3} className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 resize-none" />
+                  <textarea
+                    value={formData.notes}
+                    onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                    rows={3}
+                    className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 resize-none"
+                  />
                 </div>
               </div>
               <div className="flex gap-3 pt-2">
-                <button type="submit" className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium transition-colors">{editingClient ? 'تحديث' : 'إضافة'}</button>
-                <button type="button" onClick={resetForm} className="flex-1 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-300 rounded-xl font-medium transition-colors">إلغاء</button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium transition-colors"
+                >
+                  {editingClient ? 'تحديث' : 'إضافة'}
+                </button>
+                <button
+                  type="button"
+                  onClick={resetForm}
+                  className="flex-1 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-300 rounded-xl font-medium transition-colors"
+                >
+                  إلغاء
+                </button>
               </div>
             </form>
           </div>

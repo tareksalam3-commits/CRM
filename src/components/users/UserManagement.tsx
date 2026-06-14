@@ -75,6 +75,7 @@ export default function UserManagement() {
     setSubmitting(true);
 
     if (editingUser) {
+      // ── Edit existing user ──────────────────────────────
       const { error } = await supabase
         .from('profiles')
         .update({
@@ -88,55 +89,51 @@ export default function UserManagement() {
 
       if (error) { toast.error('خطأ في التحديث: ' + error.message); }
       else { toast.success('تم تحديث المستخدم بنجاح'); resetForm(); fetchUsers(); }
+
     } else {
+      // ── Create new user via Edge Function ───────────────
+      // This uses the server-side Admin API so the admin session is NEVER affected.
       if (!formData.email.trim() || !formData.password) {
         toast.error('البريد الإلكتروني وكلمة المرور مطلوبان');
         setSubmitting(false);
         return;
       }
-
-      // Save admin session before signUp hijacks it
-      let adminTokens: { access_token: string; refresh_token: string } | null = null;
-      try {
-        const { data: { session: s } } = await supabase.auth.getSession();
-        if (s) adminTokens = { access_token: s.access_token, refresh_token: s.refresh_token };
-      } catch { /* ignore */ }
-
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: formData.email.trim(),
-        password: formData.password,
-        options: { emailRedirectTo: undefined },
-      });
-
-      // Always restore admin session
-      if (adminTokens) {
-        try { await supabase.auth.setSession(adminTokens); }
-        catch { window.location.reload(); return; }
-      }
-
-      if (authError || !authData.user) {
-        toast.error(authError?.message || 'خطأ في إنشاء الحساب');
+      if (formData.password.length < 6) {
+        toast.error('كلمة المرور يجب أن تكون 6 أحرف على الأقل');
         setSubmitting(false);
         return;
       }
 
-      const { error: profileError } = await supabase.from('profiles').insert({
-        id: authData.user.id,
-        email: formData.email.trim(),
-        full_name: formData.full_name.trim(),
-        phone: formData.phone || null,
-        role: formData.role,
-        manager_id: formData.manager_id || null,
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
+
+      if (!accessToken) {
+        toast.error('انتهت الجلسة، يرجى إعادة تسجيل الدخول');
+        setSubmitting(false);
+        return;
+      }
+
+      const { data: fnData, error: fnError } = await supabase.functions.invoke('create-user', {
+        body: {
+          email: formData.email.trim(),
+          password: formData.password,
+          full_name: formData.full_name.trim(),
+          phone: formData.phone || null,
+          role: formData.role,
+          manager_id: formData.manager_id || null,
+        },
       });
 
-      if (profileError) {
-        toast.error('خطأ في إنشاء الملف الشخصي: ' + profileError.message);
+      if (fnError || fnData?.error) {
+        const msg = fnData?.error || fnError?.message || 'خطأ في إنشاء المستخدم';
+        toast.error(msg);
       } else {
         toast.success('تم إنشاء المستخدم بنجاح');
         resetForm();
         fetchUsers();
       }
     }
+
     setSubmitting(false);
   }
 
@@ -167,10 +164,18 @@ export default function UserManagement() {
       toast.error('كلمة المرور يجب أن تكون 6 أحرف على الأقل');
       return;
     }
-    // Uses supabase admin API via service-role if available, otherwise show instruction
-    toast.success('تم إرسال رابط إعادة التعيين للمستخدم (يحتاج Service Role Key)');
-    setResetPasswordId(null);
-    setNewPassword('');
+
+    const { data: fnData, error: fnError } = await supabase.functions.invoke('create-user', {
+      body: { reset_password_for: resetPasswordId, new_password: newPassword },
+    });
+
+    if (fnError || fnData?.error) {
+      toast.error(fnData?.error || fnError?.message || 'خطأ في إعادة تعيين كلمة المرور');
+    } else {
+      toast.success('تم تغيير كلمة المرور بنجاح');
+      setResetPasswordId(null);
+      setNewPassword('');
+    }
   }
 
   function resetForm() {
@@ -280,6 +285,8 @@ export default function UserManagement() {
           const managerProfile = user.manager_id ? users.find(u => u.id === user.manager_id) : null;
           const canEdit = myRole === 'super_admin' || canManageRole(myRole, user.role);
           const subordinateCount = users.filter(u => u.manager_id === user.id).length;
+          // FIX: safe fallback for unknown roles to prevent crash
+          const badgeClass = roleBadge[user.role] ?? 'bg-slate-100 text-slate-700';
 
           return (
             <div
@@ -295,8 +302,8 @@ export default function UserManagement() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
                     <p className="font-semibold text-slate-900 dark:text-white truncate">{user.full_name}</p>
-                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${roleBadge[user.role]}`}>
-                      {ROLE_LABELS[user.role]}
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${badgeClass}`}>
+                      {ROLE_LABELS[user.role] ?? user.role}
                     </span>
                     {!user.is_active && (
                       <span className="px-2 py-0.5 bg-red-100 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-full text-xs">معطل</span>
@@ -403,6 +410,7 @@ export default function UserManagement() {
                       value={formData.password}
                       onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                       dir="ltr"
+                      placeholder="6 أحرف على الأقل"
                       className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
                     />
                   </div>
@@ -478,13 +486,13 @@ export default function UserManagement() {
               </button>
             </div>
             <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
-              أدخل كلمة المرور الجديدة. يتطلب هذا Service Role Key في الـ backend.
+              أدخل كلمة المرور الجديدة للمستخدم.
             </p>
             <input
               type="password"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
-              placeholder="كلمة المرور الجديدة"
+              placeholder="كلمة المرور الجديدة (6 أحرف+)"
               dir="ltr"
               className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none mb-4"
             />

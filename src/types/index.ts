@@ -168,12 +168,12 @@ export interface SystemSetting {
 
 // ─── Labels ────────────────────────────────────────────────
 export const ROLE_LABELS: Record<UserRole, string> = {
-  super_admin: 'مدير النظام',
-  dev_manager: 'مدير التطوير',
+  super_admin: 'سوبر ادمن',
+  dev_manager: 'مدير تطوير',
   general_supervisor: 'مراقب عام',
   supervisor: 'مراقب',
-  team_leader: 'رئيس فريق',
-  agent: 'مندوب',
+  team_leader: 'رئيس مجموعة',
+  agent: 'أجنت',
 };
 
 /** Higher number = lower in hierarchy */

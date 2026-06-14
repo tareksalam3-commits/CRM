@@ -13,6 +13,8 @@ export default function PolicyManagement() {
   const [policies, setPolicies] = useState<Policy[]>([]);
   const [clients, setClients] = useState<{ id: string; name: string }[]>([]);
   const [agents, setAgents] = useState<{ id: string; full_name: string; role: string }[]>([]);
+  const [products, setProducts] = useState<string[]>([]);
+  const [companies, setCompanies] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingPolicy, setEditingPolicy] = useState<Policy | null>(null);
@@ -28,14 +30,21 @@ export default function PolicyManagement() {
   useEffect(() => { loadData(); }, []);
 
   async function loadData() {
-    const [policiesRes, clientsRes, agentsRes] = await Promise.all([
+    const [policiesRes, clientsRes, agentsRes, settingsRes] = await Promise.all([
       supabase.from('policies').select('*, client:clients(name), agent:profiles!policies_agent_id_fkey(full_name)').order('created_at', { ascending: false }),
       supabase.from('clients').select('id, name'),
       supabase.from('profiles').select('id, full_name, role').eq('is_active', true),
+      supabase.from('system_settings').select('key, value'),
     ]);
     if (policiesRes.data) setPolicies(policiesRes.data as any);
     if (clientsRes.data) setClients(clientsRes.data);
     if (agentsRes.data) setAgents(agentsRes.data);
+    if (settingsRes.data) {
+      const mapped: Record<string, any> = {};
+      settingsRes.data.forEach(s => { mapped[s.key] = s.value; });
+      setProducts(mapped.insurance_products || []);
+      setCompanies(mapped.insurance_companies || []);
+    }
     setLoading(false);
   }
 
@@ -55,7 +64,6 @@ export default function PolicyManagement() {
     } else {
       const { data, error } = await supabase.from('policies').insert(payload).select().single();
       if (error) { toast.error('خطأ في إنشاء الوثيقة'); return; }
-      // Generate installments
       if (data) await generateInstallments(data.id, Number(formData.annual_premium), formData.payment_frequency, formData.start_date);
       toast.success('تم إنشاء الوثيقة وجدول الأقساط');
     }
@@ -185,11 +193,17 @@ export default function PolicyManagement() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">المنتج</label>
-                  <input type="text" value={formData.product} onChange={(e) => setFormData({ ...formData, product: e.target.value })} required className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500" />
+                  <select value={formData.product} onChange={(e) => setFormData({ ...formData, product: e.target.value })} required className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500">
+                    <option value="">اختر المنتج</option>
+                    {products.map(p => <option key={p} value={p}>{p}</option>)}
+                  </select>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">شركة التأمين</label>
-                  <input type="text" value={formData.insurance_company} onChange={(e) => setFormData({ ...formData, insurance_company: e.target.value })} required className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500" />
+                  <select value={formData.insurance_company} onChange={(e) => setFormData({ ...formData, insurance_company: e.target.value })} required className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500">
+                    <option value="">اختر الشركة</option>
+                    {companies.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">مبلغ التأمين</label>
@@ -219,7 +233,7 @@ export default function PolicyManagement() {
                     {Object.entries(POLICY_STATUS_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                   </select>
                 </div>
-                <div>
+                <div className="sm:col-span-2">
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">المندوب</label>
                   <select value={formData.agent_id} onChange={(e) => setFormData({ ...formData, agent_id: e.target.value })} className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500">
                     <option value="">أنا</option>
