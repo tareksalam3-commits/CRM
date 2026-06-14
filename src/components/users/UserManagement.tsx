@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
+import { createClient } from '@supabase/supabase-js';
 import { useAuth } from '../../contexts/AuthContext';
 import { Profile, ROLE_LABELS, UserRole } from '../../types';
 import { assignableRoles, canManageRole, isManager } from '../../lib/rbac';
@@ -10,6 +11,14 @@ import {
   Search, Key, ChevronDown, Shield, Phone, Mail,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+
+// Admin client uses service role key — can create/delete auth users
+// Key is stored in Vercel env vars and never shown in UI
+const supabaseAdmin = createClient(
+  import.meta.env.VITE_SUPABASE_URL,
+  import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY,
+  { auth: { autoRefreshToken: false, persistSession: false } }
+);
 
 interface FormData {
   email: string;
@@ -50,15 +59,12 @@ export default function UserManagement() {
 
   useEffect(() => { fetchUsers(); }, [fetchUsers]);
 
-  // ─── Helpers ────────────────────────────────────────────
   const myRole = profile?.role ?? 'agent';
 
-  /** Users visible as candidates for manager field */
   const potentialManagers = users.filter(u =>
     u.is_active && u.role !== 'agent' && u.id !== editingUser?.id
   );
 
-  /** Filtered list shown in table */
   const filteredUsers = users.filter(u => {
     const matchSearch =
       u.full_name.includes(search) ||
@@ -68,10 +74,9 @@ export default function UserManagement() {
     return matchSearch && matchRole;
   });
 
-  // ─── Submit ────────────────────────────────────────────
+  // ─── Create / Edit ──────────────────────────────────────
   async function handleSubmit() {
     if (!formData.full_name.trim()) { toast.error('الاسم مطلوب'); return; }
-
     setSubmitting(true);
 
     if (editingUser) {
@@ -91,8 +96,7 @@ export default function UserManagement() {
       else { toast.success('تم تحديث المستخدم بنجاح'); resetForm(); fetchUsers(); }
 
     } else {
-      // ── Create new user via Edge Function ───────────────
-      // This uses the server-side Admin API so the admin session is NEVER affected.
+      // ── Create new user via Admin API ───────────────────
       if (!formData.email.trim() || !formData.password) {
         toast.error('البريد الإلكتروني وكلمة المرور مطلوبان');
         setSubmitting(false);
@@ -104,29 +108,32 @@ export default function UserManagement() {
         return;
       }
 
-      const { data: sessionData } = await supabase.auth.getSession();
-      const accessToken = sessionData?.session?.access_token;
+      // createUser via admin — does NOT touch current admin session
+      const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
+        email: formData.email.trim(),
+        password: formData.password,
+        email_confirm: true,
+      });
 
-      if (!accessToken) {
-        toast.error('انتهت الجلسة، يرجى إعادة تسجيل الدخول');
+      if (authError || !authData?.user) {
+        toast.error(authError?.message || 'خطأ في إنشاء الحساب');
         setSubmitting(false);
         return;
       }
 
-      const { data: fnData, error: fnError } = await supabase.functions.invoke('create-user', {
-        body: {
-          email: formData.email.trim(),
-          password: formData.password,
-          full_name: formData.full_name.trim(),
-          phone: formData.phone || null,
-          role: formData.role,
-          manager_id: formData.manager_id || null,
-        },
+      const { error: profileError } = await supabaseAdmin.from('profiles').insert({
+        id: authData.user.id,
+        email: formData.email.trim(),
+        full_name: formData.full_name.trim(),
+        phone: formData.phone || null,
+        role: formData.role,
+        manager_id: formData.manager_id || null,
       });
 
-      if (fnError || fnData?.error) {
-        const msg = fnData?.error || fnError?.message || 'خطأ في إنشاء المستخدم';
-        toast.error(msg);
+      if (profileError) {
+        // Rollback auth user if profile insert failed
+        await supabaseAdmin.auth.admin.deleteUser(authData.user.id);
+        toast.error('خطأ في إنشاء الملف الشخصي: ' + profileError.message);
       } else {
         toast.success('تم إنشاء المستخدم بنجاح');
         resetForm();
@@ -154,9 +161,12 @@ export default function UserManagement() {
   async function deleteUser(user: Profile) {
     if (user.id === profile?.id) { toast.error('لا يمكنك حذف حسابك'); return; }
     if (!confirm(`هل أنت متأكد من حذف "${user.full_name}"؟`)) return;
-    const { error } = await supabase.from('profiles').delete().eq('id', user.id);
-    if (!error) { toast.success('تم حذف المستخدم'); fetchUsers(); }
-    else { toast.error('خطأ: ' + error.message); }
+
+    // Delete from auth first via admin, then profile cascades
+    const { error: authErr } = await supabaseAdmin.auth.admin.deleteUser(user.id);
+    if (authErr) { toast.error('خطأ: ' + authErr.message); return; }
+    toast.success('تم حذف المستخدم');
+    fetchUsers();
   }
 
   async function handleResetPassword() {
@@ -164,18 +174,13 @@ export default function UserManagement() {
       toast.error('كلمة المرور يجب أن تكون 6 أحرف على الأقل');
       return;
     }
-
-    const { data: fnData, error: fnError } = await supabase.functions.invoke('create-user', {
-      body: { reset_password_for: resetPasswordId, new_password: newPassword },
+    const { error } = await supabaseAdmin.auth.admin.updateUserById(resetPasswordId!, {
+      password: newPassword,
     });
-
-    if (fnError || fnData?.error) {
-      toast.error(fnData?.error || fnError?.message || 'خطأ في إعادة تعيين كلمة المرور');
-    } else {
-      toast.success('تم تغيير كلمة المرور بنجاح');
-      setResetPasswordId(null);
-      setNewPassword('');
-    }
+    if (error) { toast.error('خطأ: ' + error.message); return; }
+    toast.success('تم تغيير كلمة المرور بنجاح');
+    setResetPasswordId(null);
+    setNewPassword('');
   }
 
   function resetForm() {
@@ -212,7 +217,6 @@ export default function UserManagement() {
 
   const allowedRoles = assignableRoles(myRole);
 
-  // ─── Role badge colors ─────────────────────────────────
   const roleBadge: Record<UserRole, string> = {
     super_admin: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300',
     dev_manager: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300',
@@ -266,7 +270,7 @@ export default function UserManagement() {
         </div>
       </div>
 
-      {/* Stats row */}
+      {/* Stats */}
       <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-4">
         {(Object.keys(ROLE_LABELS) as UserRole[]).map(r => {
           const count = users.filter(u => u.role === r).length;
@@ -285,14 +289,10 @@ export default function UserManagement() {
           const managerProfile = user.manager_id ? users.find(u => u.id === user.manager_id) : null;
           const canEdit = myRole === 'super_admin' || canManageRole(myRole, user.role);
           const subordinateCount = users.filter(u => u.manager_id === user.id).length;
-          // FIX: safe fallback for unknown roles to prevent crash
           const badgeClass = roleBadge[user.role] ?? 'bg-slate-100 text-slate-700';
 
           return (
-            <div
-              key={user.id}
-              className="bg-white dark:bg-slate-800 rounded-xl p-4 border border-slate-100 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-            >
+            <div key={user.id} className="bg-white dark:bg-slate-800 rounded-xl p-4 border border-slate-100 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-3 flex-1 min-w-0">
                 <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${user.is_active ? 'bg-blue-100 dark:bg-blue-900/40' : 'bg-slate-100 dark:bg-slate-700'}`}>
                   <span className={`font-bold text-sm ${user.is_active ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400'}`}>
@@ -320,36 +320,17 @@ export default function UserManagement() {
 
               {canEdit && (
                 <div className="flex items-center gap-1 flex-shrink-0">
-                  <button
-                    onClick={() => startEdit(user)}
-                    className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
-                    title="تعديل"
-                  >
+                  <button onClick={() => startEdit(user)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors" title="تعديل">
                     <Edit2 className="w-4 h-4 text-slate-500" />
                   </button>
-                  <button
-                    onClick={() => { setResetPasswordId(user.id); setNewPassword(''); }}
-                    className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
-                    title="إعادة تعيين كلمة المرور"
-                  >
+                  <button onClick={() => { setResetPasswordId(user.id); setNewPassword(''); }} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors" title="إعادة تعيين كلمة المرور">
                     <Key className="w-4 h-4 text-amber-500" />
                   </button>
-                  <button
-                    onClick={() => toggleActive(user)}
-                    className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
-                    title={user.is_active ? 'إيقاف' : 'تفعيل'}
-                  >
-                    {user.is_active
-                      ? <Ban className="w-4 h-4 text-orange-500" />
-                      : <CheckCircle className="w-4 h-4 text-emerald-500" />
-                    }
+                  <button onClick={() => toggleActive(user)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors" title={user.is_active ? 'إيقاف' : 'تفعيل'}>
+                    {user.is_active ? <Ban className="w-4 h-4 text-orange-500" /> : <CheckCircle className="w-4 h-4 text-emerald-500" />}
                   </button>
                   {myRole === 'super_admin' && (
-                    <button
-                      onClick={() => deleteUser(user)}
-                      className="p-2 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
-                      title="حذف"
-                    >
+                    <button onClick={() => deleteUser(user)} className="p-2 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors" title="حذف">
                       <Trash2 className="w-4 h-4 text-red-500" />
                     </button>
                   )}
@@ -367,7 +348,7 @@ export default function UserManagement() {
         )}
       </div>
 
-      {/* ─── Add / Edit Modal ─── */}
+      {/* Add / Edit Modal */}
       {showForm && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-md max-h-[92vh] overflow-y-auto">
@@ -383,90 +364,56 @@ export default function UserManagement() {
             <div className="p-6 space-y-4">
               <div>
                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">الاسم الكامل *</label>
-                <input
-                  type="text"
-                  value={formData.full_name}
-                  onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
-                  className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
-                />
+                <input type="text" value={formData.full_name} onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
+                  className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" />
               </div>
 
               {!editingUser && (
                 <>
                   <div>
                     <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">البريد الإلكتروني *</label>
-                    <input
-                      type="email"
-                      value={formData.email}
-                      onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                      dir="ltr"
-                      className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
-                    />
+                    <input type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} dir="ltr"
+                      className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" />
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">كلمة المرور *</label>
-                    <input
-                      type="password"
-                      value={formData.password}
-                      onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                      dir="ltr"
+                    <input type="password" value={formData.password} onChange={(e) => setFormData({ ...formData, password: e.target.value })} dir="ltr"
                       placeholder="6 أحرف على الأقل"
-                      className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
-                    />
+                      className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" />
                   </div>
                 </>
               )}
 
               <div>
                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">الهاتف</label>
-                <input
-                  type="tel"
-                  value={formData.phone}
-                  onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                  dir="ltr"
-                  className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
-                />
+                <input type="tel" value={formData.phone} onChange={(e) => setFormData({ ...formData, phone: e.target.value })} dir="ltr"
+                  className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" />
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">الوظيفة</label>
-                <select
-                  value={formData.role}
-                  onChange={(e) => setFormData({ ...formData, role: e.target.value as UserRole, manager_id: '' })}
-                  className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
-                >
-                  {allowedRoles.map(r => (
-                    <option key={r} value={r}>{ROLE_LABELS[r]}</option>
-                  ))}
+                <select value={formData.role} onChange={(e) => setFormData({ ...formData, role: e.target.value as UserRole, manager_id: '' })}
+                  className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none">
+                  {allowedRoles.map(r => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
                 </select>
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">المدير المباشر</label>
-                <select
-                  value={formData.manager_id}
-                  onChange={(e) => setFormData({ ...formData, manager_id: e.target.value })}
-                  className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
-                >
+                <select value={formData.manager_id} onChange={(e) => setFormData({ ...formData, manager_id: e.target.value })}
+                  className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none">
                   <option value="">بدون مدير مباشر</option>
-                  {potentialManagers.map(m => (
-                    <option key={m.id} value={m.id}>{m.full_name} — {ROLE_LABELS[m.role]}</option>
-                  ))}
+                  {potentialManagers.map(m => <option key={m.id} value={m.id}>{m.full_name} — {ROLE_LABELS[m.role]}</option>)}
                 </select>
               </div>
 
               <div className="flex gap-3 pt-2">
-                <button
-                  onClick={handleSubmit}
-                  disabled={submitting}
-                  className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl font-medium transition-colors"
-                >
+                <button onClick={handleSubmit} disabled={submitting}
+                  className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl font-medium transition-colors">
                   {submitting ? 'جاري الحفظ...' : editingUser ? 'تحديث' : 'إنشاء'}
                 </button>
-                <button
-                  onClick={resetForm}
-                  className="flex-1 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-300 rounded-xl font-medium transition-colors"
-                >
+                <button onClick={resetForm}
+                  className="flex-1 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-300 rounded-xl font-medium transition-colors">
                   إلغاء
                 </button>
               </div>
@@ -475,7 +422,7 @@ export default function UserManagement() {
         </div>
       )}
 
-      {/* ─── Reset Password Modal ─── */}
+      {/* Reset Password Modal */}
       {resetPasswordId && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-sm p-6">
@@ -485,30 +432,12 @@ export default function UserManagement() {
                 <X className="w-5 h-5 text-slate-500" />
               </button>
             </div>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
-              أدخل كلمة المرور الجديدة للمستخدم.
-            </p>
-            <input
-              type="password"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              placeholder="كلمة المرور الجديدة (6 أحرف+)"
-              dir="ltr"
-              className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none mb-4"
-            />
+            <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)}
+              placeholder="كلمة المرور الجديدة (6 أحرف+)" dir="ltr"
+              className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none mb-4" />
             <div className="flex gap-3">
-              <button
-                onClick={handleResetPassword}
-                className="flex-1 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-medium transition-colors"
-              >
-                تعيين
-              </button>
-              <button
-                onClick={() => setResetPasswordId(null)}
-                className="flex-1 py-2.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl font-medium transition-colors"
-              >
-                إلغاء
-              </button>
+              <button onClick={handleResetPassword} className="flex-1 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-medium transition-colors">تعيين</button>
+              <button onClick={() => setResetPasswordId(null)} className="flex-1 py-2.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl font-medium transition-colors">إلغاء</button>
             </div>
           </div>
         </div>
