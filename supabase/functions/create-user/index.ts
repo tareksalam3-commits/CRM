@@ -8,8 +8,9 @@ const cors = {
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
 
-  const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-  const SERVICE_KEY  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const SUPABASE_URL  = Deno.env.get("SUPABASE_URL")!;
+  const SERVICE_KEY   = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const ANON_KEY      = Deno.env.get("SUPABASE_ANON_KEY")!;
 
   // ── تحقق من هوية الطالب ──────────────────────────────────
   const authHeader = req.headers.get("Authorization") || "";
@@ -21,9 +22,12 @@ serve(async (req) => {
     });
   }
 
-  // نتحقق من صحة الـ token عبر Supabase Admin API
+  // FIX: استخدام ANON_KEY كـ apikey عند التحقق من الـ user token
   const userRes = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
-    headers: { "Authorization": `Bearer ${token}`, "apikey": SERVICE_KEY },
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "apikey": ANON_KEY,
+    },
   });
 
   if (!userRes.ok) {
@@ -35,7 +39,7 @@ serve(async (req) => {
 
   const caller = await userRes.json();
 
-  // نتحقق من دور الطالب
+  // تحقق من دور الطالب
   const profileRes = await fetch(
     `${SUPABASE_URL}/rest/v1/profiles?id=eq.${caller.id}&select=role`,
     { headers: { "Authorization": `Bearer ${SERVICE_KEY}`, "apikey": SERVICE_KEY } }
@@ -52,7 +56,7 @@ serve(async (req) => {
 
   const body = await req.json();
 
-  // ── إعادة تعيين كلمة المرور ─────────────────────────────
+  // ── إعادة تعيين كلمة المرور ──────────────────────────────
   if (body.reset_password_for) {
     if (!body.new_password || body.new_password.length < 6) {
       return new Response(JSON.stringify({ error: "كلمة المرور 6 أحرف على الأقل" }), {
@@ -73,7 +77,7 @@ serve(async (req) => {
     return new Response(JSON.stringify({ success: true }), { headers: { ...cors, "Content-Type": "application/json" } });
   }
 
-  // ── حذف مستخدم ──────────────────────────────────────────
+  // ── حذف مستخدم ───────────────────────────────────────────
   if (body.delete_user_id) {
     const res = await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${body.delete_user_id}`, {
       method: "DELETE",
@@ -88,7 +92,7 @@ serve(async (req) => {
     return new Response(JSON.stringify({ success: true }), { headers: { ...cors, "Content-Type": "application/json" } });
   }
 
-  // ── إنشاء مستخدم جديد ───────────────────────────────────
+  // ── إنشاء مستخدم جديد ────────────────────────────────────
   const { email, password, full_name, phone, role, manager_id } = body;
 
   if (!email || !password || !full_name) {
@@ -102,10 +106,14 @@ serve(async (req) => {
     });
   }
 
-  // إنشاء Auth user
+  // إنشاء Auth user عبر Admin API
   const createRes = await fetch(`${SUPABASE_URL}/auth/v1/admin/users`, {
     method: "POST",
-    headers: { "Authorization": `Bearer ${SERVICE_KEY}`, "apikey": SERVICE_KEY, "Content-Type": "application/json" },
+    headers: {
+      "Authorization": `Bearer ${SERVICE_KEY}`,
+      "apikey": SERVICE_KEY,
+      "Content-Type": "application/json",
+    },
     body: JSON.stringify({ email, password, email_confirm: true }),
   });
 
@@ -122,18 +130,24 @@ serve(async (req) => {
   const profRes = await fetch(`${SUPABASE_URL}/rest/v1/profiles`, {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${SERVICE_KEY}`, "apikey": SERVICE_KEY,
-      "Content-Type": "application/json", "Prefer": "return=minimal",
+      "Authorization": `Bearer ${SERVICE_KEY}`,
+      "apikey": SERVICE_KEY,
+      "Content-Type": "application/json",
+      "Prefer": "return=minimal",
     },
     body: JSON.stringify({
-      id: newUserId, email, full_name: full_name.trim(),
-      phone: phone || null, role: role || "agent", manager_id: manager_id || null,
+      id: newUserId,
+      email,
+      full_name: full_name.trim(),
+      phone: phone || null,
+      role: role || "agent",
+      manager_id: manager_id || null,
     }),
   });
 
   if (!profRes.ok) {
     const errText = await profRes.text();
-    // Rollback
+    // Rollback: احذف الـ auth user لو الـ profile فشل
     await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${newUserId}`, {
       method: "DELETE",
       headers: { "Authorization": `Bearer ${SERVICE_KEY}`, "apikey": SERVICE_KEY },
