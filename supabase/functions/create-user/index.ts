@@ -8,9 +8,22 @@ const cors = {
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
 
-  const SUPABASE_URL  = Deno.env.get("SUPABASE_URL")!;
-  const SERVICE_KEY   = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const ANON_KEY      = Deno.env.get("SUPABASE_ANON_KEY")!;
+  const SUPABASE_URL   = Deno.env.get("SUPABASE_URL")!;
+  const SERVICE_KEY    = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+  // الـ PUBLISHABLE_KEYS هو JSON فيه الـ anon key - نستخرج منه
+  const publishableRaw = Deno.env.get("SUPABASE_PUBLISHABLE_KEYS") || "{}";
+  let ANON_KEY = "";
+  try {
+    const parsed = JSON.parse(publishableRaw);
+    // بيكون شكله: { "anon": "eyJ..." } أو array
+    ANON_KEY = parsed.anon || parsed[0]?.anon || Object.values(parsed)[0] as string || "";
+  } catch {
+    ANON_KEY = publishableRaw; // لو مش JSON، استخدمه مباشرة
+  }
+
+  // fallback: لو مش لاقي anon key، نستخدم الـ service key للتحقق
+  const verifyKey = ANON_KEY || SERVICE_KEY;
 
   // ── تحقق من هوية الطالب ──────────────────────────────────
   const authHeader = req.headers.get("Authorization") || "";
@@ -22,11 +35,10 @@ serve(async (req) => {
     });
   }
 
-  // FIX: استخدام ANON_KEY كـ apikey عند التحقق من الـ user token
   const userRes = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
     headers: {
       "Authorization": `Bearer ${token}`,
-      "apikey": ANON_KEY,
+      "apikey": verifyKey,
     },
   });
 
@@ -106,7 +118,6 @@ serve(async (req) => {
     });
   }
 
-  // إنشاء Auth user عبر Admin API
   const createRes = await fetch(`${SUPABASE_URL}/auth/v1/admin/users`, {
     method: "POST",
     headers: {
@@ -126,7 +137,6 @@ serve(async (req) => {
 
   const newUserId = createData.id;
 
-  // إنشاء Profile
   const profRes = await fetch(`${SUPABASE_URL}/rest/v1/profiles`, {
     method: "POST",
     headers: {
@@ -136,8 +146,7 @@ serve(async (req) => {
       "Prefer": "return=minimal",
     },
     body: JSON.stringify({
-      id: newUserId,
-      email,
+      id: newUserId, email,
       full_name: full_name.trim(),
       phone: phone || null,
       role: role || "agent",
@@ -147,7 +156,6 @@ serve(async (req) => {
 
   if (!profRes.ok) {
     const errText = await profRes.text();
-    // Rollback: احذف الـ auth user لو الـ profile فشل
     await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${newUserId}`, {
       method: "DELETE",
       headers: { "Authorization": `Bearer ${SERVICE_KEY}`, "apikey": SERVICE_KEY },
