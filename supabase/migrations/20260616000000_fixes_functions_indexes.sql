@@ -32,17 +32,7 @@ END $$;
 -- FIX #SQL6: Ensure RLS on all tables
 ALTER TABLE profiles       ENABLE ROW LEVEL SECURITY;
 
--- FIX #SQL8: mark_overdue_installments function
-CREATE OR REPLACE FUNCTION mark_overdue_installments()
-RETURNS void
-LANGUAGE sql
-SECURITY DEFINER
-AS $$
-  UPDATE installments
-  SET status = 'overdue', updated_at = now()
-  WHERE status = 'pending'
-    AND due_date < CURRENT_DATE;
-$$;
+-- FIX #SQL8: mark_overdue_installments function moved to safe block below
 
 -- FIX #SQL7: Advanced RLS Policies for tasks (requires created_by column)
 DROP POLICY IF EXISTS "tasks_select" ON tasks;
@@ -105,5 +95,21 @@ DO $$ BEGIN
   -- Tasks
   IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'tasks' AND column_name = 'status') THEN
     CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks (status);
+  END IF;
+END $$;
+
+-- FIX #SQL10: Final safe creation of mark_overdue_installments function
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'installments' AND column_name = 'status') THEN
+    CREATE OR REPLACE FUNCTION mark_overdue_installments()
+    RETURNS void
+    LANGUAGE sql
+    SECURITY DEFINER
+    AS $func$
+      UPDATE installments
+      SET status = 'overdue', updated_at = now()
+      WHERE status = 'pending'
+        AND due_date < CURRENT_DATE;
+    $func$;
   END IF;
 END $$;
