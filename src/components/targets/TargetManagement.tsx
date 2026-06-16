@@ -40,8 +40,8 @@ function getSubordinateIds(userId: string, allProfiles: Profile[]): string[] {
   return allIds;
 }
 
-interface EnrichedTarget extends TargetType {
-  user?: Pick<Profile, 'full_name' | 'role'>;
+interface EnrichedTarget extends Omit<TargetType, 'user'> {
+  user?: { full_name: string; role: string };
   achieved: number;
   isManagerTarget: boolean;
   subordinateCount: number;

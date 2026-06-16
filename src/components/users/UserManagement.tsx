@@ -32,7 +32,7 @@ async function callAdminFunction(body: object) {
 
     const data = await res.json();
     if (!res.ok || data.error) return { error: data.error || `خطأ ${res.status}` };
-    return { success: true, userId: data.userId };
+    return { success: true, ...data };
   } catch (err) {
     return { error: 'خطأ في الاتصال: ' + String(err) };
   }
@@ -109,10 +109,18 @@ export default function UserManagement() {
 
   async function deleteUser(user: Profile) {
     if (user.id === profile?.id) { toast.error('لا يمكنك حذف حسابك'); return; }
-    if (!confirm(`حذف "${user.full_name}"؟`)) return;
+    if (!confirm(`حذف "${user.full_name}"؟ سيتم محاولة الحذف النهائي، وفي حال وجود بيانات مرتبطة سيتم تعطيل الحساب فقط.`)) return;
     const result = await callAdminFunction({ delete_user_id: user.id });
-    if (result.error) toast.error(result.error);
-    else { toast.success('تم الحذف'); fetchUsers(); }
+    if (result.error) {
+      toast.error(result.error);
+    } else {
+      if ((result as any).soft_deleted) {
+        toast.success('تم تعطيل الحساب لوجود بيانات مرتبطة');
+      } else {
+        toast.success('تم الحذف بنجاح');
+      }
+      fetchUsers();
+    }
   }
 
   async function handleResetPassword() {
