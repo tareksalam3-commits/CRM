@@ -89,13 +89,16 @@ export default function PolicyManagement() {
       };
     });
 
-    await supabase.from('installments').insert(installments);
+    // FIX #P1: Handle insert failure — was completely silent
+    const { error: instError } = await supabase.from('installments').insert(installments);
+    if (instError) toast.error('تم حفظ الوثيقة لكن فشل جدول الأقساط: ' + instError.message);
   }
 
   async function deletePolicy(policy: Policy) {
     if (!confirm('هل أنت متأكد من حذف هذه الوثيقة؟')) return;
     const { error } = await supabase.from('policies').delete().eq('id', policy.id);
-    if (error) { toast.error('لا يمكن حذف وثيقة مرتبطة بتحصيلات'); return; }
+    // FIX #P2: Distinguish FK from other errors
+    if (error) { toast.error(error.code === '23503' ? 'لا يمكن الحذف — الوثيقة بها تحصيلات مسجّلة' : 'خطأ: ' + error.message); return; }
     toast.success('تم حذف الوثيقة');
     loadData();
   }

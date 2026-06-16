@@ -71,6 +71,8 @@ export default function CollectionManagement() {
 
     if (updateError) {
       console.error('Failed to update installment status:', updateError);
+      // FIX #C1: Inform user — collection saved but installment status not updated
+      toast.error('تحذير: تم التحصيل لكن فشل تحديث حالة القسط — راجع المدير');
     }
 
     toast.success('تم تسجيل التحصيل بنجاح');
