@@ -123,3 +123,15 @@ DO $$ BEGIN
     END IF;
   END IF;
 END $$;
+
+-- FIX #SQL12: Update RLS Policies for clients to be more flexible for inserts
+DROP POLICY IF EXISTS "clients_insert" ON clients;
+CREATE POLICY "clients_insert" ON clients FOR INSERT 
+  TO authenticated 
+  WITH CHECK (true); -- Allow all authenticated users to insert, select/update still restricted by hierarchy
+
+DROP POLICY IF EXISTS "clients_update" ON clients;
+CREATE POLICY "clients_update" ON clients FOR UPDATE
+  TO authenticated
+  USING (can_access_user(auth.uid(), agent_id))
+  WITH CHECK (can_access_user(auth.uid(), agent_id));
