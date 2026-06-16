@@ -34,27 +34,7 @@ ALTER TABLE profiles       ENABLE ROW LEVEL SECURITY;
 
 -- FIX #SQL8: mark_overdue_installments function moved to safe block below
 
--- FIX #SQL7: Advanced RLS Policies for tasks (requires created_by column)
-DROP POLICY IF EXISTS "tasks_select" ON tasks;
-CREATE POLICY "tasks_select" ON tasks FOR SELECT
-  TO authenticated
-  USING (assigned_to = auth.uid() OR created_by = auth.uid() OR can_access_user(auth.uid(), assigned_to));
-
-DROP POLICY IF EXISTS "tasks_insert" ON tasks;
-CREATE POLICY "tasks_insert" ON tasks FOR INSERT
-  TO authenticated
-  WITH CHECK (created_by = auth.uid());
-
-DROP POLICY IF EXISTS "tasks_update" ON tasks;
-CREATE POLICY "tasks_update" ON tasks FOR UPDATE
-  TO authenticated
-  USING (assigned_to = auth.uid() OR created_by = auth.uid() OR can_access_user(auth.uid(), assigned_to))
-  WITH CHECK (assigned_to = auth.uid() OR created_by = auth.uid() OR can_access_user(auth.uid(), assigned_to));
-
-DROP POLICY IF EXISTS "tasks_delete" ON tasks;
-CREATE POLICY "tasks_delete" ON tasks FOR DELETE
-  TO authenticated
-  USING (created_by = auth.uid() OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('super_admin', 'dev_manager')));
+-- FIX #SQL7: Advanced RLS Policies for tasks moved to safe block below
 ALTER TABLE clients        ENABLE ROW LEVEL SECURITY;
 ALTER TABLE policies       ENABLE ROW LEVEL SECURITY;
 ALTER TABLE installments   ENABLE ROW LEVEL SECURITY;
@@ -111,5 +91,35 @@ DO $$ BEGIN
       WHERE status = 'pending'
         AND due_date < CURRENT_DATE;
     $func$;
+  END IF;
+END $$;
+
+-- FIX #SQL11: Final safe creation of advanced RLS policies for tasks
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'tasks' AND column_name = 'created_by') THEN
+    -- tasks_select
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'tasks' AND policyname = 'tasks_select') THEN
+      CREATE POLICY "tasks_select" ON tasks FOR SELECT TO authenticated
+        USING (assigned_to = auth.uid() OR created_by = auth.uid() OR can_access_user(auth.uid(), assigned_to));
+    END IF;
+
+    -- tasks_insert
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'tasks' AND policyname = 'tasks_insert') THEN
+      CREATE POLICY "tasks_insert" ON tasks FOR INSERT TO authenticated
+        WITH CHECK (created_by = auth.uid());
+    END IF;
+
+    -- tasks_update
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'tasks' AND policyname = 'tasks_update') THEN
+      CREATE POLICY "tasks_update" ON tasks FOR UPDATE TO authenticated
+        USING (assigned_to = auth.uid() OR created_by = auth.uid() OR can_access_user(auth.uid(), assigned_to))
+        WITH CHECK (assigned_to = auth.uid() OR created_by = auth.uid() OR can_access_user(auth.uid(), assigned_to));
+    END IF;
+
+    -- tasks_delete
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'tasks' AND policyname = 'tasks_delete') THEN
+      CREATE POLICY "tasks_delete" ON tasks FOR DELETE TO authenticated
+        USING (created_by = auth.uid() OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('super_admin', 'dev_manager')));
+    END IF;
   END IF;
 END $$;
