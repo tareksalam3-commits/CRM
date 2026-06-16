@@ -26,15 +26,23 @@ DO $$ BEGIN
   END IF;
 END $$;
 
--- FIX #SQL4: Performance indexes
+-- FIX #SQL4: Ensure national_id exists on clients table before creating index
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'clients' AND column_name = 'national_id') THEN
+    ALTER TABLE clients ADD COLUMN national_id text;
+  END IF;
+END $$;
+
+-- FIX #SQL5: Performance indexes
 CREATE INDEX IF NOT EXISTS idx_notifications_unread   ON notifications (user_id, is_read) WHERE is_read = false;
 CREATE INDEX IF NOT EXISTS idx_audit_logs_created     ON audit_logs (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_entity      ON audit_logs (entity_type, entity_id);
 CREATE INDEX IF NOT EXISTS idx_installments_pending   ON installments (status, due_date) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_policies_agent         ON policies (agent_id, status);
 CREATE INDEX IF NOT EXISTS idx_clients_agent          ON clients (agent_id);
+CREATE INDEX IF NOT EXISTS idx_clients_national_id   ON clients (national_id);
 
--- FIX #SQL5: Ensure RLS on all tables
+-- FIX #SQL6: Ensure RLS on all tables
 ALTER TABLE profiles       ENABLE ROW LEVEL SECURITY;
 ALTER TABLE clients        ENABLE ROW LEVEL SECURITY;
 ALTER TABLE policies       ENABLE ROW LEVEL SECURITY;
