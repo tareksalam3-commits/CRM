@@ -62,7 +62,6 @@ CREATE TABLE IF NOT EXISTS policies (
 
 CREATE INDEX IF NOT EXISTS idx_policies_agent ON policies(agent_id);
 CREATE INDEX IF NOT EXISTS idx_policies_client ON policies(client_id);
-CREATE INDEX IF NOT EXISTS idx_policies_status ON policies(status);
 
 -- Installments table
 CREATE TABLE IF NOT EXISTS installments (
@@ -80,7 +79,6 @@ CREATE TABLE IF NOT EXISTS installments (
 );
 
 CREATE INDEX IF NOT EXISTS idx_installments_policy ON installments(policy_id);
-CREATE INDEX IF NOT EXISTS idx_installments_status ON installments(status);
 CREATE INDEX IF NOT EXISTS idx_installments_due_date ON installments(due_date);
 
 -- Collections table
@@ -133,7 +131,6 @@ CREATE TABLE IF NOT EXISTS tasks (
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_assigned ON tasks(assigned_to);
-CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 
 -- Notifications table
 CREATE TABLE IF NOT EXISTS notifications (

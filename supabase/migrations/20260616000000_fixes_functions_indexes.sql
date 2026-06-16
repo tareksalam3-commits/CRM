@@ -38,9 +38,12 @@ CREATE INDEX IF NOT EXISTS idx_notifications_unread   ON notifications (user_id,
 CREATE INDEX IF NOT EXISTS idx_audit_logs_created     ON audit_logs (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_entity      ON audit_logs (entity_type, entity_id);
 CREATE INDEX IF NOT EXISTS idx_installments_pending   ON installments (status, due_date) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_installments_status    ON installments (status);
 CREATE INDEX IF NOT EXISTS idx_policies_agent         ON policies (agent_id, status);
+CREATE INDEX IF NOT EXISTS idx_policies_status        ON policies (status);
 CREATE INDEX IF NOT EXISTS idx_clients_agent          ON clients (agent_id);
 CREATE INDEX IF NOT EXISTS idx_clients_national_id   ON clients (national_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_status           ON tasks (status);
 
 -- FIX #SQL6: Ensure RLS on all tables
 ALTER TABLE profiles       ENABLE ROW LEVEL SECURITY;
