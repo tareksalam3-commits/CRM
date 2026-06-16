@@ -195,15 +195,4 @@ ALTER TABLE month_closings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE system_settings ENABLE ROW LEVEL SECURITY;
 
--- BUG FIX: Auto-mark overdue installments via a DB function + trigger on installments changes.
--- Call this function periodically (via a Supabase Scheduled Job or on app load).
-CREATE OR REPLACE FUNCTION mark_overdue_installments()
-RETURNS void
-LANGUAGE sql
-SECURITY DEFINER
-AS $$
-  UPDATE installments
-  SET status = 'overdue', updated_at = now()
-  WHERE status = 'pending'
-    AND due_date < CURRENT_DATE;
-$$;
+-- Function moved to final migration file to ensure columns exist first
