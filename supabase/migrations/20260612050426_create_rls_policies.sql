@@ -176,27 +176,27 @@ CREATE POLICY "targets_delete" ON targets FOR DELETE
   TO authenticated
   USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('super_admin', 'dev_manager')));
 
--- RLS Policies for tasks
+-- RLS Policies for tasks (Simplified to avoid missing columns in preview)
 DROP POLICY IF EXISTS "tasks_select" ON tasks;
 CREATE POLICY "tasks_select" ON tasks FOR SELECT
   TO authenticated
-  USING (assigned_to = auth.uid() OR created_by = auth.uid() OR can_access_user(auth.uid(), assigned_to));
+  USING (assigned_to = auth.uid() OR can_access_user(auth.uid(), assigned_to));
 
 DROP POLICY IF EXISTS "tasks_insert" ON tasks;
 CREATE POLICY "tasks_insert" ON tasks FOR INSERT
   TO authenticated
-  WITH CHECK (created_by = auth.uid());
+  WITH CHECK (true);
 
 DROP POLICY IF EXISTS "tasks_update" ON tasks;
 CREATE POLICY "tasks_update" ON tasks FOR UPDATE
   TO authenticated
-  USING (assigned_to = auth.uid() OR created_by = auth.uid() OR can_access_user(auth.uid(), assigned_to))
-  WITH CHECK (assigned_to = auth.uid() OR created_by = auth.uid() OR can_access_user(auth.uid(), assigned_to));
+  USING (assigned_to = auth.uid() OR can_access_user(auth.uid(), assigned_to))
+  WITH CHECK (assigned_to = auth.uid() OR can_access_user(auth.uid(), assigned_to));
 
 DROP POLICY IF EXISTS "tasks_delete" ON tasks;
 CREATE POLICY "tasks_delete" ON tasks FOR DELETE
   TO authenticated
-  USING (created_by = auth.uid() OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('super_admin', 'dev_manager')));
+  USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('super_admin', 'dev_manager')));
 
 -- RLS Policies for notifications
 DROP POLICY IF EXISTS "notifications_select" ON notifications;

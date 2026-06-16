@@ -49,6 +49,28 @@ CREATE INDEX IF NOT EXISTS idx_tasks_status           ON tasks (status);
 
 -- FIX #SQL6: Ensure RLS on all tables
 ALTER TABLE profiles       ENABLE ROW LEVEL SECURITY;
+
+-- FIX #SQL7: Advanced RLS Policies for tasks (requires created_by column)
+DROP POLICY IF EXISTS "tasks_select" ON tasks;
+CREATE POLICY "tasks_select" ON tasks FOR SELECT
+  TO authenticated
+  USING (assigned_to = auth.uid() OR created_by = auth.uid() OR can_access_user(auth.uid(), assigned_to));
+
+DROP POLICY IF EXISTS "tasks_insert" ON tasks;
+CREATE POLICY "tasks_insert" ON tasks FOR INSERT
+  TO authenticated
+  WITH CHECK (created_by = auth.uid());
+
+DROP POLICY IF EXISTS "tasks_update" ON tasks;
+CREATE POLICY "tasks_update" ON tasks FOR UPDATE
+  TO authenticated
+  USING (assigned_to = auth.uid() OR created_by = auth.uid() OR can_access_user(auth.uid(), assigned_to))
+  WITH CHECK (assigned_to = auth.uid() OR created_by = auth.uid() OR can_access_user(auth.uid(), assigned_to));
+
+DROP POLICY IF EXISTS "tasks_delete" ON tasks;
+CREATE POLICY "tasks_delete" ON tasks FOR DELETE
+  TO authenticated
+  USING (created_by = auth.uid() OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('super_admin', 'dev_manager')));
 ALTER TABLE clients        ENABLE ROW LEVEL SECURITY;
 ALTER TABLE policies       ENABLE ROW LEVEL SECURITY;
 ALTER TABLE installments   ENABLE ROW LEVEL SECURITY;
