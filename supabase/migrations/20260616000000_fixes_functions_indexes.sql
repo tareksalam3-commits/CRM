@@ -3,14 +3,7 @@
 -- 2026-06-16
 -- ================================================================
 
--- FIX #SQL1: mark_overdue_installments — WAS MISSING FROM DB
--- Called by AuthContext on every login → was failing silently (RPC 404)
-CREATE OR REPLACE FUNCTION mark_overdue_installments()
-RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
-  UPDATE installments SET status = 'overdue', updated_at = now()
-  WHERE status = 'pending' AND due_date < CURRENT_DATE;
-$$;
-GRANT EXECUTE ON FUNCTION mark_overdue_installments() TO authenticated;
+-- FIX #SQL1: Removed duplicate mark_overdue_installments function from top of file
 
 -- FIX #SQL2: No duplicate installment numbers per policy
 DO $$ BEGIN
