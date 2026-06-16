@@ -41,7 +41,6 @@ CREATE TABLE IF NOT EXISTS clients (
 );
 
 CREATE INDEX IF NOT EXISTS idx_clients_agent ON clients(agent_id);
-CREATE INDEX IF NOT EXISTS idx_clients_national_id ON clients(national_id);
 
 -- Policies table
 CREATE TABLE IF NOT EXISTS policies (
