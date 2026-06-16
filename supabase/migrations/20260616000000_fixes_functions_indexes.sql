@@ -27,18 +27,7 @@ DO $$ BEGIN
 END $$;
 
 -- FIX #SQL5: Performance indexes
-CREATE INDEX IF NOT EXISTS idx_notifications_unread   ON notifications (user_id, is_read) WHERE is_read = false;
-CREATE INDEX IF NOT EXISTS idx_notifications_read     ON notifications (user_id, is_read);
-CREATE INDEX IF NOT EXISTS idx_audit_logs_created     ON audit_logs (created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_audit_logs_entity      ON audit_logs (entity_type, entity_id);
-CREATE INDEX IF NOT EXISTS idx_audit_date             ON audit_logs (created_at);
-CREATE INDEX IF NOT EXISTS idx_installments_pending   ON installments (status, due_date) WHERE status = 'pending';
-CREATE INDEX IF NOT EXISTS idx_installments_status    ON installments (status);
-CREATE INDEX IF NOT EXISTS idx_policies_agent         ON policies (agent_id, status);
-CREATE INDEX IF NOT EXISTS idx_policies_status        ON policies (status);
-CREATE INDEX IF NOT EXISTS idx_clients_agent          ON clients (agent_id);
-CREATE INDEX IF NOT EXISTS idx_clients_national_id   ON clients (national_id);
-CREATE INDEX IF NOT EXISTS idx_tasks_status           ON tasks (status);
+-- Indexes moved to final migration file to ensure safe creation after all columns are added
 
 -- FIX #SQL6: Ensure RLS on all tables
 ALTER TABLE profiles       ENABLE ROW LEVEL SECURITY;
@@ -86,3 +75,35 @@ ALTER TABLE notifications  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE month_closings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_logs     ENABLE ROW LEVEL SECURITY;
 ALTER TABLE system_settings ENABLE ROW LEVEL SECURITY;
+
+-- FIX #SQL9: Safe creation of performance indexes
+DO $$ BEGIN
+  -- Notifications
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'notifications' AND column_name = 'is_read') THEN
+    CREATE INDEX IF NOT EXISTS idx_notifications_unread ON notifications (user_id, is_read) WHERE is_read = false;
+    CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications (user_id, is_read);
+  END IF;
+
+  -- Audit Logs
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'audit_logs' AND column_name = 'created_at') THEN
+    CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs (created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_audit_date ON audit_logs (created_at);
+  END IF;
+
+  -- Installments
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'installments' AND column_name = 'status') THEN
+    CREATE INDEX IF NOT EXISTS idx_installments_pending ON installments (status, due_date) WHERE status = 'pending';
+    CREATE INDEX IF NOT EXISTS idx_installments_status ON installments (status);
+  END IF;
+
+  -- Policies
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'policies' AND column_name = 'status') THEN
+    CREATE INDEX IF NOT EXISTS idx_policies_agent ON policies (agent_id, status);
+    CREATE INDEX IF NOT EXISTS idx_policies_status ON policies (status);
+  END IF;
+
+  -- Tasks
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'tasks' AND column_name = 'status') THEN
+    CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks (status);
+  END IF;
+END $$;
