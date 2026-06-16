@@ -146,7 +146,6 @@ CREATE TABLE IF NOT EXISTS notifications (
 );
 
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
-CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(user_id, is_read);
 
 -- Month closings table
 CREATE TABLE IF NOT EXISTS month_closings (
@@ -173,8 +172,6 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_logs(user_id);
-CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_logs(entity_type, entity_id);
-CREATE INDEX IF NOT EXISTS idx_audit_date ON audit_logs(created_at);
 
 -- System settings table
 CREATE TABLE IF NOT EXISTS system_settings (

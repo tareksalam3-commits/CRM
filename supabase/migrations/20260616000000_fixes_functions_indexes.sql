@@ -35,8 +35,10 @@ END $$;
 
 -- FIX #SQL5: Performance indexes
 CREATE INDEX IF NOT EXISTS idx_notifications_unread   ON notifications (user_id, is_read) WHERE is_read = false;
+CREATE INDEX IF NOT EXISTS idx_notifications_read     ON notifications (user_id, is_read);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_created     ON audit_logs (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_entity      ON audit_logs (entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS idx_audit_date             ON audit_logs (created_at);
 CREATE INDEX IF NOT EXISTS idx_installments_pending   ON installments (status, due_date) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_installments_status    ON installments (status);
 CREATE INDEX IF NOT EXISTS idx_policies_agent         ON policies (agent_id, status);
