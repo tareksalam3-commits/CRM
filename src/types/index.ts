@@ -20,6 +20,68 @@ export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
 export type MaritalStatus = 'single' | 'married' | 'divorced' | 'widowed';
 export type TargetPeriod = 'monthly' | 'quarterly' | 'semi_annual' | 'annual';
 
+export const ROLE_LABELS: Record<UserRole, string> = {
+  super_admin: 'مسؤول النظام',
+  dev_manager: 'مدير التطوير',
+  general_supervisor: 'مشرف عام',
+  supervisor: 'مشرف',
+  team_leader: 'قائد فريق',
+  agent: 'وكيل',
+};
+
+export const ROLE_LEVELS: Record<UserRole, number> = {
+  super_admin: 0,
+  dev_manager: 1,
+  general_supervisor: 2,
+  supervisor: 3,
+  team_leader: 4,
+  agent: 5,
+};
+
+export const MANAGER_ROLES: UserRole[] = ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'team_leader'];
+
+export const POLICY_STATUS_LABELS: Record<PolicyStatus, string> = {
+  under_issuance: 'تحت الإصدار',
+  active: 'سارية',
+  suspended: 'معلقة',
+  cancelled: 'ملغاة',
+  rejected: 'مرفوضة',
+};
+
+export const PAYMENT_FREQUENCY_LABELS: Record<PaymentFrequency, string> = {
+  monthly: 'شهري',
+  quarterly: 'ربع سنوي',
+  semi_annual: 'نصف سنوي',
+  annual: 'سنوي',
+};
+
+export const INSTALLMENT_STATUS_LABELS: Record<InstallmentStatus, string> = {
+  pending: 'قيد الانتظار',
+  paid: 'مدفوع',
+  overdue: 'متأخر',
+};
+
+export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
+  new: 'جديدة',
+  in_progress: 'قيد المعالجة',
+  completed: 'مكتملة',
+  overdue: 'متأخرة',
+};
+
+export const TASK_PRIORITY_LABELS: Record<TaskPriority, string> = {
+  low: 'منخفضة',
+  medium: 'متوسطة',
+  high: 'عالية',
+  urgent: 'عاجلة',
+};
+
+export const MARITAL_STATUS_LABELS: Record<MaritalStatus, string> = {
+  single: 'أعزب/عزباء',
+  married: 'متزوج/متزوجة',
+  divorced: 'مطلق/مطلقة',
+  widowed: 'أرمل/أرملة',
+};
+
 export interface Profile {
   id: string;
   full_name: string;
@@ -79,6 +141,7 @@ export interface Installment {
   paid_date: string | null;
   created_at: string;
   updated_at: string;
+  policy?: Policy;
 }
 
 export interface Collection {
@@ -129,20 +192,10 @@ export interface Notification {
   user_id: string;
   title: string;
   message: string;
-  type: string;
+  type: 'info' | 'warning' | 'error' | 'success';
   is_read: boolean;
-  entity_type: string | null;
-  entity_id: string | null;
-  created_at: string;
-}
-
-export interface MonthClosing {
-  id: string;
-  closed_by: string;
-  month: number;
-  year: number;
-  snapshot_data: Record<string, unknown>;
-  is_locked: boolean;
+  related_entity_type: string | null;
+  related_entity_id: string | null;
   created_at: string;
 }
 
@@ -151,98 +204,27 @@ export interface AuditLog {
   user_id: string;
   action: string;
   entity_type: string;
-  entity_id: string | null;
-  old_data: Record<string, unknown> | null;
-  new_data: Record<string, unknown> | null;
+  entity_id: string;
+  changes: Record<string, any> | null;
   created_at: string;
   user?: Profile;
 }
 
-export interface SystemSetting {
+export interface MonthClosing {
   id: string;
-  key: string;
-  value: unknown;
-  updated_by: string | null;
-  updated_at: string;
+  month: number;
+  year: number;
+  closed_by: string;
+  closed_at: string;
+  total_premiums: number;
+  total_collections: number;
+  collection_rate: number;
 }
 
-// ─── Labels ────────────────────────────────────────────────
-export const ROLE_LABELS: Record<UserRole, string> = {
-  super_admin: 'سوبر ادمن',
-  dev_manager: 'مدير تطوير',
-  general_supervisor: 'مراقب عام',
-  supervisor: 'مراقب',
-  team_leader: 'رئيس مجموعة',
-  agent: 'أجنت',
-};
-
-/** Higher number = lower in hierarchy */
-export const ROLE_LEVELS: Record<UserRole, number> = {
-  super_admin: 0,
-  dev_manager: 1,
-  general_supervisor: 2,
-  supervisor: 3,
-  team_leader: 4,
-  agent: 5,
-};
-
-/** Roles that can manage users below them */
-export const MANAGER_ROLES: UserRole[] = [
-  'super_admin',
-  'dev_manager',
-  'general_supervisor',
-  'supervisor',
-  'team_leader',
-];
-
-/** What role a given manager creates */
-export const SUBORDINATE_ROLE: Partial<Record<UserRole, UserRole>> = {
-  super_admin: 'dev_manager',
-  dev_manager: 'general_supervisor',
-  general_supervisor: 'supervisor',
-  supervisor: 'team_leader',
-  team_leader: 'agent',
-};
-
-export const POLICY_STATUS_LABELS: Record<PolicyStatus, string> = {
-  under_issuance: 'تحت الإصدار',
-  active: 'سارية',
-  suspended: 'معلقة',
-  cancelled: 'ملغاة',
-  rejected: 'مرفوضة',
-};
-
-export const PAYMENT_FREQUENCY_LABELS: Record<PaymentFrequency, string> = {
-  monthly: 'شهري',
-  quarterly: 'ربع سنوي',
-  semi_annual: 'نصف سنوي',
-  annual: 'سنوي',
-};
-
-export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
-  new: 'جديدة',
-  in_progress: 'قيد التنفيذ',
-  completed: 'مكتملة',
-  overdue: 'متأخرة',
-};
-
-export const TASK_PRIORITY_LABELS: Record<TaskPriority, string> = {
-  low: 'منخفضة',
-  medium: 'متوسطة',
-  high: 'عالية',
-  urgent: 'عاجلة',
-};
-
-export const TARGET_PERIOD_LABELS: Record<TargetPeriod, string> = {
-  monthly: 'شهري',
-  quarterly: 'ربع سنوي',
-  semi_annual: 'نصف سنوي',
-  annual: 'سنوي',
-};
-
-export const MARITAL_STATUS_LABELS: Record<MaritalStatus, string> = {
-  single: 'أعزب',
-  married: 'متزوج',
-  divorced: 'مطلق',
-  widowed: 'أرمل',
-};
+export interface SystemSettings {
+  id: string;
+  key: string;
+  value: string | number | boolean | null;
+  updated_by: string;
+  updated_at: string;
+}

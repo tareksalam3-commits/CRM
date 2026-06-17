@@ -21,19 +21,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Initial session check
     supabase.auth.getSession().then(({ data: { session: currentSession } }) => {
       setSession(currentSession);
       setUser(currentSession?.user ?? null);
       if (currentSession?.user) {
         fetchProfile(currentSession.user.id);
       } else {
-        // BUG FIX #14: Always set loading false even when no session
         setLoading(false);
       }
-    }).catch(() => {
+    }).catch((err) => {
+      console.error('Error getting session:', err);
       setLoading(false);
     });
 
+    // Listen for auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, newSession) => {
       setSession(newSession);
       setUser(newSession?.user ?? null);
@@ -45,7 +47,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     });
 
-    return () => subscription.unsubscribe();
+    return () => subscription?.unsubscribe();
   }, []);
 
   async function fetchProfile(userId: string) {
@@ -56,35 +58,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .eq('id', userId)
         .maybeSingle();
 
-      // BUG FIX #14: Handle both success and "not found" correctly
       if (error) {
         console.error('Error fetching profile:', error);
       } else if (data) {
         setProfile(data);
       }
-      // If data is null (no profile row yet), profile stays null — don't crash
+      // If data is null (no profile row yet), profile stays null
     } catch (err) {
       console.error('Unexpected error fetching profile:', err);
     } finally {
-      // BUG FIX #14: Always release loading, no matter what happened
       setLoading(false);
     }
 
-    // BUG FIX: auto-update overdue installments on every login/session restore
+    // Auto-update overdue installments on login
     try {
       await supabase.rpc('mark_overdue_installments');
-    } catch { /* non-critical, ignore */ }
+    } catch {
+      // Non-critical, silently ignore
+    }
   }
 
   async function signIn(email: string, password: string) {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     return { error: error?.message ?? null };
   }
-
-  // BUG FIX #3 & #5: Removed signUp from AuthContext entirely.
-  // User creation is done via Supabase Admin API (or invite flow) in UserManagement,
-  // not through the public auth.signUp which would log out the current admin session.
-  // The public LoginPage no longer shows a registration form.
 
   async function signOut() {
     await supabase.auth.signOut();

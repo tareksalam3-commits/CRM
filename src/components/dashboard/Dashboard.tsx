@@ -2,8 +2,9 @@ import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../lib/supabase';
 import { formatCurrency, formatPercent, formatNumber } from '../../lib/utils';
-import { ROLE_LABELS } from '../../types';
+import { ROLE_LABELS, POLICY_STATUS_LABELS } from '../../types';
 import PageHeader from '../common/PageHeader';
+import LoadingSpinner from '../common/LoadingSpinner';
 import {
   LayoutDashboard, Users, FileText, Wallet, TrendingUp,
   UserCircle, Target, AlertCircle, Award, RefreshCw, Clock,
@@ -12,6 +13,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, PieChart, Pie, Cell, Legend,
 } from 'recharts';
+import toast from 'react-hot-toast';
 
 interface DashboardStats {
   totalPremiums: number;
@@ -26,12 +28,21 @@ interface DashboardStats {
   collectionRate: number;
   topAgents: { name: string; production: number }[];
   policyStatusDist: { name: string; value: number; color: string }[];
+  error?: string;
 }
 
 const INITIAL_STATS: DashboardStats = {
   totalPremiums: 0, totalCollected: 0, totalDue: 0, totalOverdue: 0,
   clientCount: 0, policyCount: 0, activePolicyCount: 0, expiringPoliciesCount: 0,
   userCount: 0, collectionRate: 0, topAgents: [], policyStatusDist: [],
+};
+
+const POLICY_COLORS: Record<string, string> = {
+  active: '#10b981',
+  under_issuance: '#3b82f6',
+  suspended: '#f59e0b',
+  cancelled: '#ef4444',
+  rejected: '#6b7280',
 };
 
 export default function Dashboard() {
@@ -44,75 +55,47 @@ export default function Dashboard() {
     setLoading(true);
     try {
       const [policiesRes, clientsRes, collectionsRes, usersRes, installmentsRes] = await Promise.all([
-        supabase.from('policies').select('annual_premium, status'),
+        supabase.from('policies').select('annual_premium, status, created_at'),
         supabase.from('clients').select('id', { count: 'exact', head: true }),
         supabase.from('collections').select('amount'),
         supabase.from('profiles').select('id', { count: 'exact', head: true }),
         supabase.from('installments').select('amount, status, due_date'),
       ]);
 
+      if (policiesRes.error) throw new Error(policiesRes.error.message);
+      if (collectionsRes.error) throw new Error(collectionsRes.error.message);
+      if (installmentsRes.error) throw new Error(installmentsRes.error.message);
+
       const policies = policiesRes.data || [];
       const collections = collectionsRes.data || [];
       const installments = installmentsRes.data || [];
 
-      const totalPremiums = policies.reduce((s, p) => s + Number(p.annual_premium), 0);
-      const totalCollected = collections.reduce((s, c) => s + Number(c.amount), 0);
+      const totalPremiums = policies.reduce((s, p: any) => s + Number(p.annual_premium), 0);
+      const totalCollected = collections.reduce((s, c: any) => s + Number(c.amount), 0);
 
       const now = new Date().toISOString().split('T')[0];
-      // 30 days from now for "expiring soon" — we use this as due soon threshold
       const thirtyDaysLater = new Date();
       thirtyDaysLater.setDate(thirtyDaysLater.getDate() + 30);
       const thirtyDaysStr = thirtyDaysLater.toISOString().split('T')[0];
 
-      const dueInstallments = installments.filter(i => i.status === 'pending' && i.due_date <= now);
-      const overdueInstallments = installments.filter(i => i.status === 'overdue');
-      const totalDue = dueInstallments.reduce((s, i) => s + Number(i.amount), 0);
-      const totalOverdue = overdueInstallments.reduce((s, i) => s + Number(i.amount), 0);
+      const dueInstallments = (installments || []).filter((i: any) => i.status === 'pending' && i.due_date <= now);
+      const overdueInstallments = (installments || []).filter((i: any) => i.status === 'overdue');
+      const totalDue = dueInstallments.reduce((s, i: any) => s + Number(i.amount), 0);
+      const totalOverdue = overdueInstallments.reduce((s, i: any) => s + Number(i.amount), 0);
 
-      const totalInstallmentsAmount = installments.reduce((s, i) => s + Number(i.amount), 0);
-      const collectionRate = totalInstallmentsAmount > 0 ? (totalCollected / totalInstallmentsAmount) * 100 : 0;
-
-      const activePolicyCount = policies.filter(p => p.status === 'active').length;
-
-      // Top agents by active policy production
-      const { data: topAgentsData } = await supabase
-        .from('policies')
-        .select('agent_id, annual_premium, agent:profiles!policies_agent_id_fkey(full_name)')
-        .eq('status', 'active');
-
-      const agentProduction: Record<string, { name: string; total: number }> = {};
-      (topAgentsData || []).forEach((p: any) => {
-        if (!agentProduction[p.agent_id]) {
-          agentProduction[p.agent_id] = { name: p.agent?.full_name || 'غير محدد', total: 0 };
-        }
-        agentProduction[p.agent_id].total += Number(p.annual_premium);
+      const activePolicies = (policies || []).filter((p: any) => p.status === 'active');
+      const expiringPolicies = (policies || []).filter((p: any) => {
+        const startDate = new Date(p.created_at);
+        const oneYearLater = new Date(startDate);
+        oneYearLater.setFullYear(oneYearLater.getFullYear() + 1);
+        return oneYearLater.toISOString().split('T')[0] <= thirtyDaysStr;
       });
 
-      const topAgents = Object.values(agentProduction)
-        .sort((a, b) => b.total - a.total)
-        .slice(0, 5)
-        .map(a => ({ name: a.name, production: a.total }));
-
-      // Expiring policies (active policies with pending installments due in next 30 days)
-      const { count: expiringCount } = await supabase
-        .from('installments')
-        .select('id', { count: 'exact', head: true })
-        .eq('status', 'pending')
-        .lte('due_date', thirtyDaysStr)
-        .gte('due_date', now);
-
-      // Policy status distribution
-      const statusCounts: Record<string, number> = {
-        active: 0, under_issuance: 0, suspended: 0, cancelled: 0, rejected: 0,
-      };
-      policies.forEach(p => { if (statusCounts[p.status] !== undefined) statusCounts[p.status]++; });
-
-      const policyStatusDist = [
-        { name: 'سارية', value: statusCounts.active, color: '#10b981' },
-        { name: 'تحت الإصدار', value: statusCounts.under_issuance, color: '#f59e0b' },
-        { name: 'معلقة', value: statusCounts.suspended, color: '#94a3b8' },
-        { name: 'ملغاة', value: statusCounts.cancelled + statusCounts.rejected, color: '#ef4444' },
-      ].filter(d => d.value > 0);
+      const policyStatusDist = Object.entries(POLICY_COLORS).map(([status, color]) => ({
+        name: POLICY_STATUS_LABELS[status as keyof typeof POLICY_STATUS_LABELS] || status,
+        value: (policies || []).filter((p: any) => p.status === status).length,
+        color,
+      }));
 
       setStats({
         totalPremiums,
@@ -121,16 +104,19 @@ export default function Dashboard() {
         totalOverdue,
         clientCount: clientsRes.count || 0,
         policyCount: policies.length,
-        activePolicyCount,
-        expiringPoliciesCount: expiringCount || 0,
+        activePolicyCount: activePolicies.length,
+        expiringPoliciesCount: expiringPolicies.length,
         userCount: usersRes.count || 0,
-        collectionRate,
-        topAgents,
+        collectionRate: totalPremiums > 0 ? (totalCollected / totalPremiums) * 100 : 0,
+        topAgents: [],
         policyStatusDist,
       });
+
       setLastUpdated(new Date());
     } catch (err) {
-      console.error('Error fetching stats:', err);
+      const message = err instanceof Error ? err.message : 'حدث خطأ غير معروف';
+      setStats(prev => ({ ...prev, error: message }));
+      console.error('Dashboard fetch error:', err);
     } finally {
       setLoading(false);
     }
@@ -138,82 +124,44 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchStats();
-    // Auto-refresh every 5 minutes
-    const interval = setInterval(fetchStats, 5 * 60 * 1000);
-    return () => clearInterval(interval);
   }, [fetchStats]);
 
-  const kpiCards = [
-    {
-      label: 'إجمالي الأقساط السنوية',
-      value: formatCurrency(stats.totalPremiums),
-      icon: FileText, color: 'blue',
-      sub: `${stats.policyCount} وثيقة`,
-    },
-    {
-      label: 'إجمالي التحصيل',
-      value: formatCurrency(stats.totalCollected),
-      icon: Wallet, color: 'emerald',
-      sub: `نسبة ${formatPercent(stats.collectionRate)}`,
-    },
-    {
-      label: 'أقساط مستحقة',
-      value: formatCurrency(stats.totalDue),
-      icon: TrendingUp, color: 'amber',
-      sub: 'حتى اليوم',
-    },
-    {
-      label: 'أقساط متأخرة',
-      value: formatCurrency(stats.totalOverdue),
-      icon: AlertCircle, color: 'red',
-      sub: 'تجاوزت الموعد',
-    },
-    {
-      label: 'العملاء',
-      value: formatNumber(stats.clientCount),
-      icon: UserCircle, color: 'indigo',
-      sub: 'عميل مسجّل',
-    },
-    {
-      label: 'وثائق سارية',
-      value: formatNumber(stats.activePolicyCount),
-      icon: FileText, color: 'cyan',
-      sub: `من ${stats.policyCount} إجمالاً`,
-    },
-    {
-      label: 'أقساط مستحقة قريباً',
-      value: formatNumber(stats.expiringPoliciesCount),
-      icon: Clock, color: 'orange',
-      sub: 'خلال 30 يوم',
-    },
-    {
-      label: 'المستخدمين',
-      value: formatNumber(stats.userCount),
-      icon: Users, color: 'violet',
-      sub: 'مستخدم نشط',
-    },
-  ];
-
-  const colorMap: Record<string, string> = {
-    blue:   'bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400',
-    emerald:'bg-emerald-100 dark:bg-emerald-900/50 text-emerald-600 dark:text-emerald-400',
-    amber:  'bg-amber-100 dark:bg-amber-900/50 text-amber-600 dark:text-amber-400',
-    red:    'bg-red-100 dark:bg-red-900/50 text-red-600 dark:text-red-400',
-    indigo: 'bg-indigo-100 dark:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400',
-    cyan:   'bg-cyan-100 dark:bg-cyan-900/50 text-cyan-600 dark:text-cyan-400',
-    orange: 'bg-orange-100 dark:bg-orange-900/50 text-orange-600 dark:text-orange-400',
-    violet: 'bg-violet-100 dark:bg-violet-900/50 text-violet-600 dark:text-violet-400',
-    teal:   'bg-teal-100 dark:bg-teal-900/50 text-teal-600 dark:text-teal-400',
-  };
-
-  if (loading && !lastUpdated) {
+  if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[50vh]">
-        <div className="text-center">
-          <div className="w-12 h-12 rounded-full border-4 border-slate-200 border-t-blue-600 animate-spin mx-auto mb-4" />
-          <p className="text-slate-500 text-sm">جاري تحميل البيانات...</p>
+      <>
+        <PageHeader
+          title="لوحة التحكم"
+          icon={LayoutDashboard}
+          description={profile ? `مرحباً ${profile.full_name}` : 'جاري التحميل...'}
+        />
+        <LoadingSpinner />
+      </>
+    );
+  }
+
+  if (stats.error) {
+    return (
+      <>
+        <PageHeader
+          title="لوحة التحكم"
+          icon={LayoutDashboard}
+        />
+        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-6">
+          <div className="flex items-center gap-3">
+            <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400 flex-shrink-0" />
+            <div>
+              <h3 className="font-semibold text-red-900 dark:text-red-200">خطأ في تحميل البيانات</h3>
+              <p className="text-sm text-red-700 dark:text-red-300 mt-1">{stats.error}</p>
+            </div>
+          </div>
+          <button
+            onClick={() => fetchStats()}
+            className="mt-4 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium transition-colors"
+          >
+            إعادة المحاولة
+          </button>
         </div>
-      </div>
+      </>
     );
   }
 
@@ -221,185 +169,171 @@ export default function Dashboard() {
     <div>
       <PageHeader
         title="لوحة التحكم"
-        description={`مرحباً ${profile?.full_name || ''} — ${profile ? ROLE_LABELS[profile.role] : ''}`}
         icon={LayoutDashboard}
+        description={profile ? `مرحباً ${profile.full_name}` : ''}
         actions={
           <button
-            onClick={fetchStats}
-            disabled={loading}
-            className="flex items-center gap-2 px-3 py-2 text-sm text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors disabled:opacity-50"
+            onClick={() => fetchStats()}
+            className="p-2 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors"
             title="تحديث البيانات"
           >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            <span className="hidden sm:inline">تحديث</span>
+            <RefreshCw className="w-5 h-5 text-slate-600 dark:text-slate-400" />
           </button>
         }
       />
 
-      {/* Last updated */}
       {lastUpdated && (
-        <p className="text-xs text-slate-400 dark:text-slate-500 mb-4">
+        <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">
           آخر تحديث: {lastUpdated.toLocaleTimeString('ar-EG')}
-          {' '}· يُحدَّث تلقائياً كل 5 دقائق
         </p>
       )}
 
-      {/* Alert: expiring installments */}
-      {stats.expiringPoliciesCount > 0 && (
-        <div className="mb-6 p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl flex items-start gap-3">
-          <AlertCircle className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
-          <div>
-            <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
-              تنبيه: {stats.expiringPoliciesCount} قسط مستحق خلال 30 يوماً القادمة
-            </p>
-            <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
-              تابع التحصيل من صفحة إدارة التحصيل لتجنب التأخير
-            </p>
-          </div>
-        </div>
-      )}
-
       {/* KPI Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-        {kpiCards.map((card) => (
-          <div
-            key={card.label}
-            className="bg-white dark:bg-slate-800 rounded-2xl p-4 border border-slate-100 dark:border-slate-700 shadow-sm hover:shadow-md transition-shadow"
-          >
-            <div className="flex items-center justify-between mb-3">
-              <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${colorMap[card.color]}`}>
-                <card.icon className="w-5 h-5" />
-              </div>
-            </div>
-            <p className="text-lg md:text-xl font-bold text-slate-900 dark:text-white">{card.value}</p>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">{card.label}</p>
-            {card.sub && (
-              <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{card.sub}</p>
-            )}
-          </div>
-        ))}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <KPICard
+          label="إجمالي الأقساط"
+          value={formatCurrency(stats.totalPremiums)}
+          icon={TrendingUp}
+          color="blue"
+        />
+        <KPICard
+          label="إجمالي التحصيل"
+          value={formatCurrency(stats.totalCollected)}
+          icon={Wallet}
+          color="emerald"
+        />
+        <KPICard
+          label="المستحق الحالي"
+          value={formatCurrency(stats.totalDue)}
+          icon={Clock}
+          color="amber"
+        />
+        <KPICard
+          label="المتأخر"
+          value={formatCurrency(stats.totalOverdue)}
+          icon={AlertCircle}
+          color="red"
+        />
       </div>
 
-      {/* Charts Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        {/* Top Agents Bar Chart */}
-        <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 border border-slate-100 dark:border-slate-700">
-          <div className="flex items-center gap-2 mb-4">
-            <Award className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-            <h3 className="font-semibold text-slate-900 dark:text-white">أعلى المندوبين إنتاجاً</h3>
-          </div>
-          {stats.topAgents.length > 0 ? (
-            <ResponsiveContainer width="100%" height={250}>
-              <BarChart data={stats.topAgents} layout="vertical" margin={{ right: 16 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" horizontal={false} />
-                <XAxis type="number" tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} tick={{ fontSize: 11 }} />
-                <YAxis type="category" dataKey="name" width={90} tick={{ fontSize: 11 }} />
-                <Tooltip
-                  formatter={(value) => [formatCurrency(Number(value)), 'الإنتاج']}
-                  contentStyle={{ fontFamily: 'inherit', borderRadius: '8px', fontSize: '12px' }}
-                />
-                <Bar dataKey="production" fill="#3b82f6" radius={[0, 6, 6, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="h-[250px] flex items-center justify-center text-slate-400">
-              <div className="text-center">
-                <Award className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                <p className="text-sm">لا توجد وثائق سارية بعد</p>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Collection Distribution Pie Chart */}
-        <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 border border-slate-100 dark:border-slate-700">
-          <div className="flex items-center gap-2 mb-4">
-            <Wallet className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
-            <h3 className="font-semibold text-slate-900 dark:text-white">توزيع التحصيل</h3>
-          </div>
-          {(stats.totalCollected > 0 || stats.totalDue > 0 || stats.totalOverdue > 0) ? (
-            <>
-              <ResponsiveContainer width="100%" height={220}>
-                <PieChart>
-                  <Pie
-                    data={[
-                      { name: 'محصل', value: stats.totalCollected },
-                      { name: 'مستحق', value: stats.totalDue },
-                      { name: 'متأخر', value: stats.totalOverdue },
-                    ].filter(d => d.value > 0)}
-                    cx="50%" cy="50%"
-                    innerRadius={55} outerRadius={85}
-                    paddingAngle={4}
-                    dataKey="value"
-                  >
-                    {['#10b981', '#f59e0b', '#ef4444'].map((color, idx) => (
-                      <Cell key={idx} fill={color} />
-                    ))}
-                  </Pie>
-                  <Tooltip
-                    formatter={(value) => [formatCurrency(Number(value)), '']}
-                    contentStyle={{ fontFamily: 'inherit', borderRadius: '8px', fontSize: '12px' }}
-                  />
-                  <Legend
-                    formatter={(v) => <span style={{ fontSize: '12px' }}>{v}</span>}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-              {/* Summary row */}
-              <div className="grid grid-cols-3 gap-2 mt-2 text-center text-xs">
-                <div className="p-2 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg">
-                  <p className="font-bold text-emerald-700 dark:text-emerald-400">{formatCurrency(stats.totalCollected)}</p>
-                  <p className="text-slate-500">محصل</p>
-                </div>
-                <div className="p-2 bg-amber-50 dark:bg-amber-900/20 rounded-lg">
-                  <p className="font-bold text-amber-700 dark:text-amber-400">{formatCurrency(stats.totalDue)}</p>
-                  <p className="text-slate-500">مستحق</p>
-                </div>
-                <div className="p-2 bg-red-50 dark:bg-red-900/20 rounded-lg">
-                  <p className="font-bold text-red-700 dark:text-red-400">{formatCurrency(stats.totalOverdue)}</p>
-                  <p className="text-slate-500">متأخر</p>
-                </div>
-              </div>
-            </>
-          ) : (
-            <div className="h-[250px] flex items-center justify-center text-slate-400">
-              <div className="text-center">
-                <Wallet className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                <p className="text-sm">لا توجد بيانات تحصيل بعد</p>
-              </div>
-            </div>
-          )}
-        </div>
+      {/* Summary Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
+        <StatBox label="العملاء" value={formatNumber(stats.clientCount)} icon={UserCircle} />
+        <StatBox label="الوثائق" value={formatNumber(stats.policyCount)} icon={FileText} />
+        <StatBox label="الوثائق السارية" value={formatNumber(stats.activePolicyCount)} icon={Award} />
+        <StatBox label="ينتهي قريباً" value={formatNumber(stats.expiringPoliciesCount)} icon={Clock} />
+        <StatBox label="المستخدمين" value={formatNumber(stats.userCount)} icon={Users} />
+        <StatBox label="معدل التحصيل" value={formatPercent(stats.collectionRate)} icon={Target} />
       </div>
 
-      {/* Policy Status Distribution */}
-      {stats.policyStatusDist.length > 0 && (
-        <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 border border-slate-100 dark:border-slate-700">
-          <div className="flex items-center gap-2 mb-4">
-            <Target className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
-            <h3 className="font-semibold text-slate-900 dark:text-white">توزيع حالات الوثائق</h3>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {stats.policyStatusDist.map((item) => (
-              <div
-                key={item.name}
-                className="text-center p-4 rounded-xl border-2"
-                style={{ borderColor: item.color + '40', backgroundColor: item.color + '10' }}
+      {/* Charts */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6">
+          <h3 className="font-semibold text-slate-900 dark:text-white mb-4">توزيع حالات الوثائق</h3>
+          <ResponsiveContainer width="100%" height={300}>
+            <PieChart>
+              <Pie
+                data={stats.policyStatusDist.filter(item => item.value > 0)}
+                cx="50%"
+                cy="50%"
+                labelLine={false}
+                label={renderCustomLabel}
+                outerRadius={100}
+                fill="#8884d8"
+                dataKey="value"
               >
-                <p className="text-2xl font-bold mb-1" style={{ color: item.color }}>
-                  {item.value}
-                </p>
-                <p className="text-xs text-slate-600 dark:text-slate-400">{item.name}</p>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  {stats.policyCount > 0
-                    ? `${((item.value / stats.policyCount) * 100).toFixed(0)}%`
-                    : '0%'}
-                </p>
+                {stats.policyStatusDist.map((entry, index) => (
+                  <Cell key={`cell-${index}`} fill={entry.color} />
+                ))}
+              </Pie>
+              <Tooltip formatter={(value: any) => formatNumber(Number(value))} />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+
+        <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6">
+          <h3 className="font-semibold text-slate-900 dark:text-white mb-4">ملخص التحصيل</h3>
+          <div className="space-y-4">
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm text-slate-600 dark:text-slate-400">معدل التحصيل</span>
+                <span className="font-semibold text-slate-900 dark:text-white">{formatPercent(stats.collectionRate)}</span>
               </div>
-            ))}
+              <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2">
+                <div
+                  className="bg-emerald-500 h-2 rounded-full transition-all duration-500"
+                  style={{ width: `${Math.min(stats.collectionRate, 100)}%` }}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-200 dark:border-slate-700">
+              <div>
+                <p className="text-xs text-slate-500 dark:text-slate-400">المستحق الحالي</p>
+                <p className="font-bold text-slate-900 dark:text-white text-lg">{formatCurrency(stats.totalDue)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500 dark:text-slate-400">المتأخر</p>
+                <p className="font-bold text-red-600 dark:text-red-400 text-lg">{formatCurrency(stats.totalOverdue)}</p>
+              </div>
+            </div>
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
+}
+
+function KPICard({
+  label,
+  value,
+  icon: Icon,
+  color,
+}: {
+  label: string;
+  value: string;
+  icon: React.ElementType;
+  color: 'blue' | 'emerald' | 'amber' | 'red';
+}) {
+  const colors = {
+    blue: 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400',
+    emerald: 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400',
+    amber: 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400',
+    red: 'bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400',
+  };
+
+  return (
+    <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6">
+      <div className="flex items-start justify-between">
+        <div>
+          <p className="text-sm text-slate-600 dark:text-slate-400 mb-1">{label}</p>
+          <p className="text-2xl font-bold text-slate-900 dark:text-white">{value}</p>
+        </div>
+        <div className={`p-3 rounded-lg ${colors[color]}`}>
+          <Icon className="w-6 h-6" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StatBox({
+  label,
+  value,
+  icon: Icon,
+}: {
+  label: string;
+  value: string;
+  icon: React.ElementType;
+}) {
+  return (
+    <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 p-4 text-center hover:shadow-md transition-shadow">
+      <Icon className="w-5 h-5 text-slate-400 dark:text-slate-500 mx-auto mb-2" />
+      <p className="text-xs text-slate-600 dark:text-slate-400 mb-1">{label}</p>
+      <p className="font-bold text-slate-900 dark:text-white">{value}</p>
+    </div>
+  );
+}
+
+function renderCustomLabel({ name, value }: { name: string; value: number }) {
+  return value > 0 ? name : '';
 }
