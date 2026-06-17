@@ -17,11 +17,15 @@ const FUNCTION_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-u
 async function callAdminFunction(body: object) {
   const { data: sessionData } = await supabase.auth.getSession();
   const token = sessionData?.session?.access_token;
+<<<<<<< HEAD
   if (!token) return { error: 'انتهت الجلسة — يرجى إعادة تسجيل الدخول' };
 
   if (!FUNCTION_URL || FUNCTION_URL.startsWith('undefined')) {
     return { error: 'خطأ في الإعداد: متغير VITE_SUPABASE_URL مفقود' };
   }
+=======
+  if (!token) return { error: 'انتهت الجلسة' };
+>>>>>>> 4f861908343d864f2dd8df883bdc55b699004211
 
   try {
     const res = await fetch(FUNCTION_URL, {
@@ -34,6 +38,7 @@ async function callAdminFunction(body: object) {
       body: JSON.stringify(body),
     });
 
+<<<<<<< HEAD
     // Handle non-JSON responses
     const contentType = res.headers.get('content-type') || '';
     if (!contentType.includes('application/json')) {
@@ -41,14 +46,20 @@ async function callAdminFunction(body: object) {
       return { error: `استجابة غير متوقعة من السيرفر (${res.status}): ${text.slice(0, 100)}` };
     }
 
+=======
+>>>>>>> 4f861908343d864f2dd8df883bdc55b699004211
     const data = await res.json();
     if (!res.ok || data.error) return { error: data.error || `خطأ ${res.status}` };
     return { success: true, ...data };
   } catch (err) {
+<<<<<<< HEAD
     if (err instanceof TypeError && err.message.includes('fetch')) {
       return { error: 'خطأ في الاتصال — تحقق من اتصالك بالإنترنت' };
     }
     return { error: 'خطأ غير متوقع: ' + String(err) };
+=======
+    return { error: 'خطأ في الاتصال: ' + String(err) };
+>>>>>>> 4f861908343d864f2dd8df883bdc55b699004211
   }
 }
 
@@ -88,6 +99,7 @@ export default function UserManagement() {
   });
 
   async function handleSubmit() {
+<<<<<<< HEAD
     // Validate required fields
     if (!formData.full_name.trim()) { toast.error('الاسم الكامل مطلوب'); return; }
 
@@ -99,10 +111,14 @@ export default function UserManagement() {
       if (!formData.password || formData.password.length < 6) { toast.error('كلمة المرور يجب أن تكون 6 أحرف على الأقل'); return; }
     }
 
+=======
+    if (!formData.full_name.trim()) { toast.error('الاسم مطلوب'); return; }
+>>>>>>> 4f861908343d864f2dd8df883bdc55b699004211
     setSubmitting(true);
 
     if (editingUser) {
       const { error } = await supabase.from('profiles').update({
+<<<<<<< HEAD
         full_name: formData.full_name.trim(),
         phone: formData.phone.trim() || null,
         role: formData.role,
@@ -136,6 +152,25 @@ export default function UserManagement() {
         resetForm();
         fetchUsers();
       }
+=======
+        full_name: formData.full_name.trim(), phone: formData.phone || null,
+        role: formData.role, manager_id: formData.manager_id || null,
+        updated_at: new Date().toISOString(),
+      }).eq('id', editingUser.id);
+      if (error) { toast.error('خطأ: ' + error.message); }
+      else { toast.success('تم التحديث'); resetForm(); fetchUsers(); }
+    } else {
+      if (!formData.email.trim()) { toast.error('البريد مطلوب'); setSubmitting(false); return; }
+      if (!formData.password || formData.password.length < 6) { toast.error('كلمة المرور 6 أحرف على الأقل'); setSubmitting(false); return; }
+
+      const result = await callAdminFunction({
+        email: formData.email.trim(), password: formData.password,
+        full_name: formData.full_name.trim(), phone: formData.phone || null,
+        role: formData.role, manager_id: formData.manager_id || null,
+      });
+      if (result.error) { toast.error(result.error); }
+      else { toast.success('تم إنشاء المستخدم بنجاح'); resetForm(); fetchUsers(); }
+>>>>>>> 4f861908343d864f2dd8df883bdc55b699004211
     }
     setSubmitting(false);
   }

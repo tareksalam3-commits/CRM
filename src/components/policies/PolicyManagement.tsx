@@ -180,16 +180,23 @@ export default function PolicyManagement() {
       };
     });
 
+<<<<<<< HEAD
     const { error } = await supabase.from('installments').insert(installments);
     if (error) {
       console.error('installment insert error:', error);
       toast.error('تحذير: تم حفظ الوثيقة لكن فشل إنشاء جدول الأقساط: ' + error.message);
     }
+=======
+    // FIX #P1: Handle insert failure — was completely silent
+    const { error: instError } = await supabase.from('installments').insert(installments);
+    if (instError) toast.error('تم حفظ الوثيقة لكن فشل جدول الأقساط: ' + instError.message);
+>>>>>>> 4f861908343d864f2dd8df883bdc55b699004211
   }
 
   async function deletePolicy(policy: Policy) {
     if (!confirm(`هل أنت متأكد من حذف الوثيقة "${policy.policy_number}"؟\nسيتم حذف الأقساط المرتبطة أيضاً.`)) return;
     const { error } = await supabase.from('policies').delete().eq('id', policy.id);
+<<<<<<< HEAD
     if (error) {
       if (error.code === '23503') {
         toast.error('لا يمكن الحذف — الوثيقة بها تحصيلات مسجّلة');
@@ -198,6 +205,10 @@ export default function PolicyManagement() {
       }
       return;
     }
+=======
+    // FIX #P2: Distinguish FK from other errors
+    if (error) { toast.error(error.code === '23503' ? 'لا يمكن الحذف — الوثيقة بها تحصيلات مسجّلة' : 'خطأ: ' + error.message); return; }
+>>>>>>> 4f861908343d864f2dd8df883bdc55b699004211
     toast.success('تم حذف الوثيقة');
     if (selectedPolicy?.id === policy.id) setSelectedPolicy(null);
     loadData();
