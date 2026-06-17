@@ -124,14 +124,4 @@ AS $$
     OR EXISTS (SELECT 1 FROM profiles WHERE id = accessor_uuid AND role = 'dev_manager');
 $$;
 
--- 11. Refresh mark_overdue_installments (unchanged but safe to re-run)
-CREATE OR REPLACE FUNCTION mark_overdue_installments()
-RETURNS void
-LANGUAGE sql
-SECURITY DEFINER
-AS $$
-  UPDATE installments
-  SET status = 'overdue', updated_at = now()
-  WHERE status = 'pending'
-    AND due_date < CURRENT_DATE;
-$$;
+-- 11. mark_overdue_installments function moved to final migration file to ensure columns exist

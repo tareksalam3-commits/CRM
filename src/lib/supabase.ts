@@ -1,15 +1,22 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
+const supabaseUrl     = import.meta.env.VITE_SUPABASE_URL     || '';
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
-// BUG FIX #16: Warn early if env vars are missing so developer knows what to set up
+// FIX #S1: Clear error when env vars missing — not silent broken client
 if (!supabaseUrl || !supabaseAnonKey) {
   console.error(
-    '[CRM] Missing Supabase env vars. Create a .env file with:\n' +
-    'VITE_SUPABASE_URL=https://your-project.supabase.co\n' +
-    'VITE_SUPABASE_ANON_KEY=your-anon-key'
+    '[CRM] ⛔ متغيرات Supabase مفقودة!\n' +
+    'أنشئ ملف .env:\n' +
+    '  VITE_SUPABASE_URL=https://your-project.supabase.co\n' +
+    '  VITE_SUPABASE_ANON_KEY=your-anon-key'
   );
+  if (typeof document !== 'undefined' && import.meta.env.PROD) {
+    document.body.innerHTML =
+      '<div style="font-family:sans-serif;padding:2rem;direction:rtl;text-align:center">' +
+      '<h2 style="color:#dc2626">⛔ خطأ في إعداد التطبيق</h2>' +
+      '<p>يرجى التواصل مع المطور</p></div>';
+  }
 }
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);

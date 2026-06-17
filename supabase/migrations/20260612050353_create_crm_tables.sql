@@ -41,7 +41,6 @@ CREATE TABLE IF NOT EXISTS clients (
 );
 
 CREATE INDEX IF NOT EXISTS idx_clients_agent ON clients(agent_id);
-CREATE INDEX IF NOT EXISTS idx_clients_national_id ON clients(national_id);
 
 -- Policies table
 CREATE TABLE IF NOT EXISTS policies (
@@ -63,7 +62,6 @@ CREATE TABLE IF NOT EXISTS policies (
 
 CREATE INDEX IF NOT EXISTS idx_policies_agent ON policies(agent_id);
 CREATE INDEX IF NOT EXISTS idx_policies_client ON policies(client_id);
-CREATE INDEX IF NOT EXISTS idx_policies_status ON policies(status);
 
 -- Installments table
 CREATE TABLE IF NOT EXISTS installments (
@@ -81,7 +79,6 @@ CREATE TABLE IF NOT EXISTS installments (
 );
 
 CREATE INDEX IF NOT EXISTS idx_installments_policy ON installments(policy_id);
-CREATE INDEX IF NOT EXISTS idx_installments_status ON installments(status);
 CREATE INDEX IF NOT EXISTS idx_installments_due_date ON installments(due_date);
 
 -- Collections table
@@ -134,7 +131,6 @@ CREATE TABLE IF NOT EXISTS tasks (
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_assigned ON tasks(assigned_to);
-CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 
 -- Notifications table
 CREATE TABLE IF NOT EXISTS notifications (
@@ -150,7 +146,6 @@ CREATE TABLE IF NOT EXISTS notifications (
 );
 
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
-CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(user_id, is_read);
 
 -- Month closings table
 CREATE TABLE IF NOT EXISTS month_closings (
@@ -177,8 +172,6 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_logs(user_id);
-CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_logs(entity_type, entity_id);
-CREATE INDEX IF NOT EXISTS idx_audit_date ON audit_logs(created_at);
 
 -- System settings table
 CREATE TABLE IF NOT EXISTS system_settings (
@@ -202,15 +195,4 @@ ALTER TABLE month_closings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE system_settings ENABLE ROW LEVEL SECURITY;
 
--- BUG FIX: Auto-mark overdue installments via a DB function + trigger on installments changes.
--- Call this function periodically (via a Supabase Scheduled Job or on app load).
-CREATE OR REPLACE FUNCTION mark_overdue_installments()
-RETURNS void
-LANGUAGE sql
-SECURITY DEFINER
-AS $$
-  UPDATE installments
-  SET status = 'overdue', updated_at = now()
-  WHERE status = 'pending'
-    AND due_date < CURRENT_DATE;
-$$;
+-- Function moved to final migration file to ensure columns exist first

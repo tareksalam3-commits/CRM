@@ -10,8 +10,6 @@ export function isAbove(roleA: UserRole, roleB: UserRole): boolean {
 
 /** Returns true if user can manage (create/edit/delete) target role */
 export function canManageRole(myRole: UserRole, targetRole: UserRole): boolean {
-  if (myRole === 'super_admin') return true;
-  if (myRole === 'dev_manager') return ROLE_LEVELS[targetRole] >= 2; // gs and below
   return isAbove(myRole, targetRole);
 }
 
@@ -52,7 +50,7 @@ export function canManageSettings(role: UserRole): boolean {
 
 /** Roles the current user is allowed to assign when creating/editing users */
 export function assignableRoles(myRole: UserRole): UserRole[] {
-  const all: UserRole[] = ['super_admin','dev_manager','general_supervisor','supervisor','team_leader','agent'];
+  const all: UserRole[] = ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'team_leader', 'agent'];
   if (myRole === 'super_admin') return all;
   return all.filter(r => ROLE_LEVELS[r] > ROLE_LEVELS[myRole]);
 }

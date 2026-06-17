@@ -281,18 +281,24 @@ export default function Reports() {
       setReportData(data);
       setKpis(newKpis);
     } catch (err) {
-      toast.error('خطأ في إنشاء التقرير');
-      console.error(err);
+      // FIX #R1: Detailed error message
+      toast.error('خطأ: ' + (err instanceof Error ? err.message : String(err)));
+      console.error('[Reports]', err);
     }
     setLoading(false);
   }, [profile, reportType, month, year, canViewAdmin]);
 
   async function exportExcel() {
+    // FIX #R2: Guard empty data + try/catch
+    if (reportData.length === 0) { toast.error('لا توجد بيانات للتصدير'); return; }
+    try {
     const XLSX = await import('xlsx');
     const ws = XLSX.utils.json_to_sheet(reportData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Report');
     XLSX.writeFile(wb, `report_${reportType}_${year}_${month}.xlsx`);
+    toast.success('تم التصدير بنجاح');
+    } catch (err) { toast.error('فشل التصدير: ' + (err instanceof Error ? err.message : String(err))); }
   }
 
   const reportTypes: { key: ReportType; label: string; adminOnly?: boolean }[] = [
