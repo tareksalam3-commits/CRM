@@ -193,7 +193,7 @@ export default function TargetManagement() {
         if (error) throw error;
         toast.success('تم حفظ التارجت');
       }
-      resetForm();
+      closeModal();
       loadData();
     } catch (error: any) {
       toast.error('خطأ: ' + error.message);
@@ -225,7 +225,7 @@ export default function TargetManagement() {
       const { error } = await supabase.from('targets').upsert(targets_to_insert, { onConflict: 'user_id,period_type,year,period_number' });
       if (error) throw error;
       toast.success(`تم إضافة 12 تارجت شهري للسنة ${bulkForm.year}`);
-      resetForm();
+      closeModal();
       loadData();
     } catch (error: any) {
       toast.error('خطأ: ' + error.message);
@@ -262,7 +262,7 @@ export default function TargetManagement() {
       const { error } = await supabase.from('targets').upsert(newTargets, { onConflict: 'user_id,period_type,year,period_number' });
       if (error) throw error;
       toast.success(`تم نسخ التارجتات من ${copyForm.source_year} إلى ${copyForm.target_year}`);
-      resetForm();
+      closeModal();
       loadData();
     } catch (error: any) {
       toast.error('خطأ: ' + error.message);
@@ -298,7 +298,7 @@ export default function TargetManagement() {
       const { error } = await supabase.from('targets').upsert(targets_to_insert, { onConflict: 'user_id,period_type,year,period_number' });
       if (error) throw error;
       toast.success(`تم إضافة تارجتات لـ ${allProfiles.length} موظف للسنة ${bulkForm.year}`);
-      resetForm();
+      closeModal();
       loadData();
     } catch (error: any) {
       toast.error('خطأ: ' + error.message);
@@ -317,7 +317,8 @@ export default function TargetManagement() {
     }
   }
 
-  function resetForm() {
+  // ── Close modal and reset form
+  function closeModal() {
     setModalMode(null);
     setEditingTarget(null);
     setForm({ user_id: '', period_type: 'monthly', year: new Date().getFullYear(), period_number: new Date().getMonth() + 1, target_amount: '' });
@@ -325,6 +326,26 @@ export default function TargetManagement() {
     setCopyForm({ source_year: new Date().getFullYear() - 1, target_year: new Date().getFullYear() });
   }
 
+  // ── Open add modal
+  function openAddModal() {
+    setEditingTarget(null);
+    setForm({ user_id: '', period_type: 'monthly', year: new Date().getFullYear(), period_number: new Date().getMonth() + 1, target_amount: '' });
+    setModalMode('add');
+  }
+
+  // ── Open bulk add modal
+  function openBulkAddModal() {
+    setBulkForm({ user_id: '', year: new Date().getFullYear(), monthly_amount: '' });
+    setModalMode('bulk_add');
+  }
+
+  // ── Open copy year modal
+  function openCopyYearModal() {
+    setCopyForm({ source_year: new Date().getFullYear() - 1, target_year: new Date().getFullYear() });
+    setModalMode('copy_year');
+  }
+
+  // ── Edit target
   function startEdit(t: EnrichedTarget) {
     setEditingTarget(t);
     setForm({ user_id: t.user_id, period_type: t.period_type, year: t.year, period_number: t.period_number, target_amount: String(t.target_amount) });
@@ -349,15 +370,15 @@ export default function TargetManagement() {
         icon={Target}
         actions={canManage ? (
           <div className="flex gap-2 flex-wrap">
-            <button onClick={() => { setModalMode('add'); resetForm(); }}
+            <button onClick={openAddModal}
               className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-medium transition-colors">
               <Plus className="w-4 h-4" /><span className="hidden sm:inline">إضافة تارجت</span>
             </button>
-            <button onClick={() => { setModalMode('bulk_add'); resetForm(); }}
+            <button onClick={openBulkAddModal}
               className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-medium transition-colors">
               <Zap className="w-4 h-4" /><span className="hidden sm:inline">إضافة سنة</span>
             </button>
-            <button onClick={() => { setModalMode('copy_year'); resetForm(); }}
+            <button onClick={openCopyYearModal}
               className="flex items-center gap-2 px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-sm font-medium transition-colors">
               <Copy className="w-4 h-4" /><span className="hidden sm:inline">نسخ سنة</span>
             </button>
@@ -477,12 +498,12 @@ export default function TargetManagement() {
       </div>
 
       {/* Modal for Add/Edit Single Target */}
-      {modalMode === 'add' || modalMode === 'edit' ? (
+      {(modalMode === 'add' || modalMode === 'edit') && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-md max-h-[92vh] overflow-y-auto p-6">
             <div className="flex items-center justify-between mb-5">
               <h3 className="text-lg font-bold text-slate-900 dark:text-white">{editingTarget ? 'تعديل التارجت' : 'إضافة تارجت'}</h3>
-              <button onClick={resetForm} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg"><X className="w-5 h-5 text-slate-500" /></button>
+              <button onClick={closeModal} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg"><X className="w-5 h-5 text-slate-500" /></button>
             </div>
 
             <div className="space-y-4">
@@ -540,20 +561,20 @@ export default function TargetManagement() {
                 <button onClick={handleSubmit} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium transition-colors">
                   {editingTarget ? 'تحديث' : 'حفظ'}
                 </button>
-                <button onClick={resetForm} className="flex-1 py-2.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl font-medium transition-colors">إلغاء</button>
+                <button onClick={closeModal} className="flex-1 py-2.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl font-medium transition-colors">إلغاء</button>
               </div>
             </div>
           </div>
         </div>
-      ) : null}
+      )}
 
       {/* Modal for Bulk Add */}
-      {modalMode === 'bulk_add' ? (
+      {modalMode === 'bulk_add' && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-md max-h-[92vh] overflow-y-auto p-6">
             <div className="flex items-center justify-between mb-5">
               <h3 className="text-lg font-bold text-slate-900 dark:text-white">إضافة تارجتات سنة كاملة</h3>
-              <button onClick={resetForm} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg"><X className="w-5 h-5 text-slate-500" /></button>
+              <button onClick={closeModal} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg"><X className="w-5 h-5 text-slate-500" /></button>
             </div>
 
             <div className="space-y-4">
@@ -599,20 +620,20 @@ export default function TargetManagement() {
                 <button onClick={bulkForm.user_id === 'all' ? handleBulkAddAllUsers : handleBulkAdd} className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-medium transition-colors">
                   إضافة
                 </button>
-                <button onClick={resetForm} className="flex-1 py-2.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl font-medium transition-colors">إلغاء</button>
+                <button onClick={closeModal} className="flex-1 py-2.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl font-medium transition-colors">إلغاء</button>
               </div>
             </div>
           </div>
         </div>
-      ) : null}
+      )}
 
       {/* Modal for Copy Year */}
-      {modalMode === 'copy_year' ? (
+      {modalMode === 'copy_year' && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-md max-h-[92vh] overflow-y-auto p-6">
             <div className="flex items-center justify-between mb-5">
               <h3 className="text-lg font-bold text-slate-900 dark:text-white">نسخ تارجتات سنة</h3>
-              <button onClick={resetForm} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg"><X className="w-5 h-5 text-slate-500" /></button>
+              <button onClick={closeModal} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg"><X className="w-5 h-5 text-slate-500" /></button>
             </div>
 
             <div className="space-y-4">
@@ -641,12 +662,12 @@ export default function TargetManagement() {
                 <button onClick={handleCopyYear} className="flex-1 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-medium transition-colors">
                   نسخ
                 </button>
-                <button onClick={resetForm} className="flex-1 py-2.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl font-medium transition-colors">إلغاء</button>
+                <button onClick={closeModal} className="flex-1 py-2.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl font-medium transition-colors">إلغاء</button>
               </div>
             </div>
           </div>
         </div>
-      ) : null}
+      )}
     </div>
   );
 }
