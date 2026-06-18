@@ -20,27 +20,27 @@ export function isManager(role: UserRole): boolean {
 
 /** Returns true if user can access admin reports */
 export function canViewAdminReports(role: UserRole): boolean {
-  return ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'team_leader'].includes(role);
+  return ['super_admin', 'branch_manager', 'dev_manager', 'general_supervisor', 'supervisor', 'team_leader'].includes(role);
 }
 
 /** Returns true if user can manage targets for others */
 export function canManageTargets(role: UserRole): boolean {
-  return ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'team_leader'].includes(role);
+  return ['super_admin', 'branch_manager', 'dev_manager', 'general_supervisor', 'supervisor', 'team_leader'].includes(role);
 }
 
 /** Returns true if user can perform org-chart moves */
 export function canRearrangeOrg(role: UserRole): boolean {
-  return ['super_admin', 'dev_manager'].includes(role);
+  return ['super_admin', 'branch_manager', 'dev_manager'].includes(role);
 }
 
 /** Returns true if user can close months */
 export function canCloseMonth(role: UserRole): boolean {
-  return ['super_admin', 'dev_manager'].includes(role);
+  return ['super_admin', 'branch_manager', 'dev_manager'].includes(role);
 }
 
 /** Returns true if user can view audit logs */
 export function canViewAudit(role: UserRole): boolean {
-  return ['super_admin', 'dev_manager'].includes(role);
+  return ['super_admin', 'branch_manager', 'dev_manager'].includes(role);
 }
 
 /** Returns true if user can manage system settings */
@@ -50,7 +50,7 @@ export function canManageSettings(role: UserRole): boolean {
 
 /** Roles the current user is allowed to assign when creating/editing users */
 export function assignableRoles(myRole: UserRole): UserRole[] {
-  const all: UserRole[] = ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'team_leader', 'agent'];
+  const all: UserRole[] = ['super_admin', 'branch_manager', 'dev_manager', 'general_supervisor', 'supervisor', 'team_leader', 'agent'];
   if (myRole === 'super_admin') return all;
   return all.filter(r => ROLE_LEVELS[r] > ROLE_LEVELS[myRole]);
 }

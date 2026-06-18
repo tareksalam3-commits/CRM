@@ -84,7 +84,7 @@ serve(async (req) => {
   // ── Reset Password ──────────────────────────────────────────
   if (body.reset_password_for) {
     // Only managers can reset passwords
-    if (!callerProfile || !["super_admin","dev_manager","general_supervisor","supervisor","team_leader"].includes(callerProfile.role)) {
+    if (!callerProfile || !["super_admin", "branch_manager", "dev_manager", "general_supervisor", "supervisor", "team_leader"].includes(callerProfile.role)) {
       return jsonResponse({ error: "غير مصرح بتغيير كلمة المرور" }, 403, origin);
     }
 
@@ -169,7 +169,7 @@ serve(async (req) => {
 
   // ── Create User ──────────────────────────────────────────────
   // Validate caller has manager role
-  if (!callerProfile || !["super_admin","dev_manager","general_supervisor","supervisor","team_leader"].includes(callerProfile.role)) {
+  if (!callerProfile || !["super_admin", "branch_manager", "dev_manager", "general_supervisor", "supervisor", "team_leader"].includes(callerProfile.role)) {
     return jsonResponse({ error: "غير مصرح — فقط المديرون يمكنهم إنشاء مستخدمين" }, 403, origin);
   }
 
@@ -192,7 +192,7 @@ serve(async (req) => {
   }
 
   // FIX #EF6: Role whitelist
-  const VALID_ROLES = ["super_admin","dev_manager","general_supervisor","supervisor","team_leader","agent"];
+  const VALID_ROLES = ["super_admin", "branch_manager", "dev_manager", "general_supervisor", "supervisor", "team_leader", "agent"];
   if (role && !VALID_ROLES.includes(role)) {
     return jsonResponse({ error: "قيمة الدور غير مسموح بها" }, 400, origin);
   }
