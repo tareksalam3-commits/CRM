@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../lib/supabase';
 import { formatCurrency, formatPercent, formatNumber } from '../../lib/utils';
@@ -26,14 +26,19 @@ interface DashboardStats {
   userCount: number;
   collectionRate: number;
   topAgents: { name: string; production: number }[];
+  bottomAgents: { name: string; production: number }[];
   policyStatusDist: { name: string; value: number; color: string }[];
+  targetAchievement: number;
+  monthlyNewBusiness: number;
+  monthlyCollections: number;
   error?: string;
 }
 
 const INITIAL_STATS: DashboardStats = {
   totalPremiums: 0, totalCollected: 0, totalDue: 0, totalOverdue: 0,
   clientCount: 0, policyCount: 0, activePolicyCount: 0, expiringPoliciesCount: 0,
-  userCount: 0, collectionRate: 0, topAgents: [], policyStatusDist: [],
+  userCount: 0, collectionRate: 0, topAgents: [], bottomAgents: [], policyStatusDist: [],
+  targetAchievement: 0, monthlyNewBusiness: 0, monthlyCollections: 0,
 };
 
 const POLICY_COLORS: Record<string, string> = {
@@ -56,7 +61,7 @@ export default function Dashboard() {
       const [policiesRes, clientsRes, collectionsRes, usersRes, installmentsRes] = await Promise.all([
         supabase.from('policies').select('annual_premium, status, created_at'),
         supabase.from('clients').select('id', { count: 'exact', head: true }),
-        supabase.from('collections').select('amount'),
+        supabase.from('collections').select('amount, created_at'),
         supabase.from('profiles').select('id', { count: 'exact', head: true }),
         supabase.from('installments').select('amount, status, due_date'),
       ]);
@@ -71,6 +76,49 @@ export default function Dashboard() {
 
       const totalPremiums = policies.reduce((s, p: { annual_premium: number }) => s + Number(p.annual_premium), 0);
       const totalCollected = collections.reduce((s, c: { amount: number }) => s + Number(c.amount), 0);
+
+      // Calculate monthly metrics
+      const now_date = new Date();
+      const monthStart = new Date(now_date.getFullYear(), now_date.getMonth(), 1).toISOString();
+      const monthEnd = new Date(now_date.getFullYear(), now_date.getMonth() + 1, 0).toISOString();
+      const monthlyPolicies = policies.filter((p: any) => p.created_at >= monthStart && p.created_at <= monthEnd);
+      const monthlyNewBusiness = monthlyPolicies.reduce((s, p: any) => s + Number(p.annual_premium), 0);
+      
+      const monthlyCollectionsData = collections.filter((c: any) => c.created_at >= monthStart && c.created_at <= monthEnd);
+      const monthlyCollections = monthlyCollectionsData.reduce((s, c: any) => s + Number(c.amount), 0);
+
+      // Get top and bottom agents
+      const { data: agentsData } = await supabase
+        .from('profiles')
+        .select('id, full_name')
+        .eq('role', 'agent')
+        .limit(100);
+
+      const agentStats = await Promise.all(
+        (agentsData || []).map(async (agent: any) => {
+          const { data: agentPolicies } = await supabase
+            .from('policies')
+            .select('annual_premium')
+            .eq('agent_id', agent.id);
+          const production = agentPolicies?.reduce((s: number, p: any) => s + Number(p.annual_premium), 0) || 0;
+          return { name: agent.full_name, production };
+        })
+      );
+
+      const sortedAgents = agentStats.sort((a, b) => b.production - a.production);
+      const topAgents = sortedAgents.slice(0, 5);
+      const bottomAgents = sortedAgents.slice(-5).reverse();
+
+      // Calculate target achievement
+      const { data: targetData } = await supabase
+        .from('targets')
+        .select('target_amount')
+        .eq('period_type', 'monthly')
+        .eq('year', now_date.getFullYear())
+        .eq('period_number', now_date.getMonth() + 1);
+
+      const totalTarget = targetData?.reduce((s: number, t: any) => s + Number(t.target_amount), 0) || 0;
+      const targetAchievement = totalTarget > 0 ? (monthlyNewBusiness / totalTarget) * 100 : 0;
 
       const now = new Date().toISOString().split('T')[0];
       const thirtyDaysLater = new Date();
@@ -107,8 +155,12 @@ export default function Dashboard() {
         expiringPoliciesCount: expiringPolicies.length,
         userCount: usersRes.count || 0,
         collectionRate: totalPremiums > 0 ? (totalCollected / totalPremiums) * 100 : 0,
-        topAgents: [],
+        topAgents,
+        bottomAgents,
         policyStatusDist,
+        monthlyNewBusiness,
+        monthlyCollections,
+        targetAchievement,
       });
 
       setLastUpdated(new Date());
@@ -225,6 +277,37 @@ export default function Dashboard() {
         <StatBox label="معدل التحصيل" value={formatPercent(stats.collectionRate)} icon={Target} />
       </div>
 
+      {/* Monthly Performance Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <div className="bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-900/20 dark:to-blue-800/20 rounded-xl shadow-sm border border-blue-200 dark:border-blue-700 p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-blue-600 dark:text-blue-400 font-medium">الأعمال الجديدة (هذا الشهر)</p>
+              <p className="text-2xl font-bold text-blue-900 dark:text-blue-100 mt-2">{formatCurrency(stats.monthlyNewBusiness)}</p>
+            </div>
+            <TrendingUp className="w-12 h-12 text-blue-300 dark:text-blue-600" />
+          </div>
+        </div>
+        <div className="bg-gradient-to-br from-green-50 to-green-100 dark:from-green-900/20 dark:to-green-800/20 rounded-xl shadow-sm border border-green-200 dark:border-green-700 p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-green-600 dark:text-green-400 font-medium">التحصيل (هذا الشهر)</p>
+              <p className="text-2xl font-bold text-green-900 dark:text-green-100 mt-2">{formatCurrency(stats.monthlyCollections)}</p>
+            </div>
+            <Wallet className="w-12 h-12 text-green-300 dark:text-green-600" />
+          </div>
+        </div>
+        <div className="bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-900/20 dark:to-purple-800/20 rounded-xl shadow-sm border border-purple-200 dark:border-purple-700 p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-purple-600 dark:text-purple-400 font-medium">نسبة تحقيق الهدف</p>
+              <p className="text-2xl font-bold text-purple-900 dark:text-purple-100 mt-2">{formatPercent(stats.targetAchievement)}</p>
+            </div>
+            <Target className="w-12 h-12 text-purple-300 dark:text-purple-600" />
+          </div>
+        </div>
+      </div>
+
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6">
@@ -275,6 +358,48 @@ export default function Dashboard() {
                 <p className="font-bold text-red-600 dark:text-red-400 text-lg">{formatCurrency(stats.totalOverdue)}</p>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Top and Bottom Performers */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+        <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6">
+          <h3 className="font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
+            <Award className="w-5 h-5 text-amber-500" />
+            أعلى 5 منتجين
+          </h3>
+          <div className="space-y-3">
+            {stats.topAgents.map((agent, idx) => (
+              <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-700 rounded-lg">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-full bg-amber-100 dark:bg-amber-900 flex items-center justify-center text-sm font-bold text-amber-700 dark:text-amber-200">
+                    {idx + 1}
+                  </div>
+                  <span className="text-slate-900 dark:text-white font-medium">{agent.name}</span>
+                </div>
+                <span className="text-amber-600 dark:text-amber-400 font-semibold">{formatCurrency(agent.production)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6">
+          <h3 className="font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
+            <AlertCircle className="w-5 h-5 text-red-500" />
+            أقل 5 منتجين
+          </h3>
+          <div className="space-y-3">
+            {stats.bottomAgents.map((agent, idx) => (
+              <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-700 rounded-lg">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-full bg-red-100 dark:bg-red-900 flex items-center justify-center text-sm font-bold text-red-700 dark:text-red-200">
+                    {idx + 1}
+                  </div>
+                  <span className="text-slate-900 dark:text-white font-medium">{agent.name}</span>
+                </div>
+                <span className="text-red-600 dark:text-red-400 font-semibold">{formatCurrency(agent.production)}</span>
+              </div>
+            ))}
           </div>
         </div>
       </div>
