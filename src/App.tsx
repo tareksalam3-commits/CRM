@@ -8,6 +8,8 @@ import LoginPage from './pages/LoginPage';
 
 const Dashboard = lazy(() => import('./components/dashboard/Dashboard'));
 const UserManagement = lazy(() => import('./components/users/UserManagement'));
+const BranchManagement = lazy(() => import('./components/branches/BranchManagement'));
+const BranchAccessManagement = lazy(() => import('./components/branches/BranchAccessManagement'));
 const OrgChart = lazy(() => import('./components/org/OrgChart'));
 const ClientManagement = lazy(() => import('./components/clients/ClientManagement'));
 const PolicyManagement = lazy(() => import('./components/policies/PolicyManagement'));
@@ -60,6 +62,8 @@ function AppRoutes() {
       <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
         <Route path="/" element={<Suspense fallback={<PageLoader />}><Dashboard /></Suspense>} />
         <Route path="/users" element={<Suspense fallback={<PageLoader />}><UserManagement /></Suspense>} />
+        <Route path="/branches" element={<Suspense fallback={<PageLoader />}><BranchManagement /></Suspense>} />
+        <Route path="/branch-access" element={<Suspense fallback={<PageLoader />}><BranchAccessManagement /></Suspense>} />
         <Route path="/org" element={<Suspense fallback={<PageLoader />}><OrgChart /></Suspense>} />
         <Route path="/clients" element={<Suspense fallback={<PageLoader />}><ClientManagement /></Suspense>} />
         <Route path="/policies" element={<Suspense fallback={<PageLoader />}><PolicyManagement /></Suspense>} />

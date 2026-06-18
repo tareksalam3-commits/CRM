@@ -12,13 +12,14 @@ import toast from 'react-hot-toast';
 
 const EMPTY_FORM = {
   name: '', national_id: '', phone: '', phone2: '', address: '',
-  job: '', birth_date: '', marital_status: '', notes: '', agent_id: '',
+  job: '', birth_date: '', marital_status: '', notes: '', agent_id: '', branch_id: '',
 };
 
 export default function ClientManagement() {
   const { profile } = useAuth();
   const [clients, setClients] = useState<Client[]>([]);
   const [agents, setAgents] = useState<{ id: string; full_name: string; role: string }[]>([]);
+  const [branches, setBranches] = useState<{ id: string; name: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -55,10 +56,24 @@ export default function ClientManagement() {
     }
   }, []);
 
+  const fetchBranches = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('branches')
+      .select('id, name')
+      .eq('is_active', true)
+      .order('name');
+    if (error) {
+      console.error('fetchBranches error:', error);
+    } else if (data) {
+      setBranches(data);
+    }
+  }, []);
+
   useEffect(() => {
     fetchClients();
     fetchAgents();
-  }, [fetchClients, fetchAgents]);
+    fetchBranches();
+  }, [fetchClients, fetchAgents, fetchBranches]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -94,6 +109,7 @@ export default function ClientManagement() {
       marital_status: formData.marital_status || null,
       notes: formData.notes.trim() || null,
       agent_id: resolvedAgentId,
+      branch_id: formData.branch_id || null,
     };
 
     if (editingClient) {
@@ -162,6 +178,7 @@ export default function ClientManagement() {
       marital_status: client.marital_status || '',
       notes: client.notes || '',
       agent_id: client.agent_id,
+      branch_id: client.branch_id || '',
     });
     setShowForm(true);
   }

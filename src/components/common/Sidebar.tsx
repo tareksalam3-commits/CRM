@@ -6,7 +6,7 @@ import { ROLE_LABELS, UserRole } from '../../types';
 import {
   LayoutDashboard, Users, UserCircle, FileText, Wallet, Target,
   CheckSquare, Bell, Calendar, BarChart3, ClipboardList, Settings,
-  Moon, Sun, LogOut, Menu, X, Shield, ChevronLeft, GitBranch,
+  Moon, Sun, LogOut, Menu, X, Shield, ChevronLeft, GitBranch, Building2,
 } from 'lucide-react';
 
 interface NavItem {
@@ -18,18 +18,20 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { path: '/', label: 'لوحة التحكم', icon: LayoutDashboard },
-  { path: '/users', label: 'المستخدمين', icon: Users, roles: ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'team_leader'] },
-  { path: '/org', label: 'الهيكل الوظيفي', icon: GitBranch, roles: ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager'] },
-  { path: '/clients', label: 'العملاء', icon: UserCircle },
-  { path: '/policies', label: 'الوثائق', icon: FileText },
-  { path: '/collections', label: 'التحصيل', icon: Wallet },
+  { path: '/users', label: 'المستخدمين', icon: Users, roles: ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager', 'team_leader'] },
+  { path: '/branches', label: 'إدارة الفروع', icon: Building2, roles: ['super_admin', 'dev_manager'] },
+  { path: '/branch-access', label: 'وصول الفروع', icon: Users, roles: ['super_admin', 'dev_manager'] },
+  { path: '/org', label: 'الهيكل الوظيفي', icon: GitBranch, roles: ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager', 'team_leader'] },
+  { path: '/clients', label: 'العملاء', icon: UserCircle, roles: ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager', 'team_leader', 'agent'] },
+  { path: '/policies', label: 'الوثائق', icon: FileText, roles: ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager', 'team_leader', 'agent'] },
+  { path: '/collections', label: 'التحصيل', icon: Wallet, roles: ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager', 'team_leader', 'agent'] },
   { path: '/targets', label: 'التارجتات', icon: Target, roles: ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager', 'team_leader', 'agent'] },
-  { path: '/tasks', label: 'المهام', icon: CheckSquare },
-  { path: '/notifications', label: 'الإشعارات', icon: Bell },
-  { path: '/closing', label: 'تقفيل الشهر', icon: Calendar, roles: ['super_admin', 'dev_manager'] },
-  { path: '/reports', label: 'التقارير', icon: BarChart3 },
-  { path: '/audit', label: 'سجل العمليات', icon: ClipboardList, roles: ['super_admin', 'dev_manager'] },
-  { path: '/settings', label: 'الإعدادات', icon: Settings, roles: ['super_admin'] },
+  { path: '/tasks', label: 'المهام', icon: CheckSquare, roles: ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager', 'team_leader', 'agent'] },
+  { path: '/notifications', label: 'الإشعارات', icon: Bell, roles: ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager', 'team_leader', 'agent'] },
+  { path: '/closing', label: 'تقفيل الشهر', icon: Calendar, roles: ['super_admin', 'dev_manager', 'general_supervisor'] },
+  { path: '/reports', label: 'التقارير', icon: BarChart3, roles: ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager', 'team_leader'] },
+  { path: '/audit', label: 'سجل العمليات', icon: ClipboardList, roles: ['super_admin', 'dev_manager', 'general_supervisor'] },
+  { path: '/settings', label: 'الإعدادات', icon: Settings, roles: ['super_admin', 'dev_manager', 'general_supervisor'] },
 ];
 
 export default function Sidebar() {

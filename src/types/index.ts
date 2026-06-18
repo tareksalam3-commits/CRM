@@ -92,6 +92,23 @@ export const TARGET_PERIOD_LABELS: Record<TargetPeriod, string> = {
   annual: 'سنوي',
 };
 
+export interface Branch {
+  id: string;
+  name: string;
+  code: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UserBranchAccess {
+  id: string;
+  user_id: string;
+  branch_id: string;
+  created_at: string;
+  branch?: Branch;
+}
+
 export interface Profile {
   id: string;
   full_name: string;
@@ -103,6 +120,8 @@ export interface Profile {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+  branch?: Branch;
+  accessible_branches?: Branch[];
 }
 
 export interface Client {
@@ -117,9 +136,11 @@ export interface Client {
   marital_status: MaritalStatus | null;
   notes: string | null;
   agent_id: string;
+  branch_id: string | null;
   created_at: string;
   updated_at: string;
   agent?: Profile;
+  branch?: Branch;
 }
 
 export interface Policy {
@@ -127,6 +148,7 @@ export interface Policy {
   policy_number: string;
   client_id: string;
   agent_id: string;
+  branch_id: string | null;
   product: string;
   insurance_company: string;
   coverage_amount: number;
@@ -139,6 +161,7 @@ export interface Policy {
   updated_at: string;
   client?: Client;
   agent?: Profile;
+  branch?: Branch;
   installments?: Installment[];
 }
 
@@ -163,15 +186,18 @@ export interface Collection {
   collection_date: string;
   receipt_number: string | null;
   collected_by: string;
+  branch_id: string | null;
   notes: string | null;
   created_at: string;
   policy?: Policy;
   collector?: Profile;
+  branch?: Branch;
 }
 
 export interface Target {
   id: string;
   user_id: string;
+  branch_id: string | null;
   period_type: TargetPeriod;
   year: number;
   period_number: number;
@@ -179,6 +205,7 @@ export interface Target {
   created_at: string;
   updated_at: string;
   user?: Profile;
+  branch?: Branch;
 }
 
 export interface Task {
@@ -189,6 +216,7 @@ export interface Task {
   created_by: string;
   client_id: string | null;
   policy_id: string | null;
+  branch_id: string | null;
   due_date: string;
   status: TaskStatus;
   priority: TaskPriority;
@@ -196,6 +224,7 @@ export interface Task {
   updated_at: string;
   assignee?: Profile;
   creator?: Profile;
+  branch?: Branch;
 }
 
 export interface Notification {
@@ -207,7 +236,9 @@ export interface Notification {
   is_read: boolean;
   related_entity_type: string | null;
   related_entity_id: string | null;
+  branch_id: string | null;
   created_at: string;
+  branch?: Branch;
 }
 
 export interface AuditLog {
@@ -225,11 +256,13 @@ export interface MonthClosing {
   id: string;
   month: number;
   year: number;
+  branch_id: string | null;
   closed_by: string;
   closed_at: string;
   total_premiums: number;
   total_collections: number;
   collection_rate: number;
+  branch?: Branch;
 }
 
 export interface SystemSettings {
