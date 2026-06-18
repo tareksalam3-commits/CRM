@@ -175,3 +175,18 @@ CREATE INDEX IF NOT EXISTS idx_policies_created_at ON policies(created_at);
 CREATE INDEX IF NOT EXISTS idx_collections_collection_date ON collections(collection_date);
 CREATE INDEX IF NOT EXISTS idx_installments_paid_date ON installments(paid_date);
 CREATE INDEX IF NOT EXISTS idx_clients_created_at ON clients(created_at);
+
+-- Final fix for mark_overdue_installments
+DROP FUNCTION IF EXISTS mark_overdue_installments() CASCADE;
+CREATE OR REPLACE FUNCTION mark_overdue_installments()
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  UPDATE public.installments
+  SET status = 'overdue', updated_at = now()
+  WHERE status = 'pending'
+    AND due_date < now()::date;
+END;
+$$;
