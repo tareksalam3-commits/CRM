@@ -5,7 +5,7 @@ import { Installment, Policy, INSTALLMENT_STATUS_LABELS } from '../../types';
 import { formatCurrency, formatDate, formatPercent } from '../../lib/utils';
 import PageHeader from '../common/PageHeader';
 import LoadingSpinner from '../common/LoadingSpinner';
-import { Wallet, Plus, X, CheckCircle, Clock, AlertTriangle } from 'lucide-react';
+import { Wallet, Plus, X, CheckCircle, Clock, AlertTriangle, RotateCcw } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 type FilterType = 'all' | 'pending' | 'overdue' | 'paid';
@@ -144,6 +144,48 @@ export default function CollectionManagement() {
     }
   }, [selectedInstallment, profile, formData, loadData]);
 
+  const revertCollection = async (installment: Installment) => {
+    if (!confirm('هل أنت متأكد من التراجع عن هذا التحصيل؟ سيتم حذف سجل التحصيل وإعادة القسط لحالة غير مدفوع.')) return;
+    
+    try {
+      // 1. Delete the collection record
+      const { error: deleteError } = await supabase
+        .from('collections')
+        .delete()
+        .eq('installment_id', installment.id);
+        
+      if (deleteError) {
+        toast.error('خطأ في حذف سجل التحصيل: ' + deleteError.message);
+        return;
+      }
+      
+      // 2. Determine new status based on due date
+      const isOverdue = new Date(installment.due_date) < new Date();
+      const newStatus = isOverdue ? 'overdue' : 'pending';
+      
+      // 3. Update the installment status
+      const { error: updateError } = await supabase
+        .from('installments')
+        .update({
+          status: newStatus,
+          paid_date: null,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', installment.id);
+        
+      if (updateError) {
+        toast.error('تم حذف التحصيل ولكن حدث خطأ في تحديث حالة القسط');
+        return;
+      }
+      
+      toast.success('تم التراجع عن التحصيل بنجاح');
+      loadData();
+    } catch (err) {
+      console.error('Revert error:', err);
+      toast.error('حدث خطأ غير متوقع أثناء التراجع');
+    }
+  };
+
   const resetForm = () => {
     setFormData({
       amount: '',
@@ -262,7 +304,16 @@ export default function CollectionManagement() {
                     </td>
                     <td className="px-6 py-4">
                       {inst.status === 'paid' ? (
-                        <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">مدفوع</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">مدفوع</span>
+                          <button
+                            onClick={() => revertCollection(inst)}
+                            className="p-1 hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 rounded-lg transition-colors"
+                            title="التراجع عن التحصيل"
+                          >
+                            <RotateCcw className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       ) : (
                         <button
                           onClick={() => {
