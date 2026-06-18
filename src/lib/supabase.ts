@@ -20,3 +20,4 @@ if (!supabaseUrl || !supabaseAnonKey) {
 }
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// force update Thu Jun 18 21:05:06 UTC 2026
