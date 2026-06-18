@@ -3,6 +3,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { ROLE_LABELS, UserRole } from '../../types';
+import { canAccessPage } from '../../lib/rbac';
 import {
   LayoutDashboard, Users, UserCircle, FileText, Wallet, Target,
   CheckSquare, Bell, Calendar, BarChart3, ClipboardList, Settings,
@@ -13,25 +14,24 @@ interface NavItem {
   path: string;
   label: string;
   icon: React.ElementType;
-  roles?: UserRole[];
 }
 
 const navItems: NavItem[] = [
   { path: '/', label: 'لوحة التحكم', icon: LayoutDashboard },
-  { path: '/users', label: 'المستخدمين', icon: Users, roles: ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager', 'team_leader'] },
-  { path: '/branches', label: 'إدارة الفروع', icon: Building2, roles: ['super_admin', 'dev_manager'] },
-  { path: '/branch-access', label: 'وصول الفروع', icon: Users, roles: ['super_admin', 'dev_manager'] },
-  { path: '/org', label: 'الهيكل الوظيفي', icon: GitBranch, roles: ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager', 'team_leader'] },
-  { path: '/clients', label: 'العملاء', icon: UserCircle, roles: ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager', 'team_leader', 'agent'] },
-  { path: '/policies', label: 'الوثائق', icon: FileText, roles: ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager', 'team_leader', 'agent'] },
-  { path: '/collections', label: 'التحصيل', icon: Wallet, roles: ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager', 'team_leader', 'agent'] },
-  { path: '/targets', label: 'التارجتات', icon: Target, roles: ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager', 'team_leader', 'agent'] },
-  { path: '/tasks', label: 'المهام', icon: CheckSquare, roles: ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager', 'team_leader', 'agent'] },
-  { path: '/notifications', label: 'الإشعارات', icon: Bell, roles: ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager', 'team_leader', 'agent'] },
-  { path: '/closing', label: 'تقفيل الشهر', icon: Calendar, roles: ['super_admin', 'dev_manager', 'general_supervisor'] },
-  { path: '/reports', label: 'التقارير', icon: BarChart3, roles: ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager', 'team_leader'] },
-  { path: '/audit', label: 'سجل العمليات', icon: ClipboardList, roles: ['super_admin', 'dev_manager', 'general_supervisor'] },
-  { path: '/settings', label: 'الإعدادات', icon: Settings, roles: ['super_admin', 'dev_manager', 'general_supervisor'] },
+  { path: '/users', label: 'إدارة المستخدمين', icon: Users },
+  { path: '/branches', label: 'إدارة الفروع', icon: Building2 },
+  { path: '/branch-access', label: 'وصول الفروع', icon: Users },
+  { path: '/org', label: 'الهيكل الوظيفي', icon: GitBranch },
+  { path: '/clients', label: 'العملاء', icon: UserCircle },
+  { path: '/policies', label: 'الوثائق', icon: FileText },
+  { path: '/collections', label: 'التحصيل', icon: Wallet },
+  { path: '/targets', label: 'التارجتات', icon: Target },
+  { path: '/tasks', label: 'المهام', icon: CheckSquare },
+  { path: '/notifications', label: 'الإشعارات', icon: Bell },
+  { path: '/closing', label: 'تقفيل الشهر', icon: Calendar },
+  { path: '/reports', label: 'التقارير', icon: BarChart3 },
+  { path: '/audit', label: 'سجل العمليات', icon: ClipboardList },
+  { path: '/settings', label: 'الإعدادات', icon: Settings },
 ];
 
 export default function Sidebar() {
@@ -41,8 +41,8 @@ export default function Sidebar() {
   const [isOpen, setIsOpen] = useState(false);
 
   const filteredItems = navItems.filter(item => {
-    if (!item.roles) return true;
-    return profile && item.roles.includes(profile.role);
+    if (!profile) return false;
+    return canAccessPage(profile.role, item.path);
   });
 
   async function handleLogout() {

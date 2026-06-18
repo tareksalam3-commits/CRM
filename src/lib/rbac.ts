@@ -54,3 +54,41 @@ export function assignableRoles(myRole: UserRole): UserRole[] {
   if (myRole === 'super_admin') return all;
   return all.filter(r => ROLE_LEVELS[r] > ROLE_LEVELS[myRole]);
 }
+
+// ============================================================
+// Navigation Permissions - Role-Based Navigation
+// ============================================================
+
+/** Returns true if user can access a specific page */
+export function canAccessPage(role: UserRole, pagePath: string): boolean {
+  const pagePermissions: Record<string, UserRole[]> = {
+    '/': ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager', 'team_leader', 'agent'],
+    '/users': ['super_admin', 'dev_manager', 'general_supervisor'],
+    '/branches': ['super_admin', 'dev_manager'],
+    '/branch-access': ['super_admin', 'dev_manager'],
+    '/org': ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager', 'team_leader'],
+    '/clients': ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager', 'team_leader', 'agent'],
+    '/policies': ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager', 'team_leader', 'agent'],
+    '/collections': ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager', 'team_leader', 'agent'],
+    '/targets': ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager', 'team_leader'],
+    '/tasks': ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager', 'team_leader', 'agent'],
+    '/notifications': ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager', 'team_leader', 'agent'],
+    '/closing': ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor'],
+    '/reports': ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager', 'team_leader'],
+    '/audit': ['super_admin', 'dev_manager', 'general_supervisor'],
+    '/settings': ['super_admin', 'dev_manager'],
+  };
+
+  const allowedRoles = pagePermissions[pagePath];
+  return allowedRoles ? allowedRoles.includes(role) : false;
+}
+
+/** Update canCloseMonth to include supervisor */
+export function canCloseMonthUpdated(role: UserRole): boolean {
+  return ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor'].includes(role);
+}
+
+/** Update canViewAudit to include general_supervisor */
+export function canViewAuditUpdated(role: UserRole): boolean {
+  return ['super_admin', 'dev_manager', 'general_supervisor'].includes(role);
+}

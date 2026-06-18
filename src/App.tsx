@@ -5,6 +5,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import Layout from './components/common/Layout';
 import LoginPage from './pages/LoginPage';
+import { canAccessPage } from './lib/rbac';
 
 const Dashboard = lazy(() => import('./components/dashboard/Dashboard'));
 const UserManagement = lazy(() => import('./components/users/UserManagement'));
@@ -43,6 +44,21 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function PermissionGuard({ path, children }: { path: string; children: React.ReactNode }) {
+  const { profile, loading } = useAuth();
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[50vh]">
+        <div className="w-10 h-10 rounded-full border-4 border-slate-200 dark:border-slate-700 border-t-blue-600 animate-spin" />
+      </div>
+    );
+  }
+  if (!profile || !canAccessPage(profile.role, path)) {
+    return <Navigate to="/" replace />;
+  }
+  return <>{children}</>;
+}
+
 function AppRoutes() {
   const { session, loading } = useAuth();
   if (loading) {
@@ -61,20 +77,20 @@ function AppRoutes() {
       <Route path="/login" element={session ? <Navigate to="/" replace /> : <LoginPage />} />
       <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
         <Route path="/" element={<Suspense fallback={<PageLoader />}><Dashboard /></Suspense>} />
-        <Route path="/users" element={<Suspense fallback={<PageLoader />}><UserManagement /></Suspense>} />
-        <Route path="/branches" element={<Suspense fallback={<PageLoader />}><BranchManagement /></Suspense>} />
-        <Route path="/branch-access" element={<Suspense fallback={<PageLoader />}><BranchAccessManagement /></Suspense>} />
-        <Route path="/org" element={<Suspense fallback={<PageLoader />}><OrgChart /></Suspense>} />
-        <Route path="/clients" element={<Suspense fallback={<PageLoader />}><ClientManagement /></Suspense>} />
-        <Route path="/policies" element={<Suspense fallback={<PageLoader />}><PolicyManagement /></Suspense>} />
-        <Route path="/collections" element={<Suspense fallback={<PageLoader />}><CollectionManagement /></Suspense>} />
-        <Route path="/targets" element={<Suspense fallback={<PageLoader />}><TargetManagement /></Suspense>} />
-        <Route path="/tasks" element={<Suspense fallback={<PageLoader />}><TaskManagement /></Suspense>} />
-        <Route path="/notifications" element={<Suspense fallback={<PageLoader />}><Notifications /></Suspense>} />
-        <Route path="/closing" element={<Suspense fallback={<PageLoader />}><MonthClosing /></Suspense>} />
-        <Route path="/reports" element={<Suspense fallback={<PageLoader />}><Reports /></Suspense>} />
-        <Route path="/audit" element={<Suspense fallback={<PageLoader />}><AuditLogPage /></Suspense>} />
-        <Route path="/settings" element={<Suspense fallback={<PageLoader />}><SystemSettings /></Suspense>} />
+        <Route path="/users" element={<PermissionGuard path="/users"><Suspense fallback={<PageLoader />}><UserManagement /></Suspense></PermissionGuard>} />
+        <Route path="/branches" element={<PermissionGuard path="/branches"><Suspense fallback={<PageLoader />}><BranchManagement /></Suspense></PermissionGuard>} />
+        <Route path="/branch-access" element={<PermissionGuard path="/branch-access"><Suspense fallback={<PageLoader />}><BranchAccessManagement /></Suspense></PermissionGuard>} />
+        <Route path="/org" element={<PermissionGuard path="/org"><Suspense fallback={<PageLoader />}><OrgChart /></Suspense></PermissionGuard>} />
+        <Route path="/clients" element={<PermissionGuard path="/clients"><Suspense fallback={<PageLoader />}><ClientManagement /></Suspense></PermissionGuard>} />
+        <Route path="/policies" element={<PermissionGuard path="/policies"><Suspense fallback={<PageLoader />}><PolicyManagement /></Suspense></PermissionGuard>} />
+        <Route path="/collections" element={<PermissionGuard path="/collections"><Suspense fallback={<PageLoader />}><CollectionManagement /></Suspense></PermissionGuard>} />
+        <Route path="/targets" element={<PermissionGuard path="/targets"><Suspense fallback={<PageLoader />}><TargetManagement /></Suspense></PermissionGuard>} />
+        <Route path="/tasks" element={<PermissionGuard path="/tasks"><Suspense fallback={<PageLoader />}><TaskManagement /></Suspense></PermissionGuard>} />
+        <Route path="/notifications" element={<PermissionGuard path="/notifications"><Suspense fallback={<PageLoader />}><Notifications /></Suspense></PermissionGuard>} />
+        <Route path="/closing" element={<PermissionGuard path="/closing"><Suspense fallback={<PageLoader />}><MonthClosing /></Suspense></PermissionGuard>} />
+        <Route path="/reports" element={<PermissionGuard path="/reports"><Suspense fallback={<PageLoader />}><Reports /></Suspense></PermissionGuard>} />
+        <Route path="/audit" element={<PermissionGuard path="/audit"><Suspense fallback={<PageLoader />}><AuditLogPage /></Suspense></PermissionGuard>} />
+        <Route path="/settings" element={<PermissionGuard path="/settings"><Suspense fallback={<PageLoader />}><SystemSettings /></Suspense></PermissionGuard>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
