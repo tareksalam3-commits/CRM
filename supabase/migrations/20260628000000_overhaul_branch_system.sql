@@ -145,3 +145,16 @@ CREATE POLICY "targets_select_policy" ON public.targets FOR SELECT TO authentica
 DROP POLICY IF EXISTS "tasks_select_policy" ON public.tasks;
 CREATE POLICY "tasks_select_policy" ON public.tasks FOR SELECT TO authenticated 
   USING (check_branch_access(branch_id));
+
+-- 7. Restrict branch management to super_admin only
+DROP POLICY IF EXISTS "branches_update_policy" ON public.branches;
+CREATE POLICY "branches_update_policy" ON public.branches FOR UPDATE TO authenticated 
+    USING (EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'super_admin'));
+
+DROP POLICY IF EXISTS "branches_delete_policy" ON public.branches;
+CREATE POLICY "branches_delete_policy" ON public.branches FOR DELETE TO authenticated 
+    USING (EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'super_admin'));
+
+DROP POLICY IF EXISTS "branches_insert_policy" ON public.branches;
+CREATE POLICY "branches_insert_policy" ON public.branches FOR INSERT TO authenticated 
+    WITH CHECK (EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'super_admin'));
