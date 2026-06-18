@@ -81,15 +81,17 @@ export default function Dashboard() {
       const collections = collectionsRes.data || [];
       const installments = installmentsRes.data || [];
 
-      const totalPremiums = policies.reduce((s, p: { annual_premium: number }) => s + Number(p.annual_premium), 0);
+      const totalPremiums = installments.reduce((s, i: { amount: number }) => s + Number(i.amount), 0);
       const totalCollected = collections.reduce((s, c: { amount: number }) => s + Number(c.amount), 0);
 
       // Calculate monthly metrics
       const now_date = new Date();
       const monthStart = new Date(now_date.getFullYear(), now_date.getMonth(), 1).toISOString();
       const monthEnd = new Date(now_date.getFullYear(), now_date.getMonth() + 1, 0).toISOString();
-      const monthlyPolicies = policies.filter((p: any) => p.created_at >= monthStart && p.created_at <= monthEnd);
-      const monthlyNewBusiness = monthlyPolicies.reduce((s, p: any) => s + Number(p.annual_premium), 0);
+      
+      // Calculate monthly new business based on installments due this month, not total annual premium
+      const monthlyInstallments = installments.filter((i: any) => i.due_date >= monthStart && i.due_date <= monthEnd);
+      const monthlyNewBusiness = monthlyInstallments.reduce((s, i: any) => s + Number(i.amount), 0);
       
       const monthlyCollectionsData = collections.filter((c: any) => c.created_at >= monthStart && c.created_at <= monthEnd);
       const monthlyCollections = monthlyCollectionsData.reduce((s, c: any) => s + Number(c.amount), 0);
