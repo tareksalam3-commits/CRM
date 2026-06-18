@@ -12,7 +12,7 @@ import {
 import toast from 'react-hot-toast';
 
 // URL الـ Edge Function مباشرة — بيتأخذ من env vars
-const FUNCTION_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-user`;
+const FUNCTION_URL = "https://pojmoiuzeckhxbnahcrk.supabase.co/functions/v1/create-user";
 
 async function callAdminFunction(body: object) {
   const { data: sessionData } = await supabase.auth.getSession();
@@ -29,7 +29,7 @@ async function callAdminFunction(body: object) {
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`,
-        'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+        'apikey': "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBvam1vaXV6ZWNraHhibmFoY3JrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEyNjA5NzUsImV4cCI6MjA5NjgzNjk3NX0.SzzaDxI4tuszQoaFQYQAkwyUNUG-mUun-DnyYOInn4s",
       },
       body: JSON.stringify(body),
     });
