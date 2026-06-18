@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
-import { Target as TargetType, TARGET_PERIOD_LABELS, ROLE_LABELS, TargetPeriod, Profile } from '../../types';
+import { Target as TargetType, ROLE_LABELS, Profile } from '../../types';
 import { canManageTargets } from '../../lib/rbac';
 import { formatCurrency } from '../../lib/utils';
 import PageHeader from '../common/PageHeader';
@@ -9,26 +9,20 @@ import LoadingSpinner from '../common/LoadingSpinner';
 import { Target, Plus, X, TrendingUp, TrendingDown, Edit2, Trash2, Users, User, Copy, Zap } from 'lucide-react';
 import toast from 'react-hot-toast';
 
-// ── حساب نطاق الفترة الزمنية ────────────────────────────────────────────────
-function getPeriodDateRange(periodType: TargetPeriod, year: number, periodNumber: number) {
-  if (periodType === 'monthly') {
-    const start = `${year}-${String(periodNumber).padStart(2, '0')}-01`;
-    const nm = periodNumber === 12 ? 1 : periodNumber + 1;
-    const ny = periodNumber === 12 ? year + 1 : year;
-    return { start, end: `${ny}-${String(nm).padStart(2, '0')}-01` };
-  }
-  if (periodType === 'quarterly') {
-    const sm = (periodNumber - 1) * 3 + 1;
-    const em = sm + 3;
-    return { start: `${year}-${String(sm).padStart(2, '0')}-01`, end: `${em > 12 ? year + 1 : year}-${String(em > 12 ? em - 12 : em).padStart(2, '0')}-01` };
-  }
-  if (periodType === 'semi_annual') {
-    const sm = (periodNumber - 1) * 6 + 1;
-    const em = sm + 6;
-    return { start: `${year}-${String(sm).padStart(2, '0')}-01`, end: `${em > 12 ? year + 1 : year}-${String(em > 12 ? em - 12 : em).padStart(2, '0')}-01` };
-  }
-  return { start: `${year}-01-01`, end: `${year + 1}-01-01` };
-}
+const MONTHS = [
+  { num: 1, name: 'يناير' },
+  { num: 2, name: 'فبراير' },
+  { num: 3, name: 'مارس' },
+  { num: 4, name: 'أبريل' },
+  { num: 5, name: 'مايو' },
+  { num: 6, name: 'يونيو' },
+  { num: 7, name: 'يوليو' },
+  { num: 8, name: 'أغسطس' },
+  { num: 9, name: 'سبتمبر' },
+  { num: 10, name: 'أكتوبر' },
+  { num: 11, name: 'نوفمبر' },
+  { num: 12, name: 'ديسمبر' },
+];
 
 // ── جيب كل IDs اللي تحت مستخدم معين (recursive) ───────────────────────────
 function getSubordinateIds(userId: string, allProfiles: Profile[]): string[] {
@@ -57,15 +51,14 @@ export default function TargetManagement() {
   const [modalMode, setModalMode] = useState<ModalMode>(null);
   const [editingTarget, setEditingTarget] = useState<EnrichedTarget | null>(null);
   const [filterYear, setFilterYear] = useState(new Date().getFullYear());
-  const [filterPeriodType, setFilterPeriodType] = useState<TargetPeriod | ''>('monthly');
+  const [filterMonth, setFilterMonth] = useState<number | ''>('');
   const [filterRole, setFilterRole] = useState<'all' | 'agent' | 'manager'>('all');
 
   // Form state for single target
   const [form, setForm] = useState({
     user_id: '',
-    period_type: 'monthly' as TargetPeriod,
     year: new Date().getFullYear(),
-    period_number: new Date().getMonth() + 1,
+    month: new Date().getMonth() + 1,
     target_amount: '',
   });
 
@@ -89,6 +82,7 @@ export default function TargetManagement() {
 
     let profilesQuery = supabase.from('profiles').select('*').eq('is_active', true);
     let targetsQuery = supabase.from('targets').select('*, user:profiles(full_name, role, branch_id)')
+      .eq('period_type', 'monthly')
       .order('year', { ascending: false })
       .order('period_number', { ascending: false });
 
@@ -110,12 +104,11 @@ export default function TargetManagement() {
 
     const filtered = rawTargets.filter(t => {
       if (filterYear && t.year !== filterYear) return false;
-      if (filterPeriodType && t.period_type !== filterPeriodType) return false;
+      if (filterMonth && t.period_number !== filterMonth) return false;
       return true;
     });
 
     const enriched: EnrichedTarget[] = filtered.map((t) => {
-      const { start, end } = getPeriodDateRange(t.period_type as TargetPeriod, t.year, t.period_number);
       const userProfile = profiles.find(p => p.id === t.user_id);
       const isAgent = userProfile?.role === 'agent';
       const isManagerTarget = !isAgent;
@@ -123,13 +116,23 @@ export default function TargetManagement() {
       let achieved = 0;
 
       if (isAgent) {
+        const monthStart = `${t.year}-${String(t.period_number).padStart(2, '0')}-01`;
+        const nextMonth = t.period_number === 12 ? 1 : t.period_number + 1;
+        const nextYear = t.period_number === 12 ? t.year + 1 : t.year;
+        const monthEnd = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
+        
         achieved = policies
-          .filter(p => p.agent_id === t.user_id && p.issue_date >= start && p.issue_date < end)
+          .filter(p => p.agent_id === t.user_id && p.issue_date >= monthStart && p.issue_date < monthEnd)
           .reduce((s, p) => s + Number(p.annual_premium), 0);
       } else {
         const subordinateIds = getSubordinateIds(t.user_id, profiles);
+        const monthStart = `${t.year}-${String(t.period_number).padStart(2, '0')}-01`;
+        const nextMonth = t.period_number === 12 ? 1 : t.period_number + 1;
+        const nextYear = t.period_number === 12 ? t.year + 1 : t.year;
+        const monthEnd = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
+        
         achieved = policies
-          .filter(p => subordinateIds.includes(p.agent_id) && p.issue_date >= start && p.issue_date < end)
+          .filter(p => subordinateIds.includes(p.agent_id) && p.issue_date >= monthStart && p.issue_date < monthEnd)
           .reduce((s, p) => s + Number(p.annual_premium), 0);
       }
 
@@ -151,7 +154,7 @@ export default function TargetManagement() {
     setTargets(finalTargets);
     setAllProfiles(profiles);
     setLoading(false);
-  }, [filterYear, filterPeriodType, filterRole, profile]);
+  }, [filterYear, filterMonth, filterRole, profile]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -175,9 +178,9 @@ export default function TargetManagement() {
 
     const payload = {
       user_id: form.user_id,
-      period_type: form.period_type,
+      period_type: 'monthly' as const,
       year: form.year,
-      period_number: form.period_number,
+      period_number: form.month,
       target_amount: Number(form.target_amount),
     };
 
@@ -216,7 +219,7 @@ export default function TargetManagement() {
     try {
       const targets_to_insert = Array.from({ length: 12 }, (_, i) => ({
         user_id: bulkForm.user_id,
-        period_type: 'monthly' as TargetPeriod,
+        period_type: 'monthly' as const,
         year: bulkForm.year,
         period_number: i + 1,
         target_amount: amount,
@@ -284,11 +287,10 @@ export default function TargetManagement() {
 
     try {
       const targets_to_insert = allProfiles
-        .filter(p => p.role !== 'agent' || true) // Include all users
         .flatMap(user =>
           Array.from({ length: 12 }, (_, i) => ({
             user_id: user.id,
-            period_type: 'monthly' as TargetPeriod,
+            period_type: 'monthly' as const,
             year: bulkForm.year,
             period_number: i + 1,
             target_amount: amount,
@@ -321,7 +323,7 @@ export default function TargetManagement() {
   function closeModal() {
     setModalMode(null);
     setEditingTarget(null);
-    setForm({ user_id: '', period_type: 'monthly', year: new Date().getFullYear(), period_number: new Date().getMonth() + 1, target_amount: '' });
+    setForm({ user_id: '', year: new Date().getFullYear(), month: new Date().getMonth() + 1, target_amount: '' });
     setBulkForm({ user_id: '', year: new Date().getFullYear(), monthly_amount: '' });
     setCopyForm({ source_year: new Date().getFullYear() - 1, target_year: new Date().getFullYear() });
   }
@@ -329,7 +331,7 @@ export default function TargetManagement() {
   // ── Open add modal
   function openAddModal() {
     setEditingTarget(null);
-    setForm({ user_id: '', period_type: 'monthly', year: new Date().getFullYear(), period_number: new Date().getMonth() + 1, target_amount: '' });
+    setForm({ user_id: '', year: new Date().getFullYear(), month: new Date().getMonth() + 1, target_amount: '' });
     setModalMode('add');
   }
 
@@ -348,7 +350,7 @@ export default function TargetManagement() {
   // ── Edit target
   function startEdit(t: EnrichedTarget) {
     setEditingTarget(t);
-    setForm({ user_id: t.user_id, period_type: t.period_type, year: t.year, period_number: t.period_number, target_amount: String(t.target_amount) });
+    setForm({ user_id: t.user_id, year: t.year, month: t.period_number, target_amount: String(t.target_amount) });
     setModalMode('edit');
   }
 
@@ -358,7 +360,6 @@ export default function TargetManagement() {
 
   if (loading) return <LoadingSpinner />;
 
-  const periodNumbers = form.period_type === 'monthly' ? 12 : form.period_type === 'quarterly' ? 4 : form.period_type === 'semi_annual' ? 2 : 1;
   const agentUsers = allProfiles.filter(p => p.role === 'agent');
   const managerUsers = allProfiles.filter(p => p.role !== 'agent');
 
@@ -409,10 +410,10 @@ export default function TargetManagement() {
           className="px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none">
           {[2024, 2025, 2026, 2027].map(y => <option key={y} value={y}>{y}</option>)}
         </select>
-        <select value={filterPeriodType} onChange={e => setFilterPeriodType(e.target.value as TargetPeriod | '')}
+        <select value={filterMonth} onChange={e => setFilterMonth(e.target.value === '' ? '' : Number(e.target.value))}
           className="px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none">
-          <option value="">كل الفترات</option>
-          {(Object.entries(TARGET_PERIOD_LABELS) as [TargetPeriod, string][]).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          <option value="">كل الشهور</option>
+          {MONTHS.map(m => <option key={m.num} value={m.num}>{m.name}</option>)}
         </select>
         <div className="flex rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700">
           {[
@@ -433,6 +434,7 @@ export default function TargetManagement() {
         {targets.map(t => {
           const pct = t.target_amount > 0 ? Math.min((t.achieved / t.target_amount) * 100, 100) : 0;
           const userObj = t.user as { full_name: string; role: string } | undefined;
+          const monthName = MONTHS.find(m => m.num === t.period_number)?.name || '';
           return (
             <div key={t.id} className="bg-white dark:bg-slate-800 rounded-xl p-4 border border-slate-100 dark:border-slate-700">
               <div className="flex items-start justify-between gap-3 mb-3">
@@ -446,8 +448,7 @@ export default function TargetManagement() {
                   <div>
                     <p className="font-semibold text-slate-900 dark:text-white">{userObj?.full_name || '—'}</p>
                     <p className="text-xs text-slate-500 dark:text-slate-400">
-                      {userObj?.role ? ROLE_LABELS[userObj.role as keyof typeof ROLE_LABELS] : ''} —{' '}
-                      {TARGET_PERIOD_LABELS[t.period_type]} {t.period_number}/{t.year}
+                      {userObj?.role ? ROLE_LABELS[userObj.role as keyof typeof ROLE_LABELS] : ''} — {monthName} {t.year}
                       {t.isManagerTarget && t.subordinateCount > 0 && (
                         <span className="mr-1 text-purple-500">({t.subordinateCount} موظف)</span>
                       )}
@@ -527,22 +528,12 @@ export default function TargetManagement() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">نوع الفترة</label>
-                  <select value={form.period_type} onChange={e => setForm({ ...form, period_type: e.target.value as TargetPeriod, period_number: 1 })}
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">الشهر</label>
+                  <select value={form.month} onChange={e => setForm({ ...form, month: Number(e.target.value) })}
                     className="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none">
-                    {(Object.entries(TARGET_PERIOD_LABELS) as [TargetPeriod, string][]).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                    {MONTHS.map(m => <option key={m.num} value={m.num}>{m.name}</option>)}
                   </select>
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">رقم الفترة</label>
-                  <select value={form.period_number} onChange={e => setForm({ ...form, period_number: Number(e.target.value) })}
-                    className="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none">
-                    {Array.from({ length: periodNumbers }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1}</option>)}
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">السنة</label>
                   <select value={form.year} onChange={e => setForm({ ...form, year: Number(e.target.value) })}
@@ -550,11 +541,12 @@ export default function TargetManagement() {
                     {[2024, 2025, 2026, 2027].map(y => <option key={y} value={y}>{y}</option>)}
                   </select>
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">مبلغ التارجت</label>
-                  <input type="number" value={form.target_amount} onChange={e => setForm({ ...form, target_amount: e.target.value })}
-                    className="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="0" dir="ltr" />
-                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">مبلغ التارجت</label>
+                <input type="number" value={form.target_amount} onChange={e => setForm({ ...form, target_amount: e.target.value })}
+                  className="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="0" dir="ltr" />
               </div>
 
               <div className="flex gap-3 pt-2">
