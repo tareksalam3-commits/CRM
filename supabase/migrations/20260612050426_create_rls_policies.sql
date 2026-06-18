@@ -136,10 +136,7 @@ CREATE POLICY "collections_select" ON collections FOR SELECT
   TO authenticated
   USING (EXISTS (SELECT 1 FROM policies WHERE policies.id = policy_id AND can_access_user(auth.uid(), policies.agent_id)));
 
-DROP POLICY IF EXISTS "collections_insert" ON collections;
-CREATE POLICY "collections_insert" ON collections FOR INSERT
-  TO authenticated
-  WITH CHECK (EXISTS (SELECT 1 FROM policies WHERE policies.id = policy_id AND can_access_user(auth.uid(), policies.agent_id)));
+-- collections_insert policy moved to subsequent migrations to ensure columns exist first
 
 DROP POLICY IF EXISTS "collections_update" ON collections;
 CREATE POLICY "collections_update" ON collections FOR UPDATE

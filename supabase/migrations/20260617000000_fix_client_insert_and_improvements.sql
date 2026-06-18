@@ -59,8 +59,9 @@ CREATE POLICY "policies_insert" ON policies
     OR can_access_user(auth.uid(), agent_id)
   );
 
--- FIX 6: collections_insert — allow any authenticated user to record a collection
---   (The UI already validates they can only collect on installments they can access)
+-- FIX 6: collections_insert — ensure column exists before creating policy
+ALTER TABLE collections ADD COLUMN IF NOT EXISTS collected_by uuid REFERENCES profiles(id);
+
 DROP POLICY IF EXISTS "collections_insert" ON collections;
 CREATE POLICY "collections_insert" ON collections
   FOR INSERT TO authenticated
