@@ -119,6 +119,7 @@ BEGIN
   LEFT JOIN installments i ON p.id = i.policy_id
   WHERE p.agent_id = p_agent_id;
 END;
+
 $$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
 
 -- 8. Create function to get top/bottom performers
@@ -166,6 +167,7 @@ BEGIN
                                                                    THEN c.amount ELSE 0 END), 0) END DESC
   LIMIT p_limit;
 END;
+
 $$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
 
 -- 9. Create indexes for performance optimization

@@ -113,6 +113,7 @@ BEGIN
     AND due_date < now()::date
     AND updated_at < now() - INTERVAL '1 hour';
 END;
+
 $$;
 
 -- Function to get subordinate IDs (used in RLS)

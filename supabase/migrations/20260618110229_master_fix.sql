@@ -111,6 +111,7 @@ BEGIN
   SET status = 'overdue'
   WHERE status = 'pending' AND due_date < CURRENT_DATE;
 END;
+
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 DROP FUNCTION IF EXISTS calculate_agent_performance CASCADE; CREATE OR REPLACE FUNCTION calculate_agent_performance(
@@ -158,6 +159,7 @@ BEGIN
   LEFT JOIN installments i ON p.id = i.policy_id
   WHERE p.agent_id = p_agent_id;
 END;
+
 $$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
 
 -- Enable RLS on new tables
