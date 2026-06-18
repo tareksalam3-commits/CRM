@@ -82,7 +82,7 @@ export default function TargetManagement() {
     try {
       setLoading(true);
 
-      // Fetch all profiles first
+      // Fetch all profiles
       const { data: profilesData, error: profilesError } = await supabase
         .from('profiles')
         .select('*')
@@ -91,7 +91,7 @@ export default function TargetManagement() {
       if (profilesError) throw profilesError;
       const profiles: Profile[] = profilesData || [];
 
-      // Fetch all targets without filters
+      // Fetch targets
       const { data: allTargetsData, error: targetsError } = await supabase
         .from('targets')
         .select('*, user:profiles(full_name, role, branch_id)')
@@ -175,7 +175,6 @@ export default function TargetManagement() {
     loadData(); 
   }, [loadData, refreshKey]);
 
-  // ── Validate form data
   function validateForm(): boolean {
     if (!form.user_id || !form.target_amount) {
       toast.error('يرجى ملء جميع الحقول');
@@ -189,7 +188,6 @@ export default function TargetManagement() {
     return true;
   }
 
-  // ── Single target submit
   async function handleSubmit() {
     if (!validateForm()) return;
 
@@ -214,7 +212,6 @@ export default function TargetManagement() {
         toast.success('تم حفظ التارجت');
       }
       closeModal();
-      // Force data refresh
       setRefreshKey(prev => prev + 1);
     } catch (error: any) {
       console.error('Error saving target:', error);
@@ -222,7 +219,6 @@ export default function TargetManagement() {
     }
   }
 
-  // ── Bulk add targets for entire year
   async function handleBulkAdd() {
     if (!bulkForm.user_id || !bulkForm.monthly_amount) {
       toast.error('يرجى ملء جميع الحقول');
@@ -248,7 +244,6 @@ export default function TargetManagement() {
       if (error) throw error;
       toast.success(`تم إضافة 12 تارجت شهري للسنة ${bulkForm.year}`);
       closeModal();
-      // Force data refresh
       setRefreshKey(prev => prev + 1);
     } catch (error: any) {
       console.error('Error bulk adding targets:', error);
@@ -256,7 +251,6 @@ export default function TargetManagement() {
     }
   }
 
-  // ── Copy targets from previous year
   async function handleCopyYear() {
     if (copyForm.source_year === copyForm.target_year) {
       toast.error('يجب اختيار سنتين مختلفتين');
@@ -287,7 +281,6 @@ export default function TargetManagement() {
       if (error) throw error;
       toast.success(`تم نسخ التارجتات من ${copyForm.source_year} إلى ${copyForm.target_year}`);
       closeModal();
-      // Force data refresh
       setRefreshKey(prev => prev + 1);
     } catch (error: any) {
       console.error('Error copying year:', error);
@@ -295,7 +288,6 @@ export default function TargetManagement() {
     }
   }
 
-  // ── Bulk add for all users in a year
   async function handleBulkAddAllUsers() {
     if (!bulkForm.monthly_amount) {
       toast.error('يرجى إدخال مبلغ التارجت');
@@ -324,7 +316,6 @@ export default function TargetManagement() {
       if (error) throw error;
       toast.success(`تم إضافة تارجتات لـ ${allProfiles.length} موظف للسنة ${bulkForm.year}`);
       closeModal();
-      // Force data refresh
       setRefreshKey(prev => prev + 1);
     } catch (error: any) {
       console.error('Error bulk adding for all users:', error);
@@ -338,7 +329,6 @@ export default function TargetManagement() {
       const { error } = await supabase.from('targets').delete().eq('id', id);
       if (error) throw error;
       toast.success('تم حذف التارجت');
-      // Force data refresh
       setRefreshKey(prev => prev + 1);
     } catch (error: any) {
       console.error('Error deleting target:', error);
@@ -346,7 +336,6 @@ export default function TargetManagement() {
     }
   }
 
-  // ── Close modal and reset form
   function closeModal() {
     setModalMode(null);
     setEditingTarget(null);
@@ -355,26 +344,22 @@ export default function TargetManagement() {
     setCopyForm({ source_year: new Date().getFullYear() - 1, target_year: new Date().getFullYear() });
   }
 
-  // ── Open add modal
   function openAddModal() {
     setEditingTarget(null);
     setForm({ user_id: '', year: new Date().getFullYear(), month: new Date().getMonth() + 1, target_amount: '' });
     setModalMode('add');
   }
 
-  // ── Open bulk add modal
   function openBulkAddModal() {
     setBulkForm({ user_id: '', year: new Date().getFullYear(), monthly_amount: '' });
     setModalMode('bulk_add');
   }
 
-  // ── Open copy year modal
   function openCopyYearModal() {
     setCopyForm({ source_year: new Date().getFullYear() - 1, target_year: new Date().getFullYear() });
     setModalMode('copy_year');
   }
 
-  // ── Edit target
   function startEdit(t: EnrichedTarget) {
     setEditingTarget(t);
     setForm({ user_id: t.user_id, year: t.year, month: t.period_number, target_amount: String(t.target_amount) });
