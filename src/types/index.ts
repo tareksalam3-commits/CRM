@@ -23,8 +23,8 @@ export type TargetPeriod = 'monthly' | 'quarterly' | 'semi_annual' | 'annual';
 export const ROLE_LABELS: Record<UserRole, string> = {
   super_admin: 'مسؤول النظام',
   dev_manager: 'مدير التطوير',
-  general_supervisor: 'مشرف عام',
-  supervisor: 'مشرف',
+  general_supervisor: 'مراقب عام',
+  supervisor: 'مراقب',
   team_leader: 'قائد فريق',
   agent: 'وكيل',
 };
