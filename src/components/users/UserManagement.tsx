@@ -154,7 +154,7 @@ export default function UserManagement() {
     if (result.error) {
       toast.error(result.error);
     } else {
-      if ((result as any).soft_deleted) {
+      if ((result as { soft_deleted?: boolean }).soft_deleted) {
         toast.success('تم تعطيل الحساب لوجود بيانات مرتبطة');
       } else {
         toast.success('تم الحذف بنجاح');

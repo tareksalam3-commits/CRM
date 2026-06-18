@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
-import { AuditLog } from '../../types';
+import { AuditLog, Profile } from '../../types';
 import { formatDateTime } from '../../lib/utils';
 import PageHeader from '../common/PageHeader';
 import LoadingSpinner from '../common/LoadingSpinner';
@@ -26,7 +26,7 @@ export default function AuditLogPage() {
       .order('created_at', { ascending: false })
       .range(p * PAGE_SIZE, (p + 1) * PAGE_SIZE - 1);
     if (data) {
-      setLogs(prev => append ? [...prev, ...(data as any)] : (data as any));
+      setLogs(prev => append ? [...prev, ...(data as unknown as AuditLog[])] : (data as unknown as AuditLog[]));
       setHasMore(data.length === PAGE_SIZE);
     }
     if (p === 0) setLoading(false); else setMore(false);
@@ -57,7 +57,7 @@ export default function AuditLogPage() {
   };
 
   const filtered = logs.filter(l =>
-    (!search || (l.user as any)?.full_name?.includes(search) || l.entity_type.includes(search)) &&
+    (!search || (l.user as unknown as Profile)?.full_name?.includes(search) || l.entity_type.includes(search)) &&
     (!filterAction || l.action === filterAction)
   );
 
@@ -90,7 +90,7 @@ export default function AuditLogPage() {
               </span>
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-slate-900 dark:text-white">
-                  <span className="font-medium">{(log.user as any)?.full_name || 'محذوف'}</span>
+                  <span className="font-medium">{(log.user as unknown as Profile)?.full_name || 'محذوف'}</span>
                   {' — '}{ENTITY_LABELS[log.entity_type] || log.entity_type}
                 </p>
                 <p className="text-xs text-slate-400 mt-0.5">{formatDateTime(log.created_at)}</p>

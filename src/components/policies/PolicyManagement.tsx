@@ -239,7 +239,7 @@ export default function PolicyManagement() {
   const filtered = policies.filter(p => {
     const matchSearch =
       p.policy_number.toLowerCase().includes(search.toLowerCase()) ||
-      (p.client as any)?.name?.includes(search) ||
+      (p.client as unknown as { name: string })?.name?.includes(search) ||
       p.product.includes(search) ||
       p.insurance_company.includes(search);
     const matchStatus = statusFilter === 'all' || p.status === statusFilter;
@@ -310,7 +310,7 @@ export default function PolicyManagement() {
                 </div>
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
                   <span className="font-medium text-slate-700 dark:text-slate-300">
-                    {(policy.client as any)?.name || '—'}
+                    {(policy.client as unknown as { name: string })?.name || '—'}
                   </span>
                   <span>{policy.product}</span>
                   <span>{policy.insurance_company}</span>
@@ -326,7 +326,7 @@ export default function PolicyManagement() {
                 </div>
                 {/* Agent */}
                 <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">
-                  المندوب: {(policy.agent as any)?.full_name || '—'}
+                  المندوب: {(policy.agent as unknown as { full_name: string })?.full_name || '—'}
                 </p>
               </div>
 
@@ -594,7 +594,7 @@ export default function PolicyManagement() {
             <div className="p-5 space-y-3 text-sm">
               {[
                 { label: 'رقم الوثيقة', value: selectedPolicy.policy_number, dir: 'ltr' as const },
-                { label: 'العميل', value: (selectedPolicy.client as any)?.name },
+                { label: 'العميل', value: (selectedPolicy.client as unknown as { name: string })?.name },
                 { label: 'المنتج', value: selectedPolicy.product },
                 { label: 'شركة التأمين', value: selectedPolicy.insurance_company },
                 { label: 'الحالة', value: POLICY_STATUS_LABELS[selectedPolicy.status] },
@@ -603,7 +603,7 @@ export default function PolicyManagement() {
                 { label: 'تاريخ الإصدار', value: formatDate(selectedPolicy.issue_date) },
                 { label: 'تاريخ السريان', value: formatDate(selectedPolicy.start_date) },
                 { label: 'طريقة السداد', value: PAYMENT_FREQUENCY_LABELS[selectedPolicy.payment_frequency] },
-                { label: 'المندوب', value: (selectedPolicy.agent as any)?.full_name },
+                { label: 'المندوب', value: (selectedPolicy.agent as unknown as { full_name: string })?.full_name },
               ].map(({ label, value, dir }) => (
                 <div key={label} className="flex justify-between items-center py-1.5 border-b border-slate-50 dark:border-slate-700/50 last:border-0">
                   <span className="text-slate-500 dark:text-slate-400">{label}</span>

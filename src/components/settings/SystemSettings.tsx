@@ -21,35 +21,73 @@ export default function SystemSettings() {
   useEffect(() => { loadSettings(); }, []);
 
   async function loadSettings() {
-    const { data } = await supabase.from('system_settings').select('key, value');
-    if (data) {
-      const mapped: Record<string, any> = {};
-      data.forEach(s => { mapped[s.key] = s.value; });
-      setSettings({
-        company_name: mapped.company_name || 'Insurance CRM Pro',
-        insurance_products: mapped.insurance_products || [],
-        insurance_companies: mapped.insurance_companies || [],
-      });
+    try {
+      const { data, error } = await supabase.from('system_settings').select('key, value');
+      if (error) {
+        console.error('Error loading settings:', error);
+        toast.error('خطأ في تحميل الإعدادات');
+        setLoading(false);
+        return;
+      }
+      if (data) {
+        const mapped: Record<string, unknown> = {};
+        data.forEach(s => { mapped[s.key] = s.value; });
+        setSettings({
+          company_name: (mapped.company_name as string) || 'Insurance CRM Pro',
+          insurance_products: (Array.isArray(mapped.insurance_products) ? mapped.insurance_products : []) as string[],
+          insurance_companies: (Array.isArray(mapped.insurance_companies) ? mapped.insurance_companies : []) as string[],
+        });
+      }
+    } catch (err) {
+      console.error('Unexpected error loading settings:', err);
+      toast.error('حدث خطأ غير متوقع');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
-  async function saveSetting(key: string, value: any) {
+  async function saveSetting(key: string, value: unknown) {
+    if (!profile) {
+      toast.error('يجب تسجيل الدخول أولاً');
+      return;
+    }
     setSaving(true);
-    const { error } = await supabase.from('system_settings').upsert({
-      key,
-      value: JSON.parse(JSON.stringify(value)),
-      updated_by: profile?.id,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'key' });
-    if (error) toast.error('خطأ في الحفظ');
-    else toast.success('تم الحفظ');
-    setSaving(false);
+    try {
+      const { error } = await supabase.from('system_settings').upsert({
+        key,
+        value: JSON.parse(JSON.stringify(value)),
+        updated_by: profile.id,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'key' });
+      if (error) {
+        console.error('Error saving setting:', error);
+        if (error.code === '42501') {
+          toast.error('غير مصرح بتعديل الإعدادات');
+        } else {
+          toast.error('خطأ في الحفظ: ' + error.message);
+        }
+      } else {
+        toast.success('✅ تم الحفظ بنجاح');
+      }
+    } catch (err) {
+      console.error('Unexpected error saving setting:', err);
+      toast.error('حدث خطأ غير متوقع');
+    } finally {
+      setSaving(false);
+    }
   }
 
   function addProduct() {
-    if (!newProduct.trim()) return;
-    const updated = [...settings.insurance_products, newProduct.trim()];
+    const trimmed = newProduct.trim();
+    if (!trimmed) {
+      toast.error('أدخل اسم المنتج');
+      return;
+    }
+    if (settings.insurance_products.includes(trimmed)) {
+      toast.error('هذا المنتج موجود بالفعل');
+      return;
+    }
+    const updated = [...settings.insurance_products, trimmed];
     setSettings({ ...settings, insurance_products: updated });
     saveSetting('insurance_products', updated);
     setNewProduct('');
@@ -62,8 +100,16 @@ export default function SystemSettings() {
   }
 
   function addCompany() {
-    if (!newCompany.trim()) return;
-    const updated = [...settings.insurance_companies, newCompany.trim()];
+    const trimmed = newCompany.trim();
+    if (!trimmed) {
+      toast.error('أدخل اسم الشركة');
+      return;
+    }
+    if (settings.insurance_companies.includes(trimmed)) {
+      toast.error('هذه الشركة موجودة بالفعل');
+      return;
+    }
+    const updated = [...settings.insurance_companies, trimmed];
     setSettings({ ...settings, insurance_companies: updated });
     saveSetting('insurance_companies', updated);
     setNewCompany('');

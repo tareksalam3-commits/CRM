@@ -233,7 +233,7 @@ export default function TargetManagement() {
             { key: 'agent', label: 'أجنت' },
             { key: 'manager', label: 'مدير' },
           ].map(opt => (
-            <button key={opt.key} onClick={() => setFilterRole(opt.key as any)}
+            <button key={opt.key} onClick={() => setFilterRole(opt.key as 'all' | 'agent' | 'manager')}
               className={`px-3 py-2 text-sm transition-colors ${filterRole === opt.key ? 'bg-blue-600 text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-50'}`}>
               {opt.label}
             </button>

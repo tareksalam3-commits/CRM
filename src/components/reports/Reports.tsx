@@ -40,11 +40,17 @@ export default function Reports() {
       switch (reportType) {
         // ── Personal / team production ──────────────────────────────
         case 'production': {
-          const { data: policies } = await supabase
+          const { data: policies, error: policiesError } = await supabase
             .from('policies')
             .select('agent_id, annual_premium, status, profiles!policies_agent_id_fkey(full_name)')
             .gte('created_at', monthStart)
             .lt('created_at', monthEnd);
+          if (policiesError) {
+            console.error('Error fetching policies:', policiesError);
+            toast.error('خطأ في تحميل بيانات الوثائق');
+            setLoading(false);
+            return;
+          }
 
           const grouped: Record<string, { name: string; total: number; count: number; active: number }> = {};
           (policies || []).forEach((p: Record<string, unknown>) => {
@@ -76,15 +82,27 @@ export default function Reports() {
 
         // ── Collection ──────────────────────────────────────────────
         case 'collection': {
-          const { data: collections } = await supabase
+          const { data: collections, error: collectionsError } = await supabase
             .from('collections')
             .select('collected_by, amount, profiles!collections_collected_by_fkey(full_name)')
             .gte('collection_date', monthStart)
             .lt('collection_date', monthEnd);
+          if (collectionsError) {
+            console.error('Error fetching collections:', collectionsError);
+            toast.error('خطأ في تحميل بيانات التحصيل');
+            setLoading(false);
+            return;
+          }
 
-          const { data: installments } = await supabase
+          const { data: installments, error: installmentsError } = await supabase
             .from('installments')
             .select('amount, status, due_date');
+          if (installmentsError) {
+            console.error('Error fetching installments:', installmentsError);
+            toast.error('خطأ في تحميل بيانات الأقساط');
+            setLoading(false);
+            return;
+          }
 
           const grouped: Record<string, { name: string; total: number; count: number }> = {};
           (collections || []).forEach((c: Record<string, unknown>) => {

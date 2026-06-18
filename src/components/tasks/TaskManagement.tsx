@@ -28,7 +28,7 @@ export default function TaskManagement() {
       supabase.from('tasks').select('*, assignee:profiles!tasks_assigned_to_fkey(full_name), creator:profiles!tasks_created_by_fkey(full_name)').order('created_at', { ascending: false }),
       supabase.from('profiles').select('id, full_name, role').eq('is_active', true),
     ]);
-    if (tasksRes.data) setTasks(tasksRes.data as any);
+    if (tasksRes.data) setTasks(tasksRes.data as unknown as Task[]);
     if (usersRes.data) setUsers(usersRes.data);
     setLoading(false);
   }
@@ -103,7 +103,7 @@ export default function TaskManagement() {
 
       <div className="flex gap-2 mb-4 overflow-x-auto pb-2">
         {[{ key: 'all', label: 'الكل' }, ...Object.entries(TASK_STATUS_LABELS).map(([k, v]) => ({ key: k, label: v }))].map(tab => (
-          <button key={tab.key} onClick={() => setFilter(tab.key as any)}
+          <button key={tab.key} onClick={() => setFilter(tab.key as 'all' | TaskStatus)}
             className={`px-4 py-2 rounded-xl text-sm font-medium whitespace-nowrap transition-colors ${filter === tab.key ? 'bg-blue-600 text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700'}`}
           >{tab.label}</button>
         ))}
@@ -124,7 +124,7 @@ export default function TaskManagement() {
                     <span className={`px-2 py-0.5 rounded-md text-xs font-medium ${priorityColors[task.priority]}`}>{TASK_PRIORITY_LABELS[task.priority]}</span>
                   </div>
                   <div className="flex items-center gap-3 text-xs text-slate-500 dark:text-slate-400 mt-1">
-                    <span>{(task as any).assignee?.full_name}</span>
+                    <span>{(task as unknown as Task & { assignee?: { full_name: string } }).assignee?.full_name}</span>
                     <span>|</span>
                     <span>استحقاق: {formatDate(task.due_date)}</span>
                   </div>

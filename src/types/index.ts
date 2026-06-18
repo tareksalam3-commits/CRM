@@ -82,6 +82,13 @@ export const MARITAL_STATUS_LABELS: Record<MaritalStatus, string> = {
   widowed: 'أرمل/أرملة',
 };
 
+export const TARGET_PERIOD_LABELS: Record<TargetPeriod, string> = {
+  monthly: 'شهري',
+  quarterly: 'ربع سنوي',
+  semi_annual: 'نصف سنوي',
+  annual: 'سنوي',
+};
+
 export interface Profile {
   id: string;
   full_name: string;
@@ -205,7 +212,7 @@ export interface AuditLog {
   action: string;
   entity_type: string;
   entity_id: string;
-  changes: Record<string, any> | null;
+  changes: Record<string, unknown> | null;
   created_at: string;
   user?: Profile;
 }

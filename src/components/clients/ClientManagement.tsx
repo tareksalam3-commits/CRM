@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
-import { Client, MARITAL_STATUS_LABELS } from '../../types';
+import { Client, MARITAL_STATUS_LABELS, Profile } from '../../types';
 import PageHeader from '../common/PageHeader';
 import LoadingSpinner from '../common/LoadingSpinner';
 import {
@@ -276,7 +276,7 @@ export default function ClientManagement() {
               <div className="flex items-center gap-2 mr-auto sm:mr-0">
                 {/* Agent badge */}
                 <span className="hidden sm:block text-xs px-2 py-1 bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 rounded-lg">
-                  {(client.agent as any)?.full_name || 'غير محدد'}
+                  {((client.agent as unknown as Profile))?.full_name || 'غير محدد'}
                 </span>
                 <button
                   onClick={() => startEdit(client)}

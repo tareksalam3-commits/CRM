@@ -14,7 +14,7 @@ export default function Notifications() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => { loadNotifications(); }, [profile]);
+  useEffect(() => { loadNotifications(); }, [profile]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadNotifications() {
     if (!profile) return;

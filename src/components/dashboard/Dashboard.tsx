@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../lib/supabase';
 import { formatCurrency, formatPercent, formatNumber } from '../../lib/utils';
-import { ROLE_LABELS, POLICY_STATUS_LABELS } from '../../types';
+import { POLICY_STATUS_LABELS } from '../../types';
 import PageHeader from '../common/PageHeader';
 import LoadingSpinner from '../common/LoadingSpinner';
 import {
@@ -10,10 +10,9 @@ import {
   UserCircle, Target, AlertCircle, Award, RefreshCw, Clock,
 } from 'lucide-react';
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, PieChart, Pie, Cell, Legend,
+  Tooltip,
+  ResponsiveContainer, PieChart, Pie, Cell,
 } from 'recharts';
-import toast from 'react-hot-toast';
 
 interface DashboardStats {
   totalPremiums: number;
@@ -70,21 +69,21 @@ export default function Dashboard() {
       const collections = collectionsRes.data || [];
       const installments = installmentsRes.data || [];
 
-      const totalPremiums = policies.reduce((s, p: any) => s + Number(p.annual_premium), 0);
-      const totalCollected = collections.reduce((s, c: any) => s + Number(c.amount), 0);
+      const totalPremiums = policies.reduce((s, p: { annual_premium: number }) => s + Number(p.annual_premium), 0);
+      const totalCollected = collections.reduce((s, c: { amount: number }) => s + Number(c.amount), 0);
 
       const now = new Date().toISOString().split('T')[0];
       const thirtyDaysLater = new Date();
       thirtyDaysLater.setDate(thirtyDaysLater.getDate() + 30);
       const thirtyDaysStr = thirtyDaysLater.toISOString().split('T')[0];
 
-      const dueInstallments = (installments || []).filter((i: any) => i.status === 'pending' && i.due_date <= now);
-      const overdueInstallments = (installments || []).filter((i: any) => i.status === 'overdue');
-      const totalDue = dueInstallments.reduce((s, i: any) => s + Number(i.amount), 0);
-      const totalOverdue = overdueInstallments.reduce((s, i: any) => s + Number(i.amount), 0);
+      const dueInstallments = (installments || []).filter((i: { status: string; due_date: string; amount: number }) => i.status === 'pending' && i.due_date <= now);
+      const overdueInstallments = (installments || []).filter((i: { status: string; amount: number }) => i.status === 'overdue');
+      const totalDue = dueInstallments.reduce((s, i: { amount: number }) => s + Number(i.amount), 0);
+      const totalOverdue = overdueInstallments.reduce((s, i: { amount: number }) => s + Number(i.amount), 0);
 
-      const activePolicies = (policies || []).filter((p: any) => p.status === 'active');
-      const expiringPolicies = (policies || []).filter((p: any) => {
+      const activePolicies = (policies || []).filter((p: { status: string }) => p.status === 'active');
+      const expiringPolicies = (policies || []).filter((p: { status: string; created_at: string }) => {
         const startDate = new Date(p.created_at);
         const oneYearLater = new Date(startDate);
         oneYearLater.setFullYear(oneYearLater.getFullYear() + 1);
@@ -93,7 +92,7 @@ export default function Dashboard() {
 
       const policyStatusDist = Object.entries(POLICY_COLORS).map(([status, color]) => ({
         name: POLICY_STATUS_LABELS[status as keyof typeof POLICY_STATUS_LABELS] || status,
-        value: (policies || []).filter((p: any) => p.status === status).length,
+        value: (policies || []).filter((p: { status: string }) => p.status === status).length,
         color,
       }));
 
@@ -246,7 +245,7 @@ export default function Dashboard() {
                   <Cell key={`cell-${index}`} fill={entry.color} />
                 ))}
               </Pie>
-              <Tooltip formatter={(value: any) => formatNumber(Number(value))} />
+              <Tooltip formatter={(value: string | number) => formatNumber(Number(value || 0))} />
             </PieChart>
           </ResponsiveContainer>
         </div>
@@ -334,6 +333,8 @@ function StatBox({
   );
 }
 
-function renderCustomLabel({ name, value }: { name: string; value: number }) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function renderCustomLabel(props: any) {
+  const { name, value } = props;
   return value > 0 ? name : '';
 }
