@@ -241,7 +241,7 @@ CREATE POLICY "month_closings_delete" ON month_closings FOR DELETE
 
 -- RLS Policies for audit_logs
 DROP POLICY IF EXISTS "audit_logs_select" ON audit_logs;
-CREATE POLICY "audit_logs_select" ON audit_logs FOR SELECT
+DROP POLICY IF EXISTS "audit_logs_select" ON audit_logs; CREATE POLICY "audit_logs_select" ON audit_logs FOR SELECT
   TO authenticated
   USING (
     EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('super_admin', 'dev_manager'))

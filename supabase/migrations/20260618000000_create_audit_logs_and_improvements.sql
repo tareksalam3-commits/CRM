@@ -48,7 +48,7 @@ CREATE INDEX IF NOT EXISTS idx_month_closings_closed_by ON month_closings(closed
 -- RLS for audit_logs (read-only for authorized users)
 ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "audit_logs_select" ON audit_logs
+DROP POLICY IF EXISTS "audit_logs_select" ON audit_logs; CREATE POLICY "audit_logs_select" ON audit_logs
   FOR SELECT TO authenticated
   USING (
     user_id = auth.uid()

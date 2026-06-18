@@ -54,7 +54,7 @@ CREATE POLICY "month_closings_update" ON month_closings FOR UPDATE
 
 -- 5. Update audit_logs policy
 DROP POLICY IF EXISTS "audit_logs_select" ON audit_logs;
-CREATE POLICY "audit_logs_select" ON audit_logs FOR SELECT
+DROP POLICY IF EXISTS "audit_logs_select" ON audit_logs; CREATE POLICY "audit_logs_select" ON audit_logs FOR SELECT
   TO authenticated
   USING (
     user_id = auth.uid()
