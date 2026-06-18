@@ -132,7 +132,13 @@ export default function PolicyManagement() {
         setSubmitting(false);
         return;
       }
-      toast.success('✅ تم تحديث الوثيقة');
+
+      // Update installments if frequency or premium changed
+      if (editingPolicy.payment_frequency !== formData.payment_frequency || editingPolicy.annual_premium !== annualPremium) {
+        await updateInstallments(editingPolicy.id, annualPremium, formData.payment_frequency, formData.start_date);
+      }
+
+      toast.success('✅ تم تحديث الوثيقة والأقساط');
     } else {
       const { data, error } = await supabase.from('policies').insert(payload).select().single();
       if (error) {
@@ -184,6 +190,80 @@ export default function PolicyManagement() {
     if (error) {
       console.error('installment insert error:', error);
       toast.error('تحذير: تم حفظ الوثيقة لكن فشل إنشاء جدول الأقساط: ' + error.message);
+    }
+  }
+
+  async function updateInstallments(
+    policyId: string,
+    annualPremium: number,
+    frequency: PaymentFrequency,
+    startDate: string
+  ) {
+    // 1. Get existing installments and collections
+    const { data: existingInstallments } = await supabase
+      .from('installments')
+      .select('*, collections(*)')
+      .eq('policy_id', policyId)
+      .order('installment_number', { ascending: true });
+
+    if (!existingInstallments) return;
+
+    // 2. Identify paid installments
+    const paidInstallments = existingInstallments.filter(i => i.status === 'paid' || (i.collections && i.collections.length > 0));
+    const totalCollected = paidInstallments.reduce((sum, i) => sum + Number(i.amount), 0);
+
+    // 3. Calculate remaining amount and remaining installments
+    const remainingPremium = annualPremium - totalCollected;
+    const totalCount = getInstallmentCount(frequency);
+    
+    // We will keep the paid ones as they are, and redistribute the remaining amount 
+    // over the remaining slots of the new frequency.
+    // However, a simpler and more consistent business logic is:
+    // If frequency changes, we delete all non-paid installments and create new ones for the remaining balance.
+    
+    // 4. Delete non-paid installments
+    const nonPaidIds = existingInstallments.filter(i => !paidInstallments.find(p => p.id === i.id)).map(i => i.id);
+    if (nonPaidIds.length > 0) {
+      await supabase.from('installments').delete().in('id', nonPaidIds);
+    }
+
+    // 5. Generate new installments for the remaining amount
+    const paidCount = paidInstallments.length;
+    
+    // If we changed from annual (fully paid) to monthly, 
+    // we should only create new installments if there is a remaining balance.
+    // If the annual premium was 120,000 and it was paid, and we change to monthly,
+    // the remaining 11 installments should be 0 or not created.
+    // Business rule: If remainingPremium <= 0, we don't need to create more installments.
+    
+    if (remainingPremium > 0) {
+      const remainingCount = Math.max(0, totalCount - paidCount);
+
+      if (remainingCount > 0) {
+        const amountPerRemaining = Math.round((remainingPremium / remainingCount) * 100) / 100;
+        const start = new Date(startDate);
+        const monthsPerInstallment = 12 / totalCount;
+
+        const newInstallments = Array.from({ length: remainingCount }, (_, i) => {
+          const installmentIndex = paidCount + i;
+          const dueDate = new Date(start);
+          dueDate.setMonth(dueDate.getMonth() + installmentIndex * monthsPerInstallment);
+          
+          return {
+            policy_id: policyId,
+            installment_number: installmentIndex + 1,
+            amount: amountPerRemaining,
+            due_date: dueDate.toISOString().split('T')[0],
+            status: 'pending' as const,
+          };
+        });
+
+        const { error } = await supabase.from('installments').insert(newInstallments);
+        if (error) {
+          console.error('New installments insert error:', error);
+          toast.error('فشل تحديث جدول الأقساط الجديد: ' + error.message);
+        }
+      }
     }
   }
 
