@@ -251,8 +251,8 @@ export default function Dashboard() {
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <KPICard
-          label="إجمالي الأقساط"
-          value={formatCurrency(stats.totalPremiums)}
+          label="إجمالي الإنتاج"
+          value={formatCurrency(stats.monthlyCollections)}
           icon={TrendingUp}
           color="blue"
         />
