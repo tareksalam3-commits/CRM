@@ -3,18 +3,25 @@
 -- Migration Date: 2026-06-18
 -- ================================================================
 
--- Create audit_logs table
-CREATE TABLE IF NOT EXISTS audit_logs (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id uuid NOT NULL REFERENCES profiles(id) ON DELETE RESTRICT,
-  action varchar(50) NOT NULL,
-  entity_type varchar(50) NOT NULL,
-  entity_id uuid NOT NULL,
-  changes jsonb,
-  created_at timestamp with time zone DEFAULT now()
-);
+-- Ensure audit_logs table has all required columns and proper constraints
+DO $$ 
+BEGIN
+  -- Check if entity_type exists, if not the table might be empty or in old state
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='audit_logs' AND column_name='entity_type') THEN
+    -- This shouldn't happen if 20260612050353 ran, but let's be safe
+    ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS entity_type text NOT NULL DEFAULT 'unknown';
+  END IF;
 
--- Create indexes for audit_logs
+  -- Add changes column if it doesn't exist (it was old_data/new_data before)
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='audit_logs' AND column_name='changes') THEN
+    ALTER TABLE audit_logs ADD COLUMN changes jsonb;
+  END IF;
+
+  -- Ensure entity_id is NOT NULL if that's the new requirement
+  ALTER TABLE audit_logs ALTER COLUMN entity_id SET NOT NULL;
+END $$;
+
+-- Create indexes for audit_logs (using existing or new column names)
 CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON audit_logs(entity_type, entity_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at);
