@@ -104,7 +104,7 @@ CREATE TABLE IF NOT EXISTS public.reports_cache (
 );
 
 -- 13. Create Functions
-DROP FUNCTION IF EXISTS mark_overdue_installments CASCADE; CREATE OR REPLACE FUNCTION mark_overdue_installments()
+DROP FUNCTION IF EXISTS mark_overdue_installments() CASCADE; CREATE OR REPLACE FUNCTION mark_overdue_installments()
 RETURNS void AS $$
 BEGIN
   UPDATE installments

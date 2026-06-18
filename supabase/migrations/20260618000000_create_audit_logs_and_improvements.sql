@@ -99,7 +99,7 @@ CREATE INDEX IF NOT EXISTS idx_collections_date_range ON collections(collection_
 CREATE INDEX IF NOT EXISTS idx_installments_status_date ON installments(status, due_date);
 
 -- Add trigger for marking installments as overdue automatically
-DROP FUNCTION IF EXISTS mark_overdue_installments CASCADE; CREATE OR REPLACE FUNCTION mark_overdue_installments()
+DROP FUNCTION IF EXISTS mark_overdue_installments() CASCADE; CREATE OR REPLACE FUNCTION mark_overdue_installments()
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
