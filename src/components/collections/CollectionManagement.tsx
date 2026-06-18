@@ -8,7 +8,7 @@ import LoadingSpinner from '../common/LoadingSpinner';
 import { Wallet, Plus, X, CheckCircle, Clock, AlertTriangle, RotateCcw } from 'lucide-react';
 import toast from 'react-hot-toast';
 
-type FilterType = 'all' | 'pending' | 'overdue' | 'paid';
+type FilterType = 'all' | 'current_month' | 'pending' | 'overdue' | 'paid';
 
 export default function CollectionManagement() {
   const { profile } = useAuth();
@@ -17,7 +17,7 @@ export default function CollectionManagement() {
   const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [selectedInstallment, setSelectedInstallment] = useState<Installment | null>(null);
-  const [filter, setFilter] = useState<FilterType>('all');
+  const [filter, setFilter] = useState<FilterType>('current_month');
 
   const [formData, setFormData] = useState({
     amount: '',
@@ -199,6 +199,11 @@ export default function CollectionManagement() {
 
   const filtered = installments.filter(inst => {
     if (filter === 'all') return true;
+    if (filter === 'current_month') {
+      const now = new Date();
+      const dueDate = new Date(inst.due_date);
+      return dueDate.getMonth() === now.getMonth() && dueDate.getFullYear() === now.getFullYear();
+    }
     return inst.status === filter;
   });
 
@@ -255,7 +260,7 @@ export default function CollectionManagement() {
 
       {/* Filter Tabs */}
       <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
-        {(['all', 'pending', 'overdue', 'paid'] as FilterType[]).map(f => (
+        {(['current_month', 'all', 'pending', 'overdue', 'paid'] as FilterType[]).map(f => (
           <button
             key={f}
             onClick={() => setFilter(f)}
@@ -265,7 +270,7 @@ export default function CollectionManagement() {
                 : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600'
             }`}
           >
-            {f === 'all' ? 'الكل' : f === 'pending' ? 'قيد الانتظار' : f === 'overdue' ? 'متأخر' : 'مدفوع'}
+            {f === 'current_month' ? 'شهرنا الحالي' : f === 'all' ? 'الكل' : f === 'pending' ? 'قيد الانتظار' : f === 'overdue' ? 'متأخر' : 'مدفوع'}
           </button>
         ))}
       </div>

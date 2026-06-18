@@ -171,12 +171,13 @@ export default function PolicyManagement() {
   ) {
     const count = getInstallmentCount(frequency);
     const amount = Math.round((annualPremium / count) * 100) / 100;
-    const start = new Date(startDate);
     const monthsPerInstallment = 12 / count;
 
     const installments = Array.from({ length: count }, (_, i) => {
-      const dueDate = new Date(start);
+      const dueDate = new Date(startDate);
+      // Correctly add months for each installment
       dueDate.setMonth(dueDate.getMonth() + i * monthsPerInstallment);
+      
       return {
         policy_id: policyId,
         installment_number: i + 1,
@@ -246,7 +247,7 @@ export default function PolicyManagement() {
 
         const newInstallments = Array.from({ length: remainingCount }, (_, i) => {
           const installmentIndex = paidCount + i;
-          const dueDate = new Date(start);
+          const dueDate = new Date(startDate);
           dueDate.setMonth(dueDate.getMonth() + installmentIndex * monthsPerInstallment);
           
           return {
