@@ -19,8 +19,18 @@ export default function Reports() {
   const [kpis, setKpis] = useState<KPICard[]>([]);
   const [month, setMonth] = useState(new Date().getMonth() + 1);
   const [year, setYear] = useState(new Date().getFullYear());
+  const [allProfiles, setAllProfiles] = useState<any[]>([]);
 
   const canViewAdmin = profile ? canViewAdminReports(profile.role) : false;
+
+  const getSubordinateIds = (userId: string, profiles: any[]): string[] => {
+    const directReports = profiles.filter(p => p.manager_id === userId).map(p => p.id);
+    const allIds: string[] = [...directReports];
+    for (const id of directReports) {
+      allIds.push(...getSubordinateIds(id, profiles));
+    }
+    return allIds;
+  };
 
   const generateReport = useCallback(async () => {
     if (!profile) return;
@@ -34,17 +44,30 @@ export default function Reports() {
     const monthEnd = `${nxtY}-${String(nxtM).padStart(2, '0')}-01`;
 
     try {
+      const { data: profilesData } = await supabase.from('profiles').select('id, full_name, manager_id');
+      const profiles = profilesData || [];
+      setAllProfiles(profiles);
+
       let data: Record<string, unknown>[] = [];
       const newKpis: KPICard[] = [];
 
       switch (reportType) {
         // ── Personal / team production ──────────────────────────────
         case 'production': {
-          const { data: policies, error: policiesError } = await supabase
+          let query = supabase
             .from('policies')
             .select('agent_id, annual_premium, status, profiles!policies_agent_id_fkey(full_name)')
             .gte('created_at', monthStart)
             .lt('created_at', monthEnd);
+
+          if (profile.role === 'agent') {
+            query = query.eq('agent_id', profile.id);
+          } else if (['team_leader', 'supervisor', 'general_supervisor'].includes(profile.role)) {
+            const subordinateIds = [profile.id, ...getSubordinateIds(profile.id, allProfiles)];
+            query = query.in('agent_id', subordinateIds);
+          }
+
+          const { data: policies, error: policiesError } = await query;
           if (policiesError) {
             console.error('Error fetching policies:', policiesError);
             toast.error('خطأ في تحميل بيانات الوثائق');
@@ -82,11 +105,20 @@ export default function Reports() {
 
         // ── Collection ──────────────────────────────────────────────
         case 'collection': {
-          const { data: collections, error: collectionsError } = await supabase
+          let query = supabase
             .from('collections')
             .select('collected_by, amount, profiles!collections_collected_by_fkey(full_name)')
             .gte('collection_date', monthStart)
             .lt('collection_date', monthEnd);
+
+          if (profile.role === 'agent') {
+            query = query.eq('collected_by', profile.id);
+          } else if (['team_leader', 'supervisor', 'general_supervisor'].includes(profile.role)) {
+            const subordinateIds = [profile.id, ...getSubordinateIds(profile.id, allProfiles)];
+            query = query.in('collected_by', subordinateIds);
+          }
+
+          const { data: collections, error: collectionsError } = await query;
           if (collectionsError) {
             console.error('Error fetching collections:', collectionsError);
             toast.error('خطأ في تحميل بيانات التحصيل');

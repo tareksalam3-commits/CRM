@@ -71,11 +71,22 @@ export default function TargetManagement() {
   const loadData = useCallback(async () => {
     setLoading(true);
 
+    // Explicit filtering for UI clarity, while RLS handles security
+    let profilesQuery = supabase.from('profiles').select('*').eq('is_active', true);
+    let targetsQuery = supabase.from('targets').select('*, user:profiles(full_name, role, branch_id)')
+      .order('year', { ascending: false })
+      .order('period_number', { ascending: false });
+
+    if (profile && !['super_admin', 'dev_manager', 'general_supervisor'].includes(profile.role)) {
+      if (profile.branch_id) {
+        profilesQuery = profilesQuery.eq('branch_id', profile.branch_id);
+        // targetsQuery filter will be handled by RLS, but we can also filter here for clarity
+      }
+    }
+
     const [targetsRes, profilesRes, policiesRes] = await Promise.all([
-      supabase.from('targets').select('*, user:profiles(full_name, role)')
-        .order('year', { ascending: false })
-        .order('period_number', { ascending: false }),
-      supabase.from('profiles').select('*').eq('is_active', true),
+      targetsQuery,
+      profilesQuery,
       supabase.from('policies').select('agent_id, annual_premium, issue_date'),
     ]);
 

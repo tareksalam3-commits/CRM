@@ -72,10 +72,19 @@ export default function UserManagement() {
   const [newPassword, setNewPassword] = useState('');
 
   const fetchUsers = useCallback(async () => {
-    const { data, error } = await supabase.from('profiles').select('*').order('role').order('full_name');
+    let query = supabase.from('profiles').select('*').order('role').order('full_name');
+    
+    // Data Isolation for User Management
+    if (profile && !['super_admin', 'dev_manager', 'general_supervisor'].includes(profile.role)) {
+      if (profile.branch_id) {
+        query = query.eq('branch_id', profile.branch_id);
+      }
+    }
+
+    const { data, error } = await query;
     if (!error && data) setUsers(data as Profile[]);
     setLoading(false);
-  }, []);
+  }, [profile]);
 
   useEffect(() => { fetchUsers(); }, [fetchUsers]);
 

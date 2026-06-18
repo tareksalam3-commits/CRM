@@ -10,7 +10,7 @@ export type UserRole =
   | 'general_supervisor'
   | 'supervisor'
   | 'team_leader'
-  | 'agent';
+  | 'branch_manager' | 'agent';
 
 export type PolicyStatus = 'under_issuance' | 'active' | 'suspended' | 'cancelled' | 'rejected';
 export type PaymentFrequency = 'monthly' | 'quarterly' | 'semi_annual' | 'annual';

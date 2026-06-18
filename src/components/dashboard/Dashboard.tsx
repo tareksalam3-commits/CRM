@@ -58,12 +58,19 @@ export default function Dashboard() {
   const fetchStats = useCallback(async () => {
     setLoading(true);
     try {
+      // Apply RLS implicitly, but we can also add explicit filters if needed
+      let policiesQuery = supabase.from('policies').select('annual_premium, status, created_at');
+      let clientsQuery = supabase.from('clients').select('id', { count: 'exact', head: true });
+      let collectionsQuery = supabase.from('collections').select('amount, created_at');
+      let usersQuery = supabase.from('profiles').select('id', { count: 'exact', head: true });
+      let installmentsQuery = supabase.from('installments').select('amount, status, due_date, policy:policies!inner(agent_id)');
+
       const [policiesRes, clientsRes, collectionsRes, usersRes, installmentsRes] = await Promise.all([
-        supabase.from('policies').select('annual_premium, status, created_at'),
-        supabase.from('clients').select('id', { count: 'exact', head: true }),
-        supabase.from('collections').select('amount, created_at'),
-        supabase.from('profiles').select('id', { count: 'exact', head: true }),
-        supabase.from('installments').select('amount, status, due_date'),
+        policiesQuery,
+        clientsQuery,
+        collectionsQuery,
+        usersQuery,
+        installmentsQuery,
       ]);
 
       if (policiesRes.error) throw new Error(policiesRes.error.message);
@@ -362,9 +369,10 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Top and Bottom Performers */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
-        <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6">
+      {/* Top and Bottom Performers - Hidden for agents */}
+      {profile?.role !== 'agent' && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+          <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6">
           <h3 className="font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
             <Award className="w-5 h-5 text-amber-500" />
             أعلى 5 منتجين
@@ -400,9 +408,10 @@ export default function Dashboard() {
                 <span className="text-red-600 dark:text-red-400 font-semibold">{formatCurrency(agent.production)}</span>
               </div>
             ))}
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

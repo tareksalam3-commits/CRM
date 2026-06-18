@@ -19,11 +19,11 @@ interface NavItem {
 const navItems: NavItem[] = [
   { path: '/', label: 'لوحة التحكم', icon: LayoutDashboard },
   { path: '/users', label: 'المستخدمين', icon: Users, roles: ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'team_leader'] },
-  { path: '/org', label: 'الهيكل الوظيفي', icon: GitBranch, roles: ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'team_leader'] },
+  { path: '/org', label: 'الهيكل الوظيفي', icon: GitBranch, roles: ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager'] },
   { path: '/clients', label: 'العملاء', icon: UserCircle },
   { path: '/policies', label: 'الوثائق', icon: FileText },
   { path: '/collections', label: 'التحصيل', icon: Wallet },
-  { path: '/targets', label: 'التارجتات', icon: Target },
+  { path: '/targets', label: 'التارجتات', icon: Target, roles: ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager', 'team_leader', 'agent'] },
   { path: '/tasks', label: 'المهام', icon: CheckSquare },
   { path: '/notifications', label: 'الإشعارات', icon: Bell },
   { path: '/closing', label: 'تقفيل الشهر', icon: Calendar, roles: ['super_admin', 'dev_manager'] },

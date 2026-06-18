@@ -118,14 +118,32 @@ export default function OrgChart() {
   const canRearrange = profile ? canRearrangeOrg(profile.role) : false;
 
   const fetchUsers = useCallback(async () => {
-    const { data, error } = await supabase.from('profiles').select('*').order('role').order('full_name');
+    let query = supabase.from('profiles').select('*').order('role').order('full_name');
+    
+    // Data Isolation for Org Chart
+    if (profile && !['super_admin', 'dev_manager'].includes(profile.role)) {
+      if (profile.branch_id) {
+        query = query.eq('branch_id', profile.branch_id);
+      } else {
+        // Fallback: if no branch_id, show self and subordinates
+        // Note: RLS will also handle this, but explicit filtering is better for UI
+      }
+    }
+
+    const { data, error } = await query;
     if (!error && data) {
       const users = data as Profile[];
       setAllUsers(users);
-      setTree(buildTree(users, null));
+      
+      // Build tree starting from the highest accessible level
+      const rootId = (profile && !['super_admin', 'dev_manager'].includes(profile.role)) 
+        ? (users.find(u => u.id === profile.id)?.manager_id || null) 
+        : null;
+        
+      setTree(buildTree(users, rootId));
     }
     setLoading(false);
-  }, []);
+  }, [profile]);
 
   useEffect(() => { fetchUsers(); }, [fetchUsers]);
 

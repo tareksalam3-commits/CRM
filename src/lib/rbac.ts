@@ -20,12 +20,12 @@ export function isManager(role: UserRole): boolean {
 
 /** Returns true if user can access admin reports */
 export function canViewAdminReports(role: UserRole): boolean {
-  return ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'team_leader'].includes(role);
+  return ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager', 'team_leader'].includes(role);
 }
 
 /** Returns true if user can manage targets for others */
 export function canManageTargets(role: UserRole): boolean {
-  return ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'team_leader'].includes(role);
+  return ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager', 'team_leader'].includes(role);
 }
 
 /** Returns true if user can perform org-chart moves */
@@ -50,7 +50,7 @@ export function canManageSettings(role: UserRole): boolean {
 
 /** Roles the current user is allowed to assign when creating/editing users */
 export function assignableRoles(myRole: UserRole): UserRole[] {
-  const all: UserRole[] = ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'team_leader', 'agent'];
+  const all: UserRole[] = ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager', 'team_leader', 'agent'];
   if (myRole === 'super_admin') return all;
   return all.filter(r => ROLE_LEVELS[r] > ROLE_LEVELS[myRole]);
 }

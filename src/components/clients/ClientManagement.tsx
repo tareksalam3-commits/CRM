@@ -456,22 +456,24 @@ export default function ClientManagement() {
                 </div>
 
                 {/* Agent */}
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">المندوب المسؤول</label>
-                  <select
-                    value={formData.agent_id}
-                    onChange={(e) => setFormData({ ...formData, agent_id: e.target.value })}
-                    className={inputCls}
-                  >
-                    <option value="">{profile?.full_name ?? 'أنا'} (أنا)</option>
-                    {agents
-                      .filter(a => a.id !== profile?.id)
-                      .map(a => (
-                        <option key={a.id} value={a.id}>{a.full_name}</option>
-                      ))
-                    }
-                  </select>
-                </div>
+                {profile?.role !== 'agent' && (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">المندوب المسؤول</label>
+                    <select
+                      value={formData.agent_id}
+                      onChange={(e) => setFormData({ ...formData, agent_id: e.target.value })}
+                      className={inputCls}
+                    >
+                      <option value="">{profile?.full_name ?? 'أنا'} (أنا)</option>
+                      {agents
+                        .filter(a => a.id !== profile?.id)
+                        .map(a => (
+                          <option key={a.id} value={a.id}>{a.full_name}</option>
+                        ))
+                      }
+                    </select>
+                  </div>
+                )}
 
                 {/* Notes */}
                 <div className="sm:col-span-2">
