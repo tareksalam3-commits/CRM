@@ -84,6 +84,8 @@ LANGUAGE sql
 STABLE
 SECURITY DEFINER
 AS $$
+BEGIN
+  RETURN QUERY
   WITH RECURSIVE subordinates AS (
     SELECT id FROM profiles WHERE manager_id = manager_uuid
     UNION ALL
@@ -100,6 +102,8 @@ LANGUAGE sql
 STABLE
 SECURITY DEFINER
 AS $$
+BEGIN
+  RETURN QUERY
   WITH RECURSIVE chain AS (
     SELECT manager_id AS id FROM profiles WHERE id = user_uuid AND manager_id IS NOT NULL
     UNION ALL
@@ -117,6 +121,8 @@ LANGUAGE sql
 STABLE
 SECURITY DEFINER
 AS $$
+BEGIN
+  RETURN QUERY
   SELECT
     accessor_uuid = target_uuid
     OR target_uuid IN (SELECT get_subordinate_ids(accessor_uuid))

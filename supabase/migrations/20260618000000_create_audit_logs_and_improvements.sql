@@ -105,6 +105,8 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
 BEGIN
+  RETURN QUERY
+BEGIN
   UPDATE installments
   SET status = 'overdue', updated_at = now()
   WHERE status = 'pending'
@@ -120,6 +122,8 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 AS $$
+BEGIN
+  RETURN QUERY
 WITH RECURSIVE subordinates AS (
   SELECT id FROM profiles WHERE manager_id = $1
   UNION ALL
