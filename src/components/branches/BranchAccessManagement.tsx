@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { Profile, Branch, UserBranchAccess } from '../../types';
@@ -6,6 +6,8 @@ import PageHeader from '../common/PageHeader';
 import LoadingSpinner from '../common/LoadingSpinner';
 import { Users, Plus, X, Search, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
+
+const MAIN_BRANCH_CODE = 'MAIN';
 
 export default function BranchAccessManagement() {
   const { profile } = useAuth();
@@ -23,6 +25,7 @@ export default function BranchAccessManagement() {
       .from('profiles')
       .select('*')
       .eq('is_active', true)
+      .neq('role', 'super_admin') // Don't show super_admin in regular user list
       .order('full_name');
     if (error) {
       console.error('fetchUsers error:', error);
@@ -36,6 +39,7 @@ export default function BranchAccessManagement() {
       .from('branches')
       .select('*')
       .eq('is_active', true)
+      .neq('code', MAIN_BRANCH_CODE) // Exclude main branch from regular user access
       .order('name');
     if (error) {
       console.error('fetchBranches error:', error);
@@ -48,19 +52,18 @@ export default function BranchAccessManagement() {
     const { data, error } = await supabase
       .from('user_branch_access')
       .select('*')
-      .order('created_at');
+      .order('created_at', { ascending: false });
     if (error) {
       console.error('fetchUserBranchAccess error:', error);
     } else if (data) {
       setUserBranchAccess(data as UserBranchAccess[]);
     }
-    setLoading(false);
   }, []);
 
   useEffect(() => {
-    fetchUsers();
-    fetchBranches();
-    fetchUserBranchAccess();
+    Promise.all([fetchUsers(), fetchBranches(), fetchUserBranchAccess()]).then(() => {
+      setLoading(false);
+    });
   }, [fetchUsers, fetchBranches, fetchUserBranchAccess]);
 
   async function handleAddAccess() {
@@ -83,7 +86,7 @@ export default function BranchAccessManagement() {
     if (error) {
       console.error('add access error:', error);
       if (error.code === '23505') {
-        toast.error('المستخدم لديه وصول لبعض هذه الفروع بالفعل');
+        toast.error('هذا المستخدم مرتبط بهذا الفرع بالفعل');
       } else {
         toast.error('خطأ في إضافة الوصول: ' + error.message);
       }
@@ -92,14 +95,16 @@ export default function BranchAccessManagement() {
     }
 
     toast.success('✅ تم إضافة الوصول بنجاح');
-    setSubmitting(false);
     setSelectedUser(null);
     setSelectedBranches([]);
+    setSubmitting(false);
     fetchUserBranchAccess();
   }
 
   async function removeAccess(accessId: string) {
-    if (!confirm('هل أنت متأكد من إزالة هذا الوصول؟')) return;
+    if (!confirm('هل تريد إزالة هذا الوصول؟')) {
+      return;
+    }
 
     const { error } = await supabase
       .from('user_branch_access')
@@ -108,50 +113,39 @@ export default function BranchAccessManagement() {
 
     if (error) {
       console.error('remove access error:', error);
-      toast.error('خطأ في إزالة الوصول');
+      toast.error('خطأ في إزالة الوصول: ' + error.message);
       return;
     }
 
-    toast.success('✅ تم إزالة الوصول');
+    toast.success('✅ تم إزالة الوصول بنجاح');
     fetchUserBranchAccess();
   }
 
-  const getUserBranches = (userId: string) => {
-    return userBranchAccess
-      .filter(a => a.user_id === userId)
-      .map(a => branches.find(b => b.id === a.branch_id))
-      .filter(Boolean);
-  };
+  function getUserBranches(userId: string): Branch[] {
+    const userAccess = userBranchAccess.filter(a => a.user_id === userId);
+    return branches.filter(b => userAccess.some(a => a.branch_id === b.id));
+  }
 
   const filteredUsers = users.filter(u =>
-    u.full_name.includes(search) || u.email.includes(search)
+    u.full_name.toLowerCase().includes(search.toLowerCase()) ||
+    u.email.toLowerCase().includes(search.toLowerCase())
   );
 
-  const inputCls = "w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white placeholder-slate-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all";
+  const inputCls = 'w-full px-4 py-2.5 border border-slate-200 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-700 text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all';
 
   if (loading) return <LoadingSpinner />;
 
-  // Check authorization
-  if (!profile || !['super_admin', 'dev_manager'].includes(profile.role)) {
-    return (
-      <div className="text-center py-12">
-        <p className="text-red-600 dark:text-red-400">غير مصرح بالوصول إلى هذه الصفحة</p>
-      </div>
-    );
-  }
-
   return (
-    <div>
+    <div className="space-y-6">
       <PageHeader
-        title="إدارة وصول الفروع"
-        description="ربط المستخدمين بالفروع المختلفة"
         icon={Users}
+        title="ربط المستخدمين بالفروع"
+        description="أدر وصول المستخدمين للفروع المختلفة"
       />
 
       {/* Add Access Section */}
       <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 border border-slate-100 dark:border-slate-700 mb-6">
         <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-4">إضافة وصول جديد</h3>
-
         <div className="space-y-4">
           {/* User Selection */}
           <div>
@@ -171,33 +165,35 @@ export default function BranchAccessManagement() {
               ))}
             </select>
           </div>
-
           {/* Branch Selection */}
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
               الفروع
             </label>
             <div className="space-y-2 max-h-48 overflow-y-auto">
-              {branches.map(branch => (
-                <label key={branch.id} className="flex items-center gap-3 p-2 hover:bg-slate-50 dark:hover:bg-slate-700/50 rounded-lg cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={selectedBranches.includes(branch.id)}
-                    onChange={(e) => {
-                      if (e.target.checked) {
-                        setSelectedBranches([...selectedBranches, branch.id]);
-                      } else {
-                        setSelectedBranches(selectedBranches.filter(id => id !== branch.id));
-                      }
-                    }}
-                    className="w-4 h-4 rounded"
-                  />
-                  <span className="text-slate-900 dark:text-white">{branch.name}</span>
-                </label>
-              ))}
+              {branches.length === 0 ? (
+                <p className="text-sm text-slate-500 dark:text-slate-400">لا توجد فروع متاحة</p>
+              ) : (
+                branches.map(branch => (
+                  <label key={branch.id} className="flex items-center gap-3 p-2 hover:bg-slate-50 dark:hover:bg-slate-700/50 rounded-lg cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={selectedBranches.includes(branch.id)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedBranches([...selectedBranches, branch.id]);
+                        } else {
+                          setSelectedBranches(selectedBranches.filter(id => id !== branch.id));
+                        }
+                      }}
+                      className="w-4 h-4 rounded"
+                    />
+                    <span className="text-slate-900 dark:text-white">{branch.name}</span>
+                  </label>
+                ))
+              )}
             </div>
           </div>
-
           <button
             onClick={handleAddAccess}
             disabled={submitting || !selectedUser || selectedBranches.length === 0}
@@ -227,7 +223,6 @@ export default function BranchAccessManagement() {
         {filteredUsers.map(user => {
           const userBranches = getUserBranches(user.id);
           const userAccess = userBranchAccess.filter(a => a.user_id === user.id);
-
           return (
             <div key={user.id} className="bg-white dark:bg-slate-800 rounded-2xl p-6 border border-slate-100 dark:border-slate-700">
               <div className="flex justify-between items-start mb-4">
@@ -236,7 +231,6 @@ export default function BranchAccessManagement() {
                   <p className="text-sm text-slate-600 dark:text-slate-400">{user.email} • {user.role}</p>
                 </div>
               </div>
-
               {userBranches.length === 0 ? (
                 <p className="text-sm text-slate-500 dark:text-slate-400">لا يوجد وصول لأي فرع</p>
               ) : (

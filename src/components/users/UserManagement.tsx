@@ -7,7 +7,7 @@ import PageHeader from '../common/PageHeader';
 import LoadingSpinner from '../common/LoadingSpinner';
 import {
   Users, Plus, Edit2, Trash2, Ban, CheckCircle, X,
-  Search, Key, ChevronDown, Shield, Phone, Mail,
+  Search, Key, ChevronDown, Shield, Phone, Mail, Building2,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -57,6 +57,7 @@ interface FormData {
   phone: string; role: UserRole; manager_id: string;
 }
 const emptyForm: FormData = { email: '', password: '', full_name: '', phone: '', role: 'agent', manager_id: '' };
+const MAIN_BRANCH_CODE = 'MAIN';
 
 export default function UserManagement() {
   const { profile } = useAuth();
@@ -70,6 +71,11 @@ export default function UserManagement() {
   const [submitting, setSubmitting] = useState(false);
   const [resetPasswordId, setResetPasswordId] = useState<string | null>(null);
   const [newPassword, setNewPassword] = useState('');
+  const [branches, setBranches] = useState<any[]>([]);
+  const [userBranchAccess, setUserBranchAccess] = useState<any[]>([]);
+  const [showBranchModal, setShowBranchModal] = useState(false);
+  const [selectedUserForBranch, setSelectedUserForBranch] = useState<Profile | null>(null);
+  const [selectedBranches, setSelectedBranches] = useState<string[]>([]);
 
   const fetchUsers = useCallback(async () => {
     let query = supabase.from('profiles').select('*').order('role').order('full_name');
@@ -86,7 +92,28 @@ export default function UserManagement() {
     setLoading(false);
   }, [profile]);
 
-  useEffect(() => { fetchUsers(); }, [fetchUsers]);
+  const fetchBranches = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('branches')
+      .select('*')
+      .eq('is_active', true)
+      .neq('code', MAIN_BRANCH_CODE)
+      .order('name');
+    if (!error && data) setBranches(data);
+  }, []);
+
+  const fetchUserBranchAccess = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('user_branch_access')
+      .select('*');
+    if (!error && data) setUserBranchAccess(data);
+  }, []);
+
+  useEffect(() => { 
+    fetchUsers();
+    fetchBranches();
+    fetchUserBranchAccess();
+  }, [fetchUsers, fetchBranches, fetchUserBranchAccess]);
 
   const myRole = profile?.role ?? 'agent';
   const potentialManagers = users.filter(u => u.is_active && u.role !== 'agent' && u.id !== editingUser?.id);
@@ -186,6 +213,47 @@ export default function UserManagement() {
     setShowForm(true);
   }
 
+  function openBranchModal(user: Profile) {
+    setSelectedUserForBranch(user);
+    const userAccess = userBranchAccess.filter(a => a.user_id === user.id);
+    setSelectedBranches(userAccess.map(a => a.branch_id));
+    setShowBranchModal(true);
+  }
+
+  async function saveBranchAccess() {
+    if (!selectedUserForBranch) return;
+    
+    // Get current access
+    const currentAccess = userBranchAccess.filter(a => a.user_id === selectedUserForBranch.id);
+    const currentBranchIds = currentAccess.map(a => a.branch_id);
+    
+    // Find branches to add and remove
+    const toAdd = selectedBranches.filter(id => !currentBranchIds.includes(id));
+    const toRemove = currentAccess.filter(a => !selectedBranches.includes(a.branch_id));
+    
+    // Remove old access
+    if (toRemove.length > 0) {
+      await supabase
+        .from('user_branch_access')
+        .delete()
+        .in('id', toRemove.map(a => a.id));
+    }
+    
+    // Add new access
+    if (toAdd.length > 0) {
+      await supabase
+        .from('user_branch_access')
+        .insert(toAdd.map(branchId => ({
+          user_id: selectedUserForBranch.id,
+          branch_id: branchId,
+        })));
+    }
+    
+    toast.success('✅ تم تحديث الفروع');
+    setShowBranchModal(false);
+    fetchUserBranchAccess();
+  }
+
   if (!profile || !isManager(profile.role)) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-slate-400">
@@ -271,6 +339,7 @@ export default function UserManagement() {
                 <div className="flex items-center gap-1 flex-shrink-0">
                   <button onClick={() => startEdit(user)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg"><Edit2 className="w-4 h-4 text-slate-500" /></button>
                   <button onClick={() => { setResetPasswordId(user.id); setNewPassword(''); }} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg"><Key className="w-4 h-4 text-amber-500" /></button>
+                  <button onClick={() => openBranchModal(user)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg" title="إدارة الفروع"><Building2 className="w-4 h-4 text-teal-500" /></button>
                   <button onClick={() => toggleActive(user)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg">
                     {user.is_active ? <Ban className="w-4 h-4 text-orange-500" /> : <CheckCircle className="w-4 h-4 text-emerald-500" />}
                   </button>
@@ -339,6 +408,44 @@ export default function UserManagement() {
                 </button>
                 <button onClick={resetForm} className="flex-1 py-2.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl font-medium transition-colors">إلغاء</button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showBranchModal && selectedUserForBranch && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-md p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white">إدارة فروع {selectedUserForBranch.full_name}</h3>
+              <button onClick={() => setShowBranchModal(false)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg"><X className="w-5 h-5 text-slate-500" /></button>
+            </div>
+            <div className="space-y-2 max-h-48 overflow-y-auto mb-4">
+              {branches.length === 0 ? (
+                <p className="text-sm text-slate-500 dark:text-slate-400">لا توجد فروع متاحة</p>
+              ) : (
+                branches.map(branch => (
+                  <label key={branch.id} className="flex items-center gap-3 p-2 hover:bg-slate-50 dark:hover:bg-slate-700/50 rounded-lg cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={selectedBranches.includes(branch.id)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedBranches([...selectedBranches, branch.id]);
+                        } else {
+                          setSelectedBranches(selectedBranches.filter(id => id !== branch.id));
+                        }
+                      }}
+                      className="w-4 h-4 rounded"
+                    />
+                    <span className="text-slate-900 dark:text-white">{branch.name}</span>
+                  </label>
+                ))
+              )}
+            </div>
+            <div className="flex gap-3">
+              <button onClick={saveBranchAccess} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium">حفظ</button>
+              <button onClick={() => setShowBranchModal(false)} className="flex-1 py-2.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl font-medium">إلغاء</button>
             </div>
           </div>
         </div>

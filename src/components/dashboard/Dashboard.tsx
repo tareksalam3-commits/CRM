@@ -58,12 +58,29 @@ export default function Dashboard() {
   const fetchStats = useCallback(async () => {
     setLoading(true);
     try {
+      // Get user's accessible branches
+      let accessibleBranches: string[] = [];
+      if (profile && profile.role !== 'super_admin') {
+        const { data: accessData } = await supabase
+          .from('user_branch_access')
+          .select('branch_id')
+          .eq('user_id', profile.id);
+        accessibleBranches = accessData?.map(a => a.branch_id) || [];
+      }
+
       // Apply RLS implicitly, but we can also add explicit filters if needed
-      let policiesQuery = supabase.from('policies').select('annual_premium, status, created_at');
-      let clientsQuery = supabase.from('clients').select('id', { count: 'exact', head: true });
-      let collectionsQuery = supabase.from('collections').select('amount, created_at');
+      let policiesQuery = supabase.from('policies').select('annual_premium, status, created_at, branch_id');
+      let clientsQuery = supabase.from('clients').select('id, branch_id', { count: 'exact', head: true });
+      let collectionsQuery = supabase.from('collections').select('amount, created_at, branch_id');
       let usersQuery = supabase.from('profiles').select('id', { count: 'exact', head: true });
-      let installmentsQuery = supabase.from('installments').select('amount, status, due_date, policy:policies!inner(agent_id)');
+      let installmentsQuery = supabase.from('installments').select('amount, status, due_date, policy:policies!inner(agent_id, branch_id)');
+
+      // Apply branch filters for non-super-admins
+      if (profile && profile.role !== 'super_admin' && accessibleBranches.length > 0) {
+        policiesQuery = policiesQuery.in('branch_id', accessibleBranches);
+        clientsQuery = clientsQuery.in('branch_id', accessibleBranches);
+        collectionsQuery = collectionsQuery.in('branch_id', accessibleBranches);
+      }
 
       const [policiesRes, clientsRes, collectionsRes, usersRes, installmentsRes] = await Promise.all([
         policiesQuery,
@@ -97,11 +114,18 @@ export default function Dashboard() {
       const monthlyCollections = monthlyCollectionsData.reduce((s, c: any) => s + Number(c.amount), 0);
 
       // Get top and bottom agents
-      const { data: agentsData } = await supabase
+      let agentsQuery = supabase
         .from('profiles')
         .select('id, full_name')
         .eq('role', 'agent')
         .limit(100);
+      
+      // Filter agents by accessible branches for non-super-admins
+      if (profile && profile.role !== 'super_admin' && accessibleBranches.length > 0) {
+        agentsQuery = agentsQuery.in('branch_id', accessibleBranches);
+      }
+      
+      const { data: agentsData } = await agentsQuery;
 
       const agentStats = await Promise.all(
         (agentsData || []).map(async (agent: any) => {
@@ -119,12 +143,19 @@ export default function Dashboard() {
       const bottomAgents = sortedAgents.slice(-5).reverse();
 
       // Calculate target achievement
-      const { data: targetData } = await supabase
+      let targetQuery = supabase
         .from('targets')
-        .select('target_amount')
+        .select('target_amount, branch_id')
         .eq('period_type', 'monthly')
         .eq('year', now_date.getFullYear())
         .eq('period_number', now_date.getMonth() + 1);
+      
+      // Filter targets by accessible branches for non-super-admins
+      if (profile && profile.role !== 'super_admin' && accessibleBranches.length > 0) {
+        targetQuery = targetQuery.in('branch_id', accessibleBranches);
+      }
+      
+      const { data: targetData } = await targetQuery;
 
       const totalTarget = targetData?.reduce((s: number, t: any) => s + Number(t.target_amount), 0) || 0;
       const targetAchievement = totalTarget > 0 ? (monthlyCollections / totalTarget) * 100 : 0;
