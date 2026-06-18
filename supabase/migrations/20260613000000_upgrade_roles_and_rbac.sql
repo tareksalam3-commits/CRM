@@ -17,7 +17,7 @@ UPDATE profiles SET role = 'team_leader'   WHERE role = 'group_leader';
 
 -- 3. Update targets RLS role list (delete & recreate policies)
 DROP POLICY IF EXISTS "targets_insert" ON targets;
-CREATE POLICY "targets_insert" ON targets FOR INSERT
+DROP POLICY IF EXISTS "targets_insert" ON targets; CREATE POLICY "targets_insert" ON targets FOR INSERT
   TO authenticated
   WITH CHECK (
     EXISTS (
@@ -28,7 +28,7 @@ CREATE POLICY "targets_insert" ON targets FOR INSERT
   );
 
 DROP POLICY IF EXISTS "targets_delete" ON targets;
-CREATE POLICY "targets_delete" ON targets FOR DELETE
+DROP POLICY IF EXISTS "targets_delete" ON targets; CREATE POLICY "targets_delete" ON targets FOR DELETE
   TO authenticated
   USING (
     EXISTS (
@@ -40,21 +40,21 @@ CREATE POLICY "targets_delete" ON targets FOR DELETE
 
 -- 4. Update month_closings policies
 DROP POLICY IF EXISTS "month_closings_insert" ON month_closings;
-CREATE POLICY "month_closings_insert" ON month_closings FOR INSERT
+DROP POLICY IF EXISTS "month_closings_insert" ON month_closings; CREATE POLICY "month_closings_insert" ON month_closings FOR INSERT
   TO authenticated
   WITH CHECK (
     EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('super_admin','dev_manager'))
   );
 
 DROP POLICY IF EXISTS "month_closings_update" ON month_closings;
-CREATE POLICY "month_closings_update" ON month_closings FOR UPDATE
+DROP POLICY IF EXISTS "month_closings_update" ON month_closings; CREATE POLICY "month_closings_update" ON month_closings FOR UPDATE
   TO authenticated
   USING   (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('super_admin','dev_manager')))
   WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('super_admin','dev_manager')));
 
 -- 5. Update audit_logs policy
 DROP POLICY IF EXISTS "audit_logs_select" ON audit_logs;
-DROP POLICY IF EXISTS "audit_logs_select" ON audit_logs; CREATE POLICY "audit_logs_select" ON audit_logs FOR SELECT
+DROP POLICY IF EXISTS "audit_logs_select" ON audit_logs; DROP POLICY IF EXISTS "audit_logs_select" ON audit_logs; CREATE POLICY "audit_logs_select" ON audit_logs FOR SELECT
   TO authenticated
   USING (
     user_id = auth.uid()
@@ -63,7 +63,7 @@ DROP POLICY IF EXISTS "audit_logs_select" ON audit_logs; CREATE POLICY "audit_lo
 
 -- 6. Profiles insert: allow managers to create users below them
 DROP POLICY IF EXISTS "profiles_insert" ON profiles;
-CREATE POLICY "profiles_insert" ON profiles FOR INSERT
+DROP POLICY IF EXISTS "profiles_insert" ON profiles; CREATE POLICY "profiles_insert" ON profiles FOR INSERT
   TO authenticated
   WITH CHECK (
     auth.uid() = id
@@ -78,7 +78,7 @@ CREATE POLICY "profiles_insert" ON profiles FOR INSERT
 -- (These are already correct in previous migration, no change needed)
 
 -- 8. Rebuild get_subordinate_ids to include inactive users for admin viewing
-CREATE OR REPLACE FUNCTION get_subordinate_ids(manager_uuid uuid)
+DROP FUNCTION IF EXISTS get_subordinate_ids CASCADE; CREATE OR REPLACE FUNCTION get_subordinate_ids(manager_uuid uuid)
 RETURNS SETOF uuid
 LANGUAGE sql
 STABLE
@@ -94,7 +94,7 @@ AS $$
 $$;
 
 -- 9. Add helper: get all manager ids in chain above a user
-CREATE OR REPLACE FUNCTION get_manager_chain(user_uuid uuid)
+DROP FUNCTION IF EXISTS get_manager_chain CASCADE; CREATE OR REPLACE FUNCTION get_manager_chain(user_uuid uuid)
 RETURNS SETOF uuid
 LANGUAGE sql
 STABLE
@@ -111,7 +111,7 @@ AS $$
 $$;
 
 -- 10. Update can_access_user to use new role names
-CREATE OR REPLACE FUNCTION can_access_user(accessor_uuid uuid, target_uuid uuid)
+DROP FUNCTION IF EXISTS can_access_user CASCADE; CREATE OR REPLACE FUNCTION can_access_user(accessor_uuid uuid, target_uuid uuid)
 RETURNS boolean
 LANGUAGE sql
 STABLE

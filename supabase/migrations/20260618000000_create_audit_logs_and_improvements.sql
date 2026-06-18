@@ -48,7 +48,7 @@ CREATE INDEX IF NOT EXISTS idx_month_closings_closed_by ON month_closings(closed
 -- RLS for audit_logs (read-only for authorized users)
 ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "audit_logs_select" ON audit_logs; CREATE POLICY "audit_logs_select" ON audit_logs
+DROP POLICY IF EXISTS "audit_logs_select" ON audit_logs; DROP POLICY IF EXISTS "audit_logs_select" ON audit_logs; CREATE POLICY "audit_logs_select" ON audit_logs
   FOR SELECT TO authenticated
   USING (
     user_id = auth.uid()
@@ -59,14 +59,14 @@ DROP POLICY IF EXISTS "audit_logs_select" ON audit_logs; CREATE POLICY "audit_lo
 -- RLS for month_closings
 ALTER TABLE month_closings ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "month_closings_select" ON month_closings
+DROP POLICY IF EXISTS "month_closings_select" ON month_closings; CREATE POLICY "month_closings_select" ON month_closings
   FOR SELECT TO authenticated
   USING (
     closed_by = auth.uid()
     OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('super_admin', 'dev_manager'))
   );
 
-CREATE POLICY "month_closings_insert" ON month_closings
+DROP POLICY IF EXISTS "month_closings_insert" ON month_closings; CREATE POLICY "month_closings_insert" ON month_closings
   FOR INSERT TO authenticated
   WITH CHECK (
     EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('super_admin', 'dev_manager'))
@@ -83,11 +83,11 @@ CREATE TABLE IF NOT EXISTS system_settings (
 
 ALTER TABLE system_settings ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "system_settings_select" ON system_settings
+DROP POLICY IF EXISTS "system_settings_select" ON system_settings; CREATE POLICY "system_settings_select" ON system_settings
   FOR SELECT TO authenticated
   USING (true);
 
-CREATE POLICY "system_settings_update" ON system_settings
+DROP POLICY IF EXISTS "system_settings_update" ON system_settings; CREATE POLICY "system_settings_update" ON system_settings
   FOR UPDATE TO authenticated
   USING (
     EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'super_admin')
@@ -99,7 +99,7 @@ CREATE INDEX IF NOT EXISTS idx_collections_date_range ON collections(collection_
 CREATE INDEX IF NOT EXISTS idx_installments_status_date ON installments(status, due_date);
 
 -- Add trigger for marking installments as overdue automatically
-CREATE OR REPLACE FUNCTION mark_overdue_installments()
+DROP FUNCTION IF EXISTS mark_overdue_installments CASCADE; CREATE OR REPLACE FUNCTION mark_overdue_installments()
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -114,7 +114,7 @@ END;
 $$;
 
 -- Function to get subordinate IDs (used in RLS)
-CREATE OR REPLACE FUNCTION get_subordinate_ids(manager_id uuid)
+DROP FUNCTION IF EXISTS get_subordinate_ids CASCADE; CREATE OR REPLACE FUNCTION get_subordinate_ids(manager_id uuid)
 RETURNS TABLE(id uuid)
 LANGUAGE plpgsql
 STABLE

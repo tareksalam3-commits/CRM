@@ -104,7 +104,7 @@ CREATE TABLE IF NOT EXISTS public.reports_cache (
 );
 
 -- 13. Create Functions
-CREATE OR REPLACE FUNCTION mark_overdue_installments()
+DROP FUNCTION IF EXISTS mark_overdue_installments CASCADE; CREATE OR REPLACE FUNCTION mark_overdue_installments()
 RETURNS void AS $$
 BEGIN
   UPDATE installments
@@ -113,7 +113,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
-CREATE OR REPLACE FUNCTION calculate_agent_performance(
+DROP FUNCTION IF EXISTS calculate_agent_performance CASCADE; CREATE OR REPLACE FUNCTION calculate_agent_performance(
   p_agent_id uuid,
   p_month int,
   p_year int
@@ -166,6 +166,6 @@ ALTER TABLE public.reports_cache ENABLE ROW LEVEL SECURITY;
 
 -- 14. Fix RLS Policies (Example for detailed_month_closing_data)
 DROP POLICY IF EXISTS "detailed_closing_select" ON detailed_month_closing_data;
-CREATE POLICY "detailed_closing_select" ON detailed_month_closing_data
+DROP POLICY IF EXISTS "detailed_closing_select" ON detailed_month_closing_data; CREATE POLICY "detailed_closing_select" ON detailed_month_closing_data
   FOR SELECT TO authenticated USING (true);
 

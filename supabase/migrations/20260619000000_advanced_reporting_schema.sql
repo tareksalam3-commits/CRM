@@ -55,7 +55,7 @@ ALTER TABLE reports_cache ENABLE ROW LEVEL SECURITY;
 
 -- 5. RLS Policies for detailed_month_closing_data
 DROP POLICY IF EXISTS "detailed_closing_select" ON detailed_month_closing_data;
-CREATE POLICY "detailed_closing_select" ON detailed_month_closing_data FOR SELECT
+DROP POLICY IF EXISTS "detailed_closing_select" ON detailed_month_closing_data; CREATE POLICY "detailed_closing_select" ON detailed_month_closing_data FOR SELECT
   TO authenticated
   USING (
     user_id = auth.uid()
@@ -69,12 +69,12 @@ CREATE POLICY "detailed_closing_select" ON detailed_month_closing_data FOR SELEC
 
 -- 6. RLS Policies for reports_cache (readable by all authenticated users)
 DROP POLICY IF EXISTS "reports_cache_select" ON reports_cache;
-CREATE POLICY "reports_cache_select" ON reports_cache FOR SELECT
+DROP POLICY IF EXISTS "reports_cache_select" ON reports_cache; CREATE POLICY "reports_cache_select" ON reports_cache FOR SELECT
   TO authenticated
   USING (true);
 
 -- 7. Create function to calculate agent performance
-CREATE OR REPLACE FUNCTION calculate_agent_performance(
+DROP FUNCTION IF EXISTS calculate_agent_performance CASCADE; CREATE OR REPLACE FUNCTION calculate_agent_performance(
   p_agent_id uuid,
   p_month int,
   p_year int
@@ -122,7 +122,7 @@ END;
 $$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
 
 -- 8. Create function to get top/bottom performers
-CREATE OR REPLACE FUNCTION get_top_performers(
+DROP FUNCTION IF EXISTS get_top_performers CASCADE; CREATE OR REPLACE FUNCTION get_top_performers(
   p_month int,
   p_year int,
   p_limit int DEFAULT 5,

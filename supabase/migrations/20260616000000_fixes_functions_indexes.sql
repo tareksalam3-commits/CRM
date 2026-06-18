@@ -81,7 +81,7 @@ END $$;
 -- FIX #SQL10: Final safe creation of mark_overdue_installments function
 DO $$ BEGIN
   IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'installments' AND column_name = 'status') THEN
-    CREATE OR REPLACE FUNCTION mark_overdue_installments()
+    DROP FUNCTION IF EXISTS mark_overdue_installments CASCADE; CREATE OR REPLACE FUNCTION mark_overdue_installments()
     RETURNS void
     LANGUAGE sql
     SECURITY DEFINER
@@ -99,26 +99,26 @@ DO $$ BEGIN
   IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'tasks' AND column_name = 'created_by') THEN
     -- tasks_select
     IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'tasks' AND policyname = 'tasks_select') THEN
-      CREATE POLICY "tasks_select" ON tasks FOR SELECT TO authenticated
+      DROP POLICY IF EXISTS "tasks_select" ON tasks; CREATE POLICY "tasks_select" ON tasks FOR SELECT TO authenticated
         USING (assigned_to = auth.uid() OR created_by = auth.uid() OR can_access_user(auth.uid(), assigned_to));
     END IF;
 
     -- tasks_insert
     IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'tasks' AND policyname = 'tasks_insert') THEN
-      CREATE POLICY "tasks_insert" ON tasks FOR INSERT TO authenticated
+      DROP POLICY IF EXISTS "tasks_insert" ON tasks; CREATE POLICY "tasks_insert" ON tasks FOR INSERT TO authenticated
         WITH CHECK (created_by = auth.uid());
     END IF;
 
     -- tasks_update
     IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'tasks' AND policyname = 'tasks_update') THEN
-      CREATE POLICY "tasks_update" ON tasks FOR UPDATE TO authenticated
+      DROP POLICY IF EXISTS "tasks_update" ON tasks; CREATE POLICY "tasks_update" ON tasks FOR UPDATE TO authenticated
         USING (assigned_to = auth.uid() OR created_by = auth.uid() OR can_access_user(auth.uid(), assigned_to))
         WITH CHECK (assigned_to = auth.uid() OR created_by = auth.uid() OR can_access_user(auth.uid(), assigned_to));
     END IF;
 
     -- tasks_delete
     IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'tasks' AND policyname = 'tasks_delete') THEN
-      CREATE POLICY "tasks_delete" ON tasks FOR DELETE TO authenticated
+      DROP POLICY IF EXISTS "tasks_delete" ON tasks; CREATE POLICY "tasks_delete" ON tasks FOR DELETE TO authenticated
         USING (created_by = auth.uid() OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('super_admin', 'dev_manager')));
     END IF;
   END IF;
@@ -126,12 +126,12 @@ END $$;
 
 -- FIX #SQL12: Update RLS Policies for clients to be more flexible for inserts
 DROP POLICY IF EXISTS "clients_insert" ON clients;
-CREATE POLICY "clients_insert" ON clients FOR INSERT 
+DROP POLICY IF EXISTS "clients_insert" ON clients; CREATE POLICY "clients_insert" ON clients FOR INSERT 
   TO authenticated 
   WITH CHECK (true); -- Allow all authenticated users to insert, select/update still restricted by hierarchy
 
 DROP POLICY IF EXISTS "clients_update" ON clients;
-CREATE POLICY "clients_update" ON clients FOR UPDATE
+DROP POLICY IF EXISTS "clients_update" ON clients; CREATE POLICY "clients_update" ON clients FOR UPDATE
   TO authenticated
   USING (can_access_user(auth.uid(), agent_id))
   WITH CHECK (can_access_user(auth.uid(), agent_id));

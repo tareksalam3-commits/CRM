@@ -12,7 +12,7 @@
 -- FIX 1: clients_insert — allow authenticated user to add a client
 --   either for themselves OR for any subordinate (existing behavior)
 DROP POLICY IF EXISTS "clients_insert" ON clients;
-CREATE POLICY "clients_insert" ON clients
+DROP POLICY IF EXISTS "clients_insert" ON clients; CREATE POLICY "clients_insert" ON clients
   FOR INSERT TO authenticated
   WITH CHECK (
     agent_id = auth.uid()                          -- self-assign
@@ -21,7 +21,7 @@ CREATE POLICY "clients_insert" ON clients
 
 -- FIX 2: clients_select — allow user to see all their own clients
 DROP POLICY IF EXISTS "clients_select" ON clients;
-CREATE POLICY "clients_select" ON clients
+DROP POLICY IF EXISTS "clients_select" ON clients; CREATE POLICY "clients_select" ON clients
   FOR SELECT TO authenticated
   USING (
     agent_id = auth.uid()
@@ -30,7 +30,7 @@ CREATE POLICY "clients_select" ON clients
 
 -- FIX 3: clients_update
 DROP POLICY IF EXISTS "clients_update" ON clients;
-CREATE POLICY "clients_update" ON clients
+DROP POLICY IF EXISTS "clients_update" ON clients; CREATE POLICY "clients_update" ON clients
   FOR UPDATE TO authenticated
   USING (
     agent_id = auth.uid()
@@ -43,7 +43,7 @@ CREATE POLICY "clients_update" ON clients
 
 -- FIX 4: clients_delete
 DROP POLICY IF EXISTS "clients_delete" ON clients;
-CREATE POLICY "clients_delete" ON clients
+DROP POLICY IF EXISTS "clients_delete" ON clients; CREATE POLICY "clients_delete" ON clients
   FOR DELETE TO authenticated
   USING (
     agent_id = auth.uid()
@@ -52,7 +52,7 @@ CREATE POLICY "clients_delete" ON clients
 
 -- FIX 5: policies_insert — same pattern: allow self-insert
 DROP POLICY IF EXISTS "policies_insert" ON policies;
-CREATE POLICY "policies_insert" ON policies
+DROP POLICY IF EXISTS "policies_insert" ON policies; CREATE POLICY "policies_insert" ON policies
   FOR INSERT TO authenticated
   WITH CHECK (
     agent_id = auth.uid()
@@ -63,7 +63,7 @@ CREATE POLICY "policies_insert" ON policies
 ALTER TABLE collections ADD COLUMN IF NOT EXISTS collected_by uuid REFERENCES profiles(id);
 
 DROP POLICY IF EXISTS "collections_insert" ON collections;
-CREATE POLICY "collections_insert" ON collections
+DROP POLICY IF EXISTS "collections_insert" ON collections; CREATE POLICY "collections_insert" ON collections
   FOR INSERT TO authenticated
   WITH CHECK (
     collected_by = auth.uid()
@@ -79,7 +79,7 @@ CREATE INDEX IF NOT EXISTS idx_clients_national_id ON clients(national_id);
 CREATE INDEX IF NOT EXISTS idx_clients_phone ON clients(phone);
 
 -- FIX 8: Ensure can_access_user returns true for self-access (idempotent)
-CREATE OR REPLACE FUNCTION can_access_user(accessor_uuid uuid, target_uuid uuid)
+DROP FUNCTION IF EXISTS can_access_user CASCADE; CREATE OR REPLACE FUNCTION can_access_user(accessor_uuid uuid, target_uuid uuid)
 RETURNS boolean
 LANGUAGE sql
 STABLE

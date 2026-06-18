@@ -13,7 +13,7 @@ CREATE INDEX IF NOT EXISTS idx_collections_collected_by ON collections(collected
 
 -- Update RLS policy for collections_insert to ensure collected_by is set correctly
 DROP POLICY IF EXISTS "collections_insert" ON collections;
-CREATE POLICY "collections_insert" ON collections FOR INSERT
+DROP POLICY IF EXISTS "collections_insert" ON collections; CREATE POLICY "collections_insert" ON collections FOR INSERT
   TO authenticated
   WITH CHECK (
     EXISTS (SELECT 1 FROM policies WHERE policies.id = policy_id AND can_access_user(auth.uid(), policies.agent_id))
@@ -25,17 +25,17 @@ ALTER TABLE collections ENABLE ROW LEVEL SECURITY;
 
 -- Verify all other RLS policies for collections are in place
 DROP POLICY IF EXISTS "collections_select" ON collections;
-CREATE POLICY "collections_select" ON collections FOR SELECT
+DROP POLICY IF EXISTS "collections_select" ON collections; CREATE POLICY "collections_select" ON collections FOR SELECT
   TO authenticated
   USING (EXISTS (SELECT 1 FROM policies WHERE policies.id = policy_id AND can_access_user(auth.uid(), policies.agent_id)));
 
 DROP POLICY IF EXISTS "collections_update" ON collections;
-CREATE POLICY "collections_update" ON collections FOR UPDATE
+DROP POLICY IF EXISTS "collections_update" ON collections; CREATE POLICY "collections_update" ON collections FOR UPDATE
   TO authenticated
   USING (EXISTS (SELECT 1 FROM policies WHERE policies.id = policy_id AND can_access_user(auth.uid(), policies.agent_id)))
   WITH CHECK (EXISTS (SELECT 1 FROM policies WHERE policies.id = policy_id AND can_access_user(auth.uid(), policies.agent_id)));
 
 DROP POLICY IF EXISTS "collections_delete" ON collections;
-CREATE POLICY "collections_delete" ON collections FOR DELETE
+DROP POLICY IF EXISTS "collections_delete" ON collections; CREATE POLICY "collections_delete" ON collections FOR DELETE
   TO authenticated
   USING (EXISTS (SELECT 1 FROM policies WHERE policies.id = policy_id AND can_access_user(auth.uid(), policies.agent_id)));
