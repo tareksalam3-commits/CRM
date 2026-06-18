@@ -127,7 +127,7 @@ export default function Dashboard() {
         .eq('period_number', now_date.getMonth() + 1);
 
       const totalTarget = targetData?.reduce((s: number, t: any) => s + Number(t.target_amount), 0) || 0;
-      const targetAchievement = totalTarget > 0 ? (monthlyNewBusiness / totalTarget) * 100 : 0;
+      const targetAchievement = totalTarget > 0 ? (monthlyCollections / totalTarget) * 100 : 0;
 
       const now = new Date().toISOString().split('T')[0];
       const thirtyDaysLater = new Date();
