@@ -53,6 +53,7 @@ export default function TargetManagement() {
   const [filterYear, setFilterYear] = useState(new Date().getFullYear());
   const [filterMonth, setFilterMonth] = useState<number | ''>('');
   const [filterRole, setFilterRole] = useState<'all' | 'agent' | 'manager'>('all');
+  const [refreshKey, setRefreshKey] = useState(0);
 
   // Form state for single target
   const [form, setForm] = useState({
@@ -78,85 +79,101 @@ export default function TargetManagement() {
   const canManage = profile ? canManageTargets(profile.role) : false;
 
   const loadData = useCallback(async () => {
-    setLoading(true);
+    try {
+      setLoading(true);
 
-    let profilesQuery = supabase.from('profiles').select('*').eq('is_active', true);
-    let targetsQuery = supabase.from('targets').select('*, user:profiles(full_name, role, branch_id)')
-      .eq('period_type', 'monthly')
-      .order('year', { ascending: false })
-      .order('period_number', { ascending: false });
+      // Fetch all profiles first
+      const { data: profilesData, error: profilesError } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('is_active', true);
 
-    if (profile && !['super_admin', 'dev_manager', 'general_supervisor'].includes(profile.role)) {
-      if (profile.branch_id) {
-        profilesQuery = profilesQuery.eq('branch_id', profile.branch_id);
-      }
+      if (profilesError) throw profilesError;
+      const profiles: Profile[] = profilesData || [];
+
+      // Fetch all targets without filters
+      const { data: allTargetsData, error: targetsError } = await supabase
+        .from('targets')
+        .select('*, user:profiles(full_name, role, branch_id)')
+        .eq('period_type', 'monthly')
+        .order('year', { ascending: false })
+        .order('period_number', { ascending: false });
+
+      if (targetsError) throw targetsError;
+      const allTargetsRaw = allTargetsData || [];
+
+      // Fetch policies for achievement calculation
+      const { data: policiesData, error: policiesError } = await supabase
+        .from('policies')
+        .select('agent_id, annual_premium, issue_date');
+
+      if (policiesError) throw policiesError;
+      const policies = policiesData || [];
+
+      // Apply client-side filters
+      const filtered = allTargetsRaw.filter(t => {
+        if (filterYear && t.year !== filterYear) return false;
+        if (filterMonth && t.period_number !== filterMonth) return false;
+        return true;
+      });
+
+      // Enrich targets with achievement data
+      const enriched: EnrichedTarget[] = filtered.map((t) => {
+        const userProfile = profiles.find(p => p.id === t.user_id);
+        const isAgent = userProfile?.role === 'agent';
+        const isManagerTarget = !isAgent;
+
+        let achieved = 0;
+
+        if (isAgent) {
+          const monthStart = `${t.year}-${String(t.period_number).padStart(2, '0')}-01`;
+          const nextMonth = t.period_number === 12 ? 1 : t.period_number + 1;
+          const nextYear = t.period_number === 12 ? t.year + 1 : t.year;
+          const monthEnd = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
+          
+          achieved = policies
+            .filter(p => p.agent_id === t.user_id && p.issue_date >= monthStart && p.issue_date < monthEnd)
+            .reduce((s, p) => s + Number(p.annual_premium), 0);
+        } else {
+          const subordinateIds = getSubordinateIds(t.user_id, profiles);
+          const monthStart = `${t.year}-${String(t.period_number).padStart(2, '0')}-01`;
+          const nextMonth = t.period_number === 12 ? 1 : t.period_number + 1;
+          const nextYear = t.period_number === 12 ? t.year + 1 : t.year;
+          const monthEnd = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
+          
+          achieved = policies
+            .filter(p => subordinateIds.includes(p.agent_id) && p.issue_date >= monthStart && p.issue_date < monthEnd)
+            .reduce((s, p) => s + Number(p.annual_premium), 0);
+        }
+
+        const subordinateCount = isManagerTarget ? getSubordinateIds(t.user_id, profiles).length : 0;
+
+        return {
+          ...t,
+          achieved,
+          isManagerTarget,
+          subordinateCount,
+        } as EnrichedTarget;
+      });
+
+      const finalTargets = filterRole === 'all' ? enriched
+        : filterRole === 'agent'
+          ? enriched.filter(t => !t.isManagerTarget)
+          : enriched.filter(t => t.isManagerTarget);
+
+      setTargets(finalTargets);
+      setAllProfiles(profiles);
+    } catch (error: any) {
+      console.error('Error loading targets:', error);
+      toast.error('خطأ في تحميل البيانات: ' + error.message);
+    } finally {
+      setLoading(false);
     }
+  }, [filterYear, filterMonth, filterRole]);
 
-    const [targetsRes, profilesRes, policiesRes] = await Promise.all([
-      targetsQuery,
-      profilesQuery,
-      supabase.from('policies').select('agent_id, annual_premium, issue_date'),
-    ]);
-
-    const profiles: Profile[] = profilesRes.data || [];
-    const policies = policiesRes.data || [];
-    const rawTargets = targetsRes.data || [];
-
-    const filtered = rawTargets.filter(t => {
-      if (filterYear && t.year !== filterYear) return false;
-      if (filterMonth && t.period_number !== filterMonth) return false;
-      return true;
-    });
-
-    const enriched: EnrichedTarget[] = filtered.map((t) => {
-      const userProfile = profiles.find(p => p.id === t.user_id);
-      const isAgent = userProfile?.role === 'agent';
-      const isManagerTarget = !isAgent;
-
-      let achieved = 0;
-
-      if (isAgent) {
-        const monthStart = `${t.year}-${String(t.period_number).padStart(2, '0')}-01`;
-        const nextMonth = t.period_number === 12 ? 1 : t.period_number + 1;
-        const nextYear = t.period_number === 12 ? t.year + 1 : t.year;
-        const monthEnd = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
-        
-        achieved = policies
-          .filter(p => p.agent_id === t.user_id && p.issue_date >= monthStart && p.issue_date < monthEnd)
-          .reduce((s, p) => s + Number(p.annual_premium), 0);
-      } else {
-        const subordinateIds = getSubordinateIds(t.user_id, profiles);
-        const monthStart = `${t.year}-${String(t.period_number).padStart(2, '0')}-01`;
-        const nextMonth = t.period_number === 12 ? 1 : t.period_number + 1;
-        const nextYear = t.period_number === 12 ? t.year + 1 : t.year;
-        const monthEnd = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
-        
-        achieved = policies
-          .filter(p => subordinateIds.includes(p.agent_id) && p.issue_date >= monthStart && p.issue_date < monthEnd)
-          .reduce((s, p) => s + Number(p.annual_premium), 0);
-      }
-
-      const subordinateCount = isManagerTarget ? getSubordinateIds(t.user_id, profiles).length : 0;
-
-      return {
-        ...t,
-        achieved,
-        isManagerTarget,
-        subordinateCount,
-      } as EnrichedTarget;
-    });
-
-    const finalTargets = filterRole === 'all' ? enriched
-      : filterRole === 'agent'
-        ? enriched.filter(t => !t.isManagerTarget)
-        : enriched.filter(t => t.isManagerTarget);
-
-    setTargets(finalTargets);
-    setAllProfiles(profiles);
-    setLoading(false);
-  }, [filterYear, filterMonth, filterRole, profile]);
-
-  useEffect(() => { loadData(); }, [loadData]);
+  useEffect(() => { 
+    loadData(); 
+  }, [loadData, refreshKey]);
 
   // ── Validate form data
   function validateForm(): boolean {
@@ -197,8 +214,10 @@ export default function TargetManagement() {
         toast.success('تم حفظ التارجت');
       }
       closeModal();
-      loadData();
+      // Force data refresh
+      setRefreshKey(prev => prev + 1);
     } catch (error: any) {
+      console.error('Error saving target:', error);
       toast.error('خطأ: ' + error.message);
     }
   }
@@ -229,8 +248,10 @@ export default function TargetManagement() {
       if (error) throw error;
       toast.success(`تم إضافة 12 تارجت شهري للسنة ${bulkForm.year}`);
       closeModal();
-      loadData();
+      // Force data refresh
+      setRefreshKey(prev => prev + 1);
     } catch (error: any) {
+      console.error('Error bulk adding targets:', error);
       toast.error('خطأ: ' + error.message);
     }
   }
@@ -266,8 +287,10 @@ export default function TargetManagement() {
       if (error) throw error;
       toast.success(`تم نسخ التارجتات من ${copyForm.source_year} إلى ${copyForm.target_year}`);
       closeModal();
-      loadData();
+      // Force data refresh
+      setRefreshKey(prev => prev + 1);
     } catch (error: any) {
+      console.error('Error copying year:', error);
       toast.error('خطأ: ' + error.message);
     }
   }
@@ -301,8 +324,10 @@ export default function TargetManagement() {
       if (error) throw error;
       toast.success(`تم إضافة تارجتات لـ ${allProfiles.length} موظف للسنة ${bulkForm.year}`);
       closeModal();
-      loadData();
+      // Force data refresh
+      setRefreshKey(prev => prev + 1);
     } catch (error: any) {
+      console.error('Error bulk adding for all users:', error);
       toast.error('خطأ: ' + error.message);
     }
   }
@@ -313,8 +338,10 @@ export default function TargetManagement() {
       const { error } = await supabase.from('targets').delete().eq('id', id);
       if (error) throw error;
       toast.success('تم حذف التارجت');
-      loadData();
+      // Force data refresh
+      setRefreshKey(prev => prev + 1);
     } catch (error: any) {
+      console.error('Error deleting target:', error);
       toast.error('خطأ: ' + error.message);
     }
   }
