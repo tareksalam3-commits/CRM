@@ -605,7 +605,7 @@ export default function TargetManagement() {
 
               <div className="bg-emerald-50 dark:bg-emerald-900/20 rounded-xl p-3 text-sm text-emerald-700 dark:text-emerald-300">
                 <p className="font-medium mb-1">سيتم إنشاء:</p>
-                <p>12 تارجت شهري × {bulkForm.monthly_amount || '0'} ريال = {Number(bulkForm.monthly_amount || 0) * 12} ريال سنوياً</p>
+                <p>12 تارجت شهري × {bulkForm.monthly_amount || '0'} جنيه = {Number(bulkForm.monthly_amount || 0) * 12} جنيه سنوياً</p>
               </div>
 
               <div className="flex gap-3 pt-2">
