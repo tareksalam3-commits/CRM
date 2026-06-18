@@ -8,23 +8,6 @@ Adds hierarchical access control functions and RLS policies for all tables.
 */
 
 -- Helper function to get all subordinate user IDs recursively
-DROP FUNCTION IF EXISTS get_subordinate_ids CASCADE; CREATE OR REPLACE FUNCTION get_subordinate_ids(manager_uuid uuid)
-RETURNS SETOF uuid
-LANGUAGE sql
-STABLE
-SECURITY DEFINER
-AS $$
-BEGIN
-  RETURN QUERY
-  WITH RECURSIVE subordinates AS (
-    SELECT id FROM profiles WHERE manager_id = manager_uuid AND is_active = true
-    UNION ALL
-    SELECT p.id FROM profiles p
-    INNER JOIN subordinates s ON p.manager_id = s.id
-    WHERE p.is_active = true
-  )
-  SELECT id FROM subordinates;
-$$;
 
 -- Helper function to check if user can access target user's data
 DROP FUNCTION IF EXISTS can_access_user CASCADE; CREATE OR REPLACE FUNCTION can_access_user(accessor_uuid uuid, target_uuid uuid)

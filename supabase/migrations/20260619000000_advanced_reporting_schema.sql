@@ -190,3 +190,23 @@ BEGIN
     AND due_date < now()::date;
 END;
 $$;
+
+-- Final fix for get_subordinate_ids
+DROP FUNCTION IF EXISTS get_subordinate_ids(uuid) CASCADE;
+CREATE OR REPLACE FUNCTION get_subordinate_ids(manager_id uuid)
+RETURNS TABLE(id uuid)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+AS $$
+BEGIN
+  RETURN QUERY
+  WITH RECURSIVE subordinates AS (
+    SELECT p.id FROM public.profiles p WHERE p.manager_id = $1
+    UNION ALL
+    SELECT p.id FROM public.profiles p
+    INNER JOIN subordinates s ON p.manager_id = s.id
+  )
+  SELECT s.id FROM subordinates s;
+END;
+$$;

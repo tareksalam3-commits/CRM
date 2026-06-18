@@ -78,22 +78,6 @@ DROP POLICY IF EXISTS "profiles_insert" ON profiles; CREATE POLICY "profiles_ins
 -- (These are already correct in previous migration, no change needed)
 
 -- 8. Rebuild get_subordinate_ids to include inactive users for admin viewing
-DROP FUNCTION IF EXISTS get_subordinate_ids CASCADE; CREATE OR REPLACE FUNCTION get_subordinate_ids(manager_uuid uuid)
-RETURNS SETOF uuid
-LANGUAGE sql
-STABLE
-SECURITY DEFINER
-AS $$
-BEGIN
-  RETURN QUERY
-  WITH RECURSIVE subordinates AS (
-    SELECT id FROM profiles WHERE manager_id = manager_uuid
-    UNION ALL
-    SELECT p.id FROM profiles p
-    INNER JOIN subordinates s ON p.manager_id = s.id
-  )
-  SELECT id FROM subordinates;
-$$;
 
 -- 9. Add helper: get all manager ids in chain above a user
 DROP FUNCTION IF EXISTS get_manager_chain CASCADE; CREATE OR REPLACE FUNCTION get_manager_chain(user_uuid uuid)

@@ -101,19 +101,3 @@ CREATE INDEX IF NOT EXISTS idx_installments_status_date ON installments(status, 
 -- Add trigger for marking installments as overdue automatically
 
 -- Function to get subordinate IDs (used in RLS)
-DROP FUNCTION IF EXISTS get_subordinate_ids CASCADE; CREATE OR REPLACE FUNCTION get_subordinate_ids(manager_id uuid)
-RETURNS TABLE(id uuid)
-LANGUAGE plpgsql
-STABLE
-SECURITY DEFINER
-AS $$
-BEGIN
-  
-WITH RECURSIVE subordinates AS (
-  SELECT id FROM profiles WHERE manager_id = $1
-  UNION ALL
-  SELECT p.id FROM profiles p
-  INNER JOIN subordinates s ON p.manager_id = s.id
-)
-SELECT id FROM subordinates;
-$$;
