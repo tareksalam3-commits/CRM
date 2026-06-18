@@ -126,7 +126,7 @@ RETURNS TABLE (
   collection_rate numeric
 ) AS $$
 BEGIN
-  RETURN QUERY
+  
   SELECT
     COALESCE(SUM(CASE WHEN p.created_at::date >= make_date(p_year, p_month, 1) 
                       AND p.created_at::date < make_date(p_year, p_month, 1) + INTERVAL '1 month'
