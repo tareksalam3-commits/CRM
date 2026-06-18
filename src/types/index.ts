@@ -10,7 +10,8 @@ export type UserRole =
   | 'general_supervisor'
   | 'supervisor'
   | 'team_leader'
-  | 'branch_manager' | 'agent';
+  | 'branch_manager'
+  | 'agent';
 
 export type PolicyStatus = 'under_issuance' | 'active' | 'suspended' | 'cancelled' | 'rejected';
 export type PaymentFrequency = 'monthly' | 'quarterly' | 'semi_annual' | 'annual';
@@ -26,6 +27,7 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   general_supervisor: 'مراقب عام',
   supervisor: 'مراقب',
   team_leader: 'قائد فريق',
+  branch_manager: 'مدير فرع',
   agent: 'وكيل',
 };
 
@@ -35,10 +37,11 @@ export const ROLE_LEVELS: Record<UserRole, number> = {
   general_supervisor: 2,
   supervisor: 3,
   team_leader: 4,
+  branch_manager: 4,
   agent: 5,
 };
 
-export const MANAGER_ROLES: UserRole[] = ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'team_leader'];
+export const MANAGER_ROLES: UserRole[] = ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager', 'team_leader'];
 
 export const POLICY_STATUS_LABELS: Record<PolicyStatus, string> = {
   under_issuance: 'تحت الإصدار',
@@ -96,6 +99,7 @@ export interface Profile {
   phone: string | null;
   role: UserRole;
   manager_id: string | null;
+  branch_id: string | null;
   is_active: boolean;
   created_at: string;
   updated_at: string;
