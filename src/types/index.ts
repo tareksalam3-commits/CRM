@@ -6,7 +6,6 @@
 
 export type UserRole =
   | 'super_admin'
-  | 'branch_manager'
   | 'dev_manager'
   | 'general_supervisor'
   | 'supervisor'
@@ -23,25 +22,23 @@ export type TargetPeriod = 'monthly' | 'quarterly' | 'semi_annual' | 'annual';
 
 export const ROLE_LABELS: Record<UserRole, string> = {
   super_admin: 'مسؤول النظام',
-  branch_manager: 'مدير فرع',
   dev_manager: 'مدير التطوير',
   general_supervisor: 'مشرف عام',
   supervisor: 'مشرف',
-  team_leader: 'قائد مجموعة',
+  team_leader: 'قائد فريق',
   agent: 'وكيل',
 };
 
 export const ROLE_LEVELS: Record<UserRole, number> = {
   super_admin: 0,
-  branch_manager: 1,
-  dev_manager: 2,
-  general_supervisor: 3,
-  supervisor: 4,
-  team_leader: 5,
-  agent: 6,
+  dev_manager: 1,
+  general_supervisor: 2,
+  supervisor: 3,
+  team_leader: 4,
+  agent: 5,
 };
 
-export const MANAGER_ROLES: UserRole[] = ['super_admin', 'branch_manager', 'dev_manager', 'general_supervisor', 'supervisor', 'team_leader'];
+export const MANAGER_ROLES: UserRole[] = ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'team_leader'];
 
 export const POLICY_STATUS_LABELS: Record<PolicyStatus, string> = {
   under_issuance: 'تحت الإصدار',
