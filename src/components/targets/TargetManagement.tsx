@@ -6,7 +6,7 @@ import { canManageTargets } from '../../lib/rbac';
 import { formatCurrency } from '../../lib/utils';
 import PageHeader from '../common/PageHeader';
 import LoadingSpinner from '../common/LoadingSpinner';
-import { Target, Plus, X, TrendingUp, TrendingDown, Edit2, Trash2, Users, User, Copy, Zap } from 'lucide-react';
+import { Target, Plus, X, Edit2, Trash2, Users, User, Copy, Zap } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const MONTHS = [
@@ -36,7 +36,6 @@ function getSubordinateIds(userId: string, allProfiles: Profile[]): string[] {
 
 interface EnrichedTarget extends Omit<TargetType, 'user'> {
   user?: { full_name: string; role: string };
-  achieved: number;
   isManagerTarget: boolean;
   subordinateCount: number;
 }
@@ -91,7 +90,7 @@ export default function TargetManagement() {
       if (profilesError) throw profilesError;
       const profiles: Profile[] = profilesData || [];
 
-      // Fetch targets
+      // Fetch targets only (no achievement calculation)
       const { data: allTargetsData, error: targetsError } = await supabase
         .from('targets')
         .select('*, user:profiles(full_name, role)')
@@ -102,14 +101,6 @@ export default function TargetManagement() {
       if (targetsError) throw targetsError;
       const allTargetsRaw = allTargetsData || [];
 
-      // Fetch policies for achievement calculation
-      const { data: policiesData, error: policiesError } = await supabase
-        .from('policies')
-        .select('agent_id, annual_premium, issue_date');
-
-      if (policiesError) throw policiesError;
-      const policies = policiesData || [];
-
       // Apply client-side filters
       const filtered = allTargetsRaw.filter(t => {
         if (filterYear && t.year !== filterYear) return false;
@@ -117,40 +108,15 @@ export default function TargetManagement() {
         return true;
       });
 
-      // Enrich targets with achievement data
+      // Enrich targets with basic info only
       const enriched: EnrichedTarget[] = filtered.map((t) => {
         const userProfile = profiles.find(p => p.id === t.user_id);
         const isAgent = userProfile?.role === 'agent';
         const isManagerTarget = !isAgent;
-
-        let achieved = 0;
-
-        if (isAgent) {
-          const monthStart = `${t.year}-${String(t.period_number).padStart(2, '0')}-01`;
-          const nextMonth = t.period_number === 12 ? 1 : t.period_number + 1;
-          const nextYear = t.period_number === 12 ? t.year + 1 : t.year;
-          const monthEnd = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
-          
-          achieved = policies
-            .filter(p => p.agent_id === t.user_id && p.issue_date >= monthStart && p.issue_date < monthEnd)
-            .reduce((s, p) => s + Number(p.annual_premium), 0);
-        } else {
-          const subordinateIds = getSubordinateIds(t.user_id, profiles);
-          const monthStart = `${t.year}-${String(t.period_number).padStart(2, '0')}-01`;
-          const nextMonth = t.period_number === 12 ? 1 : t.period_number + 1;
-          const nextYear = t.period_number === 12 ? t.year + 1 : t.year;
-          const monthEnd = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
-          
-          achieved = policies
-            .filter(p => subordinateIds.includes(p.agent_id) && p.issue_date >= monthStart && p.issue_date < monthEnd)
-            .reduce((s, p) => s + Number(p.annual_premium), 0);
-        }
-
         const subordinateCount = isManagerTarget ? getSubordinateIds(t.user_id, profiles).length : 0;
 
         return {
           ...t,
-          achieved,
           isManagerTarget,
           subordinateCount,
         } as EnrichedTarget;
@@ -366,10 +332,6 @@ export default function TargetManagement() {
     setModalMode('edit');
   }
 
-  const totalTarget = targets.reduce((s, t) => s + t.target_amount, 0);
-  const totalAchieved = targets.reduce((s, t) => s + t.achieved, 0);
-  const overallPct = totalTarget > 0 ? (totalAchieved / totalTarget) * 100 : 0;
-
   if (loading) return <LoadingSpinner />;
 
   const agentUsers = allProfiles.filter(p => p.role === 'agent');
@@ -399,23 +361,6 @@ export default function TargetManagement() {
         ) : undefined}
       />
 
-      {/* KPIs */}
-      <div className="grid grid-cols-3 gap-3 mb-5">
-        {[
-          { label: 'إجمالي التارجت', value: formatCurrency(totalTarget), icon: Target, color: 'text-blue-600' },
-          { label: 'إجمالي المحقق', value: formatCurrency(totalAchieved), icon: TrendingUp, color: 'text-emerald-600' },
-          { label: 'نسبة الإنجاز', value: `${overallPct.toFixed(1)}%`, icon: overallPct >= 80 ? TrendingUp : TrendingDown, color: overallPct >= 80 ? 'text-emerald-600' : 'text-red-600' },
-        ].map((k, i) => (
-          <div key={i} className="bg-white dark:bg-slate-800 rounded-2xl p-4 border border-slate-100 dark:border-slate-700">
-            <div className={`w-8 h-8 rounded-lg bg-slate-50 dark:bg-slate-700 flex items-center justify-center mb-2 ${k.color}`}>
-              <k.icon className="w-4 h-4" />
-            </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400">{k.label}</p>
-            <p className="font-bold text-slate-900 dark:text-white text-sm mt-0.5">{k.value}</p>
-          </div>
-        ))}
-      </div>
-
       {/* Filters */}
       <div className="flex gap-2 mb-4 flex-wrap">
         <select value={filterYear} onChange={e => setFilterYear(Number(e.target.value))}
@@ -444,7 +389,6 @@ export default function TargetManagement() {
       {/* Targets List */}
       <div className="space-y-3">
         {targets.map(t => {
-          const pct = t.target_amount > 0 ? Math.min((t.achieved / t.target_amount) * 100, 100) : 0;
           const userObj = t.user as { full_name: string; role: string } | undefined;
           const monthName = MONTHS.find(m => m.num === t.period_number)?.name || '';
           return (
@@ -475,30 +419,11 @@ export default function TargetManagement() {
                 )}
               </div>
 
-              <div className="flex items-center justify-between text-sm mb-2">
+              <div className="flex items-center justify-between text-sm">
                 <span className="text-slate-500 dark:text-slate-400">
-                  التارجت: <span className="font-semibold text-slate-900 dark:text-white">{formatCurrency(t.target_amount)}</span>
-                </span>
-                <span className="text-slate-500 dark:text-slate-400">
-                  المحقق: <span className={`font-semibold ${t.achieved >= t.target_amount ? 'text-emerald-600' : 'text-slate-900 dark:text-white'}`}>{formatCurrency(t.achieved)}</span>
-                </span>
-                <span className={`font-bold text-sm ${pct >= 100 ? 'text-emerald-600' : pct >= 70 ? 'text-amber-600' : 'text-red-500'}`}>
-                  {pct.toFixed(1)}%
+                  التارجت الشهري: <span className="font-semibold text-slate-900 dark:text-white">{formatCurrency(t.target_amount)}</span>
                 </span>
               </div>
-
-              <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-2">
-                <div
-                  className={`h-2 rounded-full transition-all ${pct >= 100 ? 'bg-emerald-500' : pct >= 70 ? 'bg-amber-500' : 'bg-red-500'}`}
-                  style={{ width: `${pct}%` }}
-                />
-              </div>
-
-              {t.isManagerTarget && (
-                <p className="text-xs text-slate-400 dark:text-slate-500 mt-2">
-                  * التحقيق يشمل إنتاج جميع الموظفين التابعين له
-                </p>
-              )}
             </div>
           );
         })}
