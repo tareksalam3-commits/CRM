@@ -245,7 +245,7 @@ export default function Dashboard() {
                   <Cell key={`cell-${index}`} fill={entry.color} />
                 ))}
               </Pie>
-              <Tooltip formatter={(value: string | number) => formatNumber(Number(value || 0))} />
+              <Tooltip formatter={(value: any) => formatNumber(Number(value || 0))} />
             </PieChart>
           </ResponsiveContainer>
         </div>
