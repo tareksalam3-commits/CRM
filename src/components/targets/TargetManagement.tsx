@@ -94,7 +94,7 @@ export default function TargetManagement() {
       // Fetch targets
       const { data: allTargetsData, error: targetsError } = await supabase
         .from('targets')
-        .select('*, user:profiles(full_name, role, branch_id)')
+        .select('*, user:profiles(full_name, role)')
         .eq('period_type', 'monthly')
         .order('year', { ascending: false })
         .order('period_number', { ascending: false });
