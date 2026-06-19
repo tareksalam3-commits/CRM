@@ -75,37 +75,64 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setProfile(profileData);
       }
 
-      // Fetch user branch access
+      // Fetch user branch access with proper filtering
       const { data: accessData, error: accessError } = await supabase
         .from('user_branch_access')
-        .select('*, branch:branches(*)')
+        .select('id, user_id, branch_id, role, is_active, assigned_at, expires_at, updated_at, branch:branches(id, name, code, is_active, created_at, updated_at)')
         .eq('user_id', userId)
         .eq('is_active', true);
 
       if (accessError) {
         console.error('Error fetching branch access:', accessError);
-      } else if (accessData && accessData.length > 0) {
-        // Extract branches from access data
-        const branches = accessData
-          .map(access => (access.branch as any))
-          .filter(branch => branch && branch.is_active);
+        setLoading(false);
+        return;
+      }
+
+      if (!accessData || accessData.length === 0) {
+        console.warn('No branch access found for user:', userId);
+        setAccessibleBranches([]);
+        setActiveBranchState(null);
+        setActiveBranchAccess(null);
+        setLoading(false);
+        return;
+      }
+
+      // Extract branches from access data
+      const branches = accessData
+        .map(access => (access.branch as any))
+        .filter(branch => branch && branch.is_active);
+      
+      if (branches.length === 0) {
+        console.warn('No active branches found for user:', userId);
+        setAccessibleBranches([]);
+        setActiveBranchState(null);
+        setActiveBranchAccess(null);
+        setLoading(false);
+        return;
+      }
+
+      setAccessibleBranches(branches);
+
+      // Set active branch from localStorage or use the first one
+      const savedBranchId = localStorage.getItem(`activeBranch_${userId}`);
+      let activeBranchData = null;
+
+      if (savedBranchId) {
+        activeBranchData = branches.find(b => b.id === savedBranchId);
+      }
+
+      // Fallback to first branch if saved one not found
+      if (!activeBranchData) {
+        activeBranchData = branches[0];
+      }
+
+      if (activeBranchData) {
+        setActiveBranchState(activeBranchData);
         
-        setAccessibleBranches(branches);
-
-        // Set active branch from localStorage or use the first one
-        const savedBranchId = localStorage.getItem(`activeBranch_${userId}`);
-        const activeBranchData = savedBranchId
-          ? branches.find(b => b.id === savedBranchId)
-          : branches[0];
-
-        if (activeBranchData) {
-          setActiveBranchState(activeBranchData);
-          
-          // Find the access record for the active branch
-          const access = accessData.find(a => a.branch_id === activeBranchData.id);
-          if (access) {
-            setActiveBranchAccess(access as UserBranchAccess);
-          }
+        // Find the access record for the active branch
+        const access = accessData.find(a => a.branch_id === activeBranchData.id);
+        if (access) {
+          setActiveBranchAccess(access as UserBranchAccess);
         }
       }
     } catch (err) {
@@ -117,7 +144,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Auto-update overdue installments on login
     try {
       await supabase.rpc('mark_overdue_installments');
-    } catch {
+    } catch (err) {
+      console.error('Error marking overdue installments:', err);
       // Non-critical, silently ignore
     }
   }
@@ -128,14 +156,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.setItem(`activeBranch_${user.id}`, branch.id);
 
       // Fetch the access record for this branch
-      const { data: accessData } = await supabase
+      const { data: accessData, error } = await supabase
         .from('user_branch_access')
         .select('*')
         .eq('user_id', user.id)
         .eq('branch_id', branch.id)
+        .eq('is_active', true)
         .maybeSingle();
 
-      if (accessData) {
+      if (error) {
+        console.error('Error fetching branch access:', error);
+      } else if (accessData) {
         setActiveBranchAccess(accessData as UserBranchAccess);
       }
     } else {

@@ -32,7 +32,8 @@ function PageLoader() {
 }
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { session, loading, activeBranch } = useAuth();
+  const { session, loading, activeBranch, accessibleBranches } = useAuth();
+  
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-900">
@@ -40,13 +41,22 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
       </div>
     );
   }
-  if (!session) return <Navigate to="/login" replace />;
-  if (!activeBranch) return <Navigate to="/login" replace />;
+  
+  if (!session) {
+    return <Navigate to="/login" replace />;
+  }
+  
+  // If user has no accessible branches, redirect to login
+  if (!activeBranch || accessibleBranches.length === 0) {
+    return <Navigate to="/login" replace />;
+  }
+  
   return <>{children}</>;
 }
 
 function PermissionGuard({ path, children }: { path: string; children: React.ReactNode }) {
   const { activeBranchAccess, loading } = useAuth();
+  
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[50vh]">
@@ -59,11 +69,13 @@ function PermissionGuard({ path, children }: { path: string; children: React.Rea
   if (!effectiveRole || !canAccessPage(effectiveRole, path)) {
     return <Navigate to="/" replace />;
   }
+  
   return <>{children}</>;
 }
 
 function AppRoutes() {
   const { session, loading } = useAuth();
+  
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-900" dir="rtl">
