@@ -1,8 +1,10 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import { useAuth } from '../../contexts/AuthContext';
+import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
-import { formatCurrency, formatPercent, formatNumber } from '../../lib/utils';
-import { POLICY_STATUS_LABELS } from '../../types';
+import { useAuth } from '../../contexts/AuthContext';
+import {
+  formatCurrency, formatPercent, formatNumber,
+} from '../../lib/utils';
+import { POLICY_STATUS_LABELS, UserRole } from '../../types';
 import PageHeader from '../common/PageHeader';
 import LoadingSpinner from '../common/LoadingSpinner';
 import {
@@ -28,19 +30,23 @@ interface DashboardStats {
   collectionRate: number;
   topAgents: { name: string; production: number }[];
   bottomAgents: { name: string; production: number }[];
+  topTeamLeaders: { name: string; production: number }[];
+  topGroups: { name: string; production: number }[];
   policyStatusDist: { name: string; value: number; color: string }[];
   targetAchievement: number;
   monthlyNewBusiness: number;
   monthlyCollections: number;
   monthlyTotal: number;
+  monthlyTarget: number;
   error?: string;
 }
 
 const INITIAL_STATS: DashboardStats = {
   totalNewBusiness: 0, totalCollections: 0, totalProduction: 0, totalDue: 0, totalOverdue: 0,
   clientCount: 0, policyCount: 0, activePolicyCount: 0, expiringPoliciesCount: 0,
-  userCount: 0, collectionRate: 0, topAgents: [], bottomAgents: [], policyStatusDist: [],
-  targetAchievement: 0, monthlyNewBusiness: 0, monthlyCollections: 0, monthlyTotal: 0,
+  userCount: 0, collectionRate: 0, topAgents: [], bottomAgents: [], topTeamLeaders: [], topGroups: [],
+  policyStatusDist: [], targetAchievement: 0, monthlyNewBusiness: 0, monthlyCollections: 0, monthlyTotal: 0,
+  monthlyTarget: 0,
 };
 
 const POLICY_COLORS: Record<string, string> = {
@@ -60,99 +66,114 @@ export default function Dashboard() {
   const fetchStats = useCallback(async () => {
     setLoading(true);
     try {
-      // Use active branch for filtering
-      let branchFilter: string[] = [];
-      if (activeBranch) {
-        branchFilter = [activeBranch.id];
+      // Get active branch ID for filtering
+      const branchId = activeBranch?.id;
+      if (!branchId && profile?.role !== 'super_admin') {
+        throw new Error('لم يتم تحديد فرع نشط');
       }
 
-      // Apply RLS implicitly, but we can also add explicit filters if needed
-      let policiesQuery = supabase.from('policies').select('annual_premium, status, created_at, branch_id');
+      const now_date = new Date();
+      const monthStart = new Date(now_date.getFullYear(), now_date.getMonth(), 1).toISOString().split('T')[0];
+      const monthEnd = new Date(now_date.getFullYear(), now_date.getMonth() + 1, 0).toISOString().split('T')[0];
+
+      // Build queries with branch filter
+      let policiesQuery = supabase.from('policies').select('annual_premium, status, created_at, branch_id, first_year_end');
       let clientsQuery = supabase.from('clients').select('id, branch_id', { count: 'exact', head: true });
-      let collectionsQuery = supabase.from('collections').select('amount, created_at, is_new_business, branch_id');
-      let usersQuery = supabase.from('profiles').select('id', { count: 'exact', head: true });
-      let installmentsQuery = supabase.from('installments').select('amount, status, due_date, policy:policies!inner(agent_id, branch_id)');
-
-      // Apply branch filters
-      if (branchFilter.length > 0) {
-        policiesQuery = policiesQuery.in('branch_id', branchFilter);
-        clientsQuery = clientsQuery.in('branch_id', branchFilter);
-        collectionsQuery = collectionsQuery.in('branch_id', branchFilter);
-      }
-
-      // Build unified metrics query with branch filter
       let unifiedMetricsQuery = supabase.from('unified_performance_metrics').select('*');
-      if (branchFilter.length > 0) {
-        unifiedMetricsQuery = unifiedMetricsQuery.in('branch_id', branchFilter);
+      let installmentsQuery = supabase.from('installments').select('amount, status, due_date, policy:policies!inner(agent_id, branch_id, first_year_end, team_leader_id)');
+      let usersQuery = supabase.from('profiles').select('id', { count: 'exact', head: true });
+      let targetsQuery = supabase.from('targets').select('target_amount, branch_id, user_id').eq('period_type', 'monthly').eq('year', now_date.getFullYear()).eq('period_number', now_date.getMonth() + 1);
+
+      // Apply branch filter if not super admin
+      if (branchId) {
+        policiesQuery = policiesQuery.eq('branch_id', branchId);
+        clientsQuery = clientsQuery.eq('branch_id', branchId);
+        unifiedMetricsQuery = unifiedMetricsQuery.eq('branch_id', branchId);
+        targetsQuery = targetsQuery.eq('branch_id', branchId);
       }
 
-      const [policiesRes, clientsRes, collectionsRes, usersRes, installmentsRes, unifiedMetricsRes] = await Promise.all([
+      const [policiesRes, clientsRes, unifiedMetricsRes, installmentsRes, usersRes, targetsRes] = await Promise.all([
         policiesQuery,
         clientsQuery,
-        collectionsQuery,
-        usersQuery,
+        unifiedMetricsQuery,
         installmentsQuery,
-        unifiedMetricsQuery
+        usersQuery,
+        targetsQuery
       ]);
 
       if (policiesRes.error) throw new Error(policiesRes.error.message);
-      if (collectionsRes.error) throw new Error(collectionsRes.error.message);
-      if (installmentsRes.error) throw new Error(installmentsRes.error.message);
       if (unifiedMetricsRes.error) throw new Error(unifiedMetricsRes.error.message);
+      if (installmentsRes.error) throw new Error(installmentsRes.error.message);
 
       const policies = policiesRes.data || [];
       const installments = installmentsRes.data || [];
       const unifiedMetrics = unifiedMetricsRes.data || [];
+      const targets = targetsRes.data || [];
 
-      // Unified Logic: All-time metrics (filtered by branch if applicable)
+      // ================================================================
+      // Calculate Metrics from Unified Performance Metrics
+      // ================================================================
+
+      // 1. Total New Business (all time, first installments only)
       const totalNewBusiness = unifiedMetrics
         .filter((m: any) => m.is_new_business)
         .reduce((s, m: any) => s + Number(m.amount), 0);
-      
+
+      // 2. Total Collections (all time, subsequent installments in first year only)
       const totalCollections = unifiedMetrics
         .filter((m: any) => !m.is_new_business && m.is_first_year_collection)
         .reduce((s, m: any) => s + Number(m.amount), 0);
-      
+
+      // 3. Total Production = New Business + Collections
       const totalProduction = totalNewBusiness + totalCollections;
 
-      // Total due in first year for collection rate
-      const totalDueInFirstYear = installments.filter((i: any) => {
-        const policy = i.policy as any;
-        return policy?.first_year_end ? i.due_date <= policy.first_year_end : true;
-      }).reduce((s, i: { amount: number }) => s + Number(i.amount), 0);
-
-      // Calculate monthly metrics
-      const now_date = new Date();
-      const monthStart = new Date(now_date.getFullYear(), now_date.getMonth(), 1).toISOString().split('T')[0];
-      const monthEnd = new Date(now_date.getFullYear(), now_date.getMonth() + 1, 0).toISOString().split('T')[0];
-      
+      // 4. Monthly New Business (this month)
       const monthlyNewBusiness = unifiedMetrics
         .filter((m: any) => m.is_new_business && m.collection_date >= monthStart && m.collection_date <= monthEnd)
         .reduce((s, m: any) => s + Number(m.amount), 0);
-      
+
+      // 5. Monthly Collections (this month, first year only)
       const monthlyCollections = unifiedMetrics
         .filter((m: any) => !m.is_new_business && m.is_first_year_collection && m.collection_date >= monthStart && m.collection_date <= monthEnd)
         .reduce((s, m: any) => s + Number(m.amount), 0);
-      
+
       const monthlyTotal = monthlyNewBusiness + monthlyCollections;
 
-      // Get top and bottom agents by branch
+      // 6. Collection Rate Calculation
+      // المحصل فعلياً خلال الشهر ÷ المستحق خلال نفس الشهر × 100
+      const monthlyDue = installments.filter((i: any) => {
+        const policy = i.policy as any;
+        return policy?.first_year_end && i.due_date >= monthStart && i.due_date <= monthEnd && i.due_date <= policy.first_year_end;
+      }).reduce((s, i: any) => s + Number(i.amount), 0);
+
+      const collectionRate = monthlyDue > 0 ? (monthlyCollections / monthlyDue) * 100 : 0;
+
+      // 7. Monthly Target Achievement
+      const totalTarget = targets?.reduce((s: number, t: any) => s + Number(t.target_amount), 0) || 0;
+      const targetAchievement = totalTarget > 0 ? (monthlyTotal / totalTarget) * 100 : 0;
+
+      // ================================================================
+      // Calculate Top/Bottom Performers (Agents only, excluding managers)
+      // ================================================================
       let agentsQuery = supabase
         .from('profiles')
-        .select('id, full_name')
-        .limit(100);
-      
-      // If there's an active branch, filter agents by that branch
-      if (activeBranch) {
-        agentsQuery = agentsQuery.eq('active_branch_id', activeBranch.id);
+        .select('id, full_name, role')
+        .eq('is_active', true);
+
+      // Filter by branch if not super admin
+      if (branchId) {
+        agentsQuery = agentsQuery.eq('branch_id', branchId);
       }
-      
+
       const { data: agentsData } = await agentsQuery;
 
-      const agentStats = (agentsData || []).map((agent: any) => {
-        const agentMetrics = unifiedMetrics.filter((m: any) => 
-          m.agent_id === agent.id && 
-          m.collection_date >= monthStart && 
+      // Filter to only agents (not managers, supervisors, etc.)
+      const agents = (agentsData || []).filter((a: any) => a.role === 'agent');
+
+      const agentStats = agents.map((agent: any) => {
+        const agentMetrics = unifiedMetrics.filter((m: any) =>
+          m.agent_id === agent.id &&
+          m.collection_date >= monthStart &&
           m.collection_date <= monthEnd &&
           (m.is_new_business || m.is_first_year_collection)
         );
@@ -164,47 +185,78 @@ export default function Dashboard() {
       const topAgents = sortedAgents.slice(0, 5);
       const bottomAgents = sortedAgents.slice(-5).reverse();
 
-      // Calculate target achievement
-      let targetQuery = supabase
-        .from('targets')
-        .select('target_amount, branch_id')
-        .eq('period_type', 'monthly')
-        .eq('year', now_date.getFullYear())
-        .eq('period_number', now_date.getMonth() + 1);
-      
-      // Filter targets by active branch
-      if (branchFilter.length > 0) {
-        targetQuery = targetQuery.in('branch_id', branchFilter);
+      // ================================================================
+      // Top Team Leaders
+      // ================================================================
+      let teamLeadersQuery = supabase
+        .from('profiles')
+        .select('id, full_name, role')
+        .eq('is_active', true)
+        .eq('role', 'team_leader');
+
+      if (branchId) {
+        teamLeadersQuery = teamLeadersQuery.eq('branch_id', branchId);
       }
-      
-      const { data: targetData } = await targetQuery;
 
-      const totalTarget = targetData?.reduce((s: number, t: any) => s + Number(t.target_amount), 0) || 0;
-      const targetAchievement = totalTarget > 0 ? (monthlyCollections / totalTarget) * 100 : 0;
+      const { data: teamLeadersData } = await teamLeadersQuery;
 
+      const teamLeaderStats = (teamLeadersData || []).map((tl: any) => {
+        const tlMetrics = unifiedMetrics.filter((m: any) =>
+          m.team_leader_id === tl.id &&
+          m.collection_date >= monthStart &&
+          m.collection_date <= monthEnd &&
+          (m.is_new_business || m.is_first_year_collection)
+        );
+        const production = tlMetrics.reduce((s, m: any) => s + Number(m.amount), 0);
+        return { name: tl.full_name, production };
+      });
+
+      const topTeamLeaders = teamLeaderStats.sort((a, b) => b.production - a.production).slice(0, 5);
+
+      // ================================================================
+      // Top Groups (by team leader)
+      // ================================================================
+      const groupStats: Record<string, number> = {};
+      unifiedMetrics.forEach((m: any) => {
+        if (m.collection_date >= monthStart && m.collection_date <= monthEnd && (m.is_new_business || m.is_first_year_collection)) {
+          const tlId = m.team_leader_id || 'unknown';
+          groupStats[tlId] = (groupStats[tlId] || 0) + Number(m.amount);
+        }
+      });
+
+      const topGroups = Object.entries(groupStats)
+        .map(([tlId, production]) => {
+          const tlName = teamLeadersData?.find((tl: any) => tl.id === tlId)?.full_name || 'مجموعة غير معروفة';
+          return { name: tlName, production };
+        })
+        .sort((a, b) => b.production - a.production)
+        .slice(0, 5);
+
+      // ================================================================
+      // Policy Status Distribution
+      // ================================================================
+      const policyStatusDist = Object.entries(POLICY_COLORS).map(([status, color]) => ({
+        name: POLICY_STATUS_LABELS[status as keyof typeof POLICY_STATUS_LABELS] || status,
+        value: (policies || []).filter((p: any) => p.status === status).length,
+        color,
+      }));
+
+      // ================================================================
+      // Other Metrics
+      // ================================================================
       const now = new Date().toISOString().split('T')[0];
-      const thirtyDaysLater = new Date();
-      thirtyDaysLater.setDate(thirtyDaysLater.getDate() + 30);
-      const thirtyDaysStr = thirtyDaysLater.toISOString().split('T')[0];
-
-      const dueInstallments = (installments || []).filter((i: { status: string; due_date: string; amount: number }) => i.status === 'pending' && i.due_date <= now);
-      const overdueInstallments = (installments || []).filter((i: { status: string; amount: number }) => i.status === 'overdue');
-      const totalDue = dueInstallments.reduce((s, i: { amount: number }) => s + Number(i.amount), 0);
-      const totalOverdue = overdueInstallments.reduce((s, i: { amount: number }) => s + Number(i.amount), 0);
-
-      const activePolicies = (policies || []).filter((p: { status: string }) => p.status === 'active');
-      const expiringPolicies = (policies || []).filter((p: { status: string; created_at: string }) => {
+      const activePolicies = (policies || []).filter((p: any) => p.status === 'active');
+      const expiringPolicies = (policies || []).filter((p: any) => {
         const startDate = new Date(p.created_at);
         const oneYearLater = new Date(startDate);
         oneYearLater.setFullYear(oneYearLater.getFullYear() + 1);
-        return oneYearLater.toISOString().split('T')[0] <= thirtyDaysStr;
+        return oneYearLater.toISOString().split('T')[0] <= monthEnd;
       });
 
-      const policyStatusDist = Object.entries(POLICY_COLORS).map(([status, color]) => ({
-        name: POLICY_STATUS_LABELS[status as keyof typeof POLICY_STATUS_LABELS] || status,
-        value: (policies || []).filter((p: { status: string }) => p.status === status).length,
-        color,
-      }));
+      const dueInstallments = (installments || []).filter((i: any) => i.status === 'pending' && i.due_date <= now);
+      const overdueInstallments = (installments || []).filter((i: any) => i.status === 'overdue');
+      const totalDue = dueInstallments.reduce((s, i: any) => s + Number(i.amount), 0);
+      const totalOverdue = overdueInstallments.reduce((s, i: any) => s + Number(i.amount), 0);
 
       setStats({
         totalNewBusiness,
@@ -217,14 +269,17 @@ export default function Dashboard() {
         activePolicyCount: activePolicies.length,
         expiringPoliciesCount: expiringPolicies.length,
         userCount: usersRes.count || 0,
-        collectionRate: totalDueInFirstYear > 0 ? (totalProduction / totalDueInFirstYear) * 100 : 0,
+        collectionRate,
         topAgents,
         bottomAgents,
+        topTeamLeaders,
+        topGroups,
         policyStatusDist,
+        targetAchievement,
         monthlyNewBusiness,
         monthlyCollections,
         monthlyTotal,
-        targetAchievement,
+        monthlyTarget: totalTarget,
       });
 
       setLastUpdated(new Date());
@@ -235,7 +290,7 @@ export default function Dashboard() {
     } finally {
       setLoading(false);
     }
-  }, [activeBranch]);
+  }, [activeBranch, profile?.role]);
 
   useEffect(() => {
     fetchStats();
@@ -303,41 +358,41 @@ export default function Dashboard() {
         </p>
       )}
 
-      {/* KPI Cards */}
+      {/* Main KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <KPICard
           label="إجمالي الإنتاج"
-          value={formatCurrency(stats.totalNewBusiness)}
+          value={formatCurrency(stats.totalProduction)}
           icon={TrendingUp}
           color="blue"
+        />
+        <KPICard
+          label="إجمالي الجديد"
+          value={formatCurrency(stats.totalNewBusiness)}
+          icon={FileText}
+          color="emerald"
         />
         <KPICard
           label="إجمالي التحصيل"
           value={formatCurrency(stats.totalCollections)}
           icon={Wallet}
-          color="emerald"
+          color="purple"
         />
         <KPICard
-          label="المستحق الحالي"
-          value={formatCurrency(stats.totalDue)}
-          icon={Clock}
+          label="نسبة تحقيق الهدف"
+          value={formatPercent(stats.targetAchievement)}
+          icon={Target}
           color="amber"
-        />
-        <KPICard
-          label="المتأخر"
-          value={formatCurrency(stats.totalOverdue)}
-          icon={AlertCircle}
-          color="red"
         />
       </div>
 
-      {/* Summary Stats */}
+      {/* Additional Stats */}
       <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
-        <StatBox label="العملاء" value={formatNumber(stats.clientCount)} icon={UserCircle} />
-        <StatBox label="الوثائق" value={formatNumber(stats.policyCount)} icon={FileText} />
-        <StatBox label="الوثائق السارية" value={formatNumber(stats.activePolicyCount)} icon={Award} />
-        <StatBox label="ينتهي قريباً" value={formatNumber(stats.expiringPoliciesCount)} icon={Clock} />
-        <StatBox label="المستخدمين" value={formatNumber(stats.userCount)} icon={Users} />
+        <StatBox label="المستهدف الشهري" value={formatCurrency(stats.monthlyTarget)} icon={Target} />
+        <StatBox label="المحقق الشهري" value={formatCurrency(stats.monthlyTotal)} icon={TrendingUp} />
+        <StatBox label="عدد الوثائق الجديدة" value={formatNumber(stats.policyCount)} icon={FileText} />
+        <StatBox label="عدد العملاء الجدد" value={formatNumber(stats.clientCount)} icon={Users} />
+        <StatBox label="عدد التحصيلات" value={formatNumber(stats.activePolicyCount)} icon={Wallet} />
         <StatBox label="معدل التحصيل" value={formatPercent(stats.collectionRate)} icon={Target} />
       </div>
 
@@ -372,8 +427,9 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {/* Charts and Performance Tables */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        {/* Policy Status Distribution */}
         <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6">
           <h3 className="font-semibold text-slate-900 dark:text-white mb-4">توزيع حالات الوثائق</h3>
           <ResponsiveContainer width="100%" height={300}>
@@ -397,135 +453,82 @@ export default function Dashboard() {
           </ResponsiveContainer>
         </div>
 
+        {/* Top Agents */}
         <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6">
-          <h3 className="font-semibold text-slate-900 dark:text-white mb-4">ملخص التحصيل</h3>
-          <div className="space-y-4">
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm text-slate-600 dark:text-slate-400">معدل التحصيل</span>
-                <span className="font-semibold text-slate-900 dark:text-white">{formatPercent(stats.collectionRate)}</span>
+          <h3 className="font-semibold text-slate-900 dark:text-white mb-4">أعلى 5 وكلاء</h3>
+          <div className="space-y-3">
+            {stats.topAgents.map((agent, idx) => (
+              <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-700/50 rounded-lg">
+                <span className="text-sm font-medium text-slate-900 dark:text-white">{agent.name}</span>
+                <span className="text-sm font-bold text-emerald-600 dark:text-emerald-400">{formatCurrency(agent.production)}</span>
               </div>
-              <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2">
-                <div
-                  className="bg-emerald-500 h-2 rounded-full transition-all duration-500"
-                  style={{ width: `${Math.min(stats.collectionRate, 100)}%` }}
-                />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-200 dark:border-slate-700">
-              <div>
-                <p className="text-xs text-slate-500 dark:text-slate-400">المستحق الحالي</p>
-                <p className="font-bold text-slate-900 dark:text-white text-lg">{formatCurrency(stats.totalDue)}</p>
-              </div>
-              <div>
-                <p className="text-xs text-slate-500 dark:text-slate-400">المتأخر</p>
-                <p className="font-bold text-red-600 dark:text-red-400 text-lg">{formatCurrency(stats.totalOverdue)}</p>
-              </div>
-            </div>
+            ))}
           </div>
         </div>
       </div>
 
-      {/* Top and Bottom Performers - Hidden for agents */}
-      {profile?.role !== 'agent' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
-          <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6">
-          <h3 className="font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
-            <Award className="w-5 h-5 text-amber-500" />
-            أعلى 5 منتجين
-          </h3>
-          <div className="space-y-3">
-            {stats.topAgents.map((agent, idx) => (
-              <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-700 rounded-lg">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-full bg-amber-100 dark:bg-amber-900 flex items-center justify-center text-sm font-bold text-amber-700 dark:text-amber-200">
-                    {idx + 1}
-                  </div>
-                  <span className="text-slate-900 dark:text-white font-medium">{agent.name}</span>
-                </div>
-                <span className="text-amber-600 dark:text-amber-400 font-semibold">{formatCurrency(agent.production)}</span>
-              </div>
-            ))}
-          </div>
-        </div>
+      {/* Team Leaders and Groups */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Top Team Leaders */}
         <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6">
-          <h3 className="font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
-            <AlertCircle className="w-5 h-5 text-red-500" />
-            أقل 5 منتجين
-          </h3>
+          <h3 className="font-semibold text-slate-900 dark:text-white mb-4">أعلى رؤساء مجموعات</h3>
           <div className="space-y-3">
-            {stats.bottomAgents.map((agent, idx) => (
-              <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-700 rounded-lg">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-full bg-red-100 dark:bg-red-900 flex items-center justify-center text-sm font-bold text-red-700 dark:text-red-200">
-                    {idx + 1}
-                  </div>
-                  <span className="text-slate-900 dark:text-white font-medium">{agent.name}</span>
-                </div>
-                <span className="text-red-600 dark:text-red-400 font-semibold">{formatCurrency(agent.production)}</span>
+            {stats.topTeamLeaders.map((tl, idx) => (
+              <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-700/50 rounded-lg">
+                <span className="text-sm font-medium text-slate-900 dark:text-white">{tl.name}</span>
+                <span className="text-sm font-bold text-blue-600 dark:text-blue-400">{formatCurrency(tl.production)}</span>
               </div>
             ))}
-            </div>
           </div>
         </div>
-      )}
+
+        {/* Best Groups */}
+        <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6">
+          <h3 className="font-semibold text-slate-900 dark:text-white mb-4">أفضل مجموعات إنتاجية</h3>
+          <div className="space-y-3">
+            {stats.topGroups.map((group, idx) => (
+              <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-700/50 rounded-lg">
+                <span className="text-sm font-medium text-slate-900 dark:text-white">{group.name}</span>
+                <span className="text-sm font-bold text-purple-600 dark:text-purple-400">{formatCurrency(group.production)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
 
-function KPICard({
-  label,
-  value,
-  icon: Icon,
-  color,
-}: {
-  label: string;
-  value: string;
-  icon: React.ElementType;
-  color: 'blue' | 'emerald' | 'amber' | 'red';
-}) {
-  const colors = {
-    blue: 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400',
-    emerald: 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400',
-    amber: 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400',
-    red: 'bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400',
+function KPICard({ label, value, icon: Icon, color }: any) {
+  const colorClasses: Record<string, string> = {
+    blue: 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-700',
+    emerald: 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-700',
+    purple: 'bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400 border-purple-200 dark:border-purple-700',
+    amber: 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 border-amber-200 dark:border-amber-700',
   };
 
   return (
-    <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6">
-      <div className="flex items-start justify-between">
+    <div className={`${colorClasses[color]} border rounded-xl shadow-sm p-6`}>
+      <div className="flex items-center justify-between">
         <div>
-          <p className="text-sm text-slate-600 dark:text-slate-400 mb-1">{label}</p>
-          <p className="text-2xl font-bold text-slate-900 dark:text-white">{value}</p>
+          <p className="text-sm font-medium">{label}</p>
+          <p className="text-2xl font-bold mt-2">{value}</p>
         </div>
-        <div className={`p-3 rounded-lg ${colors[color]}`}>
-          <Icon className="w-6 h-6" />
-        </div>
+        <Icon className="w-12 h-12 opacity-20" />
       </div>
     </div>
   );
 }
 
-function StatBox({
-  label,
-  value,
-  icon: Icon,
-}: {
-  label: string;
-  value: string;
-  icon: React.ElementType;
-}) {
+function StatBox({ label, value, icon: Icon }: any) {
   return (
-    <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 p-4 text-center hover:shadow-md transition-shadow">
-      <Icon className="w-5 h-5 text-slate-400 dark:text-slate-500 mx-auto mb-2" />
-      <p className="text-xs text-slate-600 dark:text-slate-400 mb-1">{label}</p>
-      <p className="font-bold text-slate-900 dark:text-white">{value}</p>
+    <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-4">
+      <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">{label}</p>
+      <p className="text-lg font-bold text-slate-900 dark:text-white mt-2">{value}</p>
     </div>
   );
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function renderCustomLabel(props: any) {
-  const { name, value } = props;
-  return value > 0 ? name : '';
+function renderCustomLabel(entry: any) {
+  return `${entry.name} (${entry.value})`;
 }

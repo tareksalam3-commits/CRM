@@ -15,11 +15,11 @@ import {
 import toast from 'react-hot-toast';
 
 const EMPTY_FORM = {
-  policy_number: '', client_id: '', agent_id: '', group_id: '', product: '', insurance_company: '',
-  coverage_amount: '', annual_premium: '', issue_date: '', start_date: '',
+  policy_number: '', client_id: '', agent_id: '', team_leader_id: '', branch_id: '', product: '',
+  coverage_amount: '', annual_premium: '', issue_date: '',
   status: 'under_issuance' as PolicyStatus,
   payment_frequency: 'monthly' as PaymentFrequency,
-  payment_method: '', policy_duration: '',
+  payment_method: '',
 };
 
 const STATUS_FILTER_OPTS = [
@@ -85,10 +85,8 @@ export default function PolicyManagement() {
     // Validation
     if (!formData.client_id) { toast.error('يجب اختيار العميل'); return; }
     if (!formData.product) { toast.error('يجب اختيار المنتج'); return; }
-    if (!formData.insurance_company) { toast.error('يجب اختيار شركة التأمين'); return; }
     if (!formData.policy_number.trim()) { toast.error('رقم الوثيقة مطلوب'); return; }
     if (!formData.issue_date) { toast.error('تاريخ الإصدار مطلوب'); return; }
-    if (!formData.start_date) { toast.error('تاريخ السريان مطلوب'); return; }
 
     const coverageAmount = Number(formData.coverage_amount);
     const annualPremium = Number(formData.annual_premium);
