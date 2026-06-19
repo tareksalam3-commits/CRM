@@ -15,8 +15,9 @@ import {
 } from 'recharts';
 
 interface DashboardStats {
-  totalPremiums: number;
-  totalCollected: number;
+  totalNewBusiness: number;
+  totalCollections: number;
+  totalProduction: number;
   totalDue: number;
   totalOverdue: number;
   clientCount: number;
@@ -31,14 +32,15 @@ interface DashboardStats {
   targetAchievement: number;
   monthlyNewBusiness: number;
   monthlyCollections: number;
+  monthlyTotal: number;
   error?: string;
 }
 
 const INITIAL_STATS: DashboardStats = {
-  totalPremiums: 0, totalCollected: 0, totalDue: 0, totalOverdue: 0,
+  totalNewBusiness: 0, totalCollections: 0, totalProduction: 0, totalDue: 0, totalOverdue: 0,
   clientCount: 0, policyCount: 0, activePolicyCount: 0, expiringPoliciesCount: 0,
   userCount: 0, collectionRate: 0, topAgents: [], bottomAgents: [], policyStatusDist: [],
-  targetAchievement: 0, monthlyNewBusiness: 0, monthlyCollections: 0,
+  targetAchievement: 0, monthlyNewBusiness: 0, monthlyCollections: 0, monthlyTotal: 0,
 };
 
 const POLICY_COLORS: Record<string, string> = {
@@ -96,12 +98,19 @@ export default function Dashboard() {
       const installments = installmentsRes.data || [];
       const unifiedMetrics = unifiedMetricsRes.data || [];
 
-      // Unified Logic: Use only first year collections
-      const validCollections = unifiedMetrics.filter((m: any) => m.is_first_year_collection);
-      const totalCollected = validCollections.reduce((s, c: any) => s + Number(c.amount), 0);
+      // Unified Logic: All-time metrics (filtered by branch if applicable)
+      const totalNewBusiness = unifiedMetrics
+        .filter((m: any) => m.is_new_business)
+        .reduce((s, m: any) => s + Number(m.amount), 0);
       
-      // Total premiums should also be first-year only for rate calculation
-      const totalPremiums = installments.filter((i: any) => {
+      const totalCollections = unifiedMetrics
+        .filter((m: any) => !m.is_new_business && m.is_first_year_collection)
+        .reduce((s, m: any) => s + Number(m.amount), 0);
+      
+      const totalProduction = totalNewBusiness + totalCollections;
+
+      // Total due in first year for collection rate
+      const totalDueInFirstYear = installments.filter((i: any) => {
         const policy = i.policy as any;
         return policy?.first_year_end ? i.due_date <= policy.first_year_end : true;
       }).reduce((s, i: { amount: number }) => s + Number(i.amount), 0);
@@ -111,15 +120,15 @@ export default function Dashboard() {
       const monthStart = new Date(now_date.getFullYear(), now_date.getMonth(), 1).toISOString().split('T')[0];
       const monthEnd = new Date(now_date.getFullYear(), now_date.getMonth() + 1, 0).toISOString().split('T')[0];
       
-      // Monthly New Business: First installments paid this month
       const monthlyNewBusiness = unifiedMetrics
         .filter((m: any) => m.is_new_business && m.collection_date >= monthStart && m.collection_date <= monthEnd)
         .reduce((s, m: any) => s + Number(m.amount), 0);
       
-      // Monthly Collections: Subsequent installments paid this month within first year
       const monthlyCollections = unifiedMetrics
         .filter((m: any) => !m.is_new_business && m.is_first_year_collection && m.collection_date >= monthStart && m.collection_date <= monthEnd)
         .reduce((s, m: any) => s + Number(m.amount), 0);
+      
+      const monthlyTotal = monthlyNewBusiness + monthlyCollections;
 
       // Get top and bottom agents
       let agentsQuery = supabase
@@ -189,8 +198,9 @@ export default function Dashboard() {
       }));
 
       setStats({
-        totalPremiums,
-        totalCollected,
+        totalNewBusiness,
+        totalCollections,
+        totalProduction,
         totalDue,
         totalOverdue,
         clientCount: clientsRes.count || 0,
@@ -198,12 +208,13 @@ export default function Dashboard() {
         activePolicyCount: activePolicies.length,
         expiringPoliciesCount: expiringPolicies.length,
         userCount: usersRes.count || 0,
-        collectionRate: totalPremiums > 0 ? (totalCollected / totalPremiums) * 100 : 0,
+        collectionRate: totalDueInFirstYear > 0 ? (totalProduction / totalDueInFirstYear) * 100 : 0,
         topAgents,
         bottomAgents,
         policyStatusDist,
         monthlyNewBusiness,
         monthlyCollections,
+        monthlyTotal,
         targetAchievement,
       });
 
@@ -287,13 +298,13 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <KPICard
           label="إجمالي الإنتاج"
-          value={formatCurrency(stats.monthlyCollections)}
+          value={formatCurrency(stats.totalNewBusiness)}
           icon={TrendingUp}
           color="blue"
         />
         <KPICard
           label="إجمالي التحصيل"
-          value={formatCurrency(stats.totalCollected)}
+          value={formatCurrency(stats.totalCollections)}
           icon={Wallet}
           color="emerald"
         />
