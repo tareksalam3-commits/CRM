@@ -44,9 +44,15 @@ export default function Sidebar() {
 
   const filteredItems = navItems.filter(item => {
     if (!profile) return false;
-    // Allow dashboard access even without active branch access
+    // Allow dashboard access always
     if (item.path === '/') return true;
-    // For other pages, check if user has branch access
+
+    // ✅ super_admin و dev_manager يرون كل الصفحات بغض النظر عن activeBranchAccess
+    if (profile.role === 'super_admin' || profile.role === 'dev_manager') {
+      return canAccessPage(profile.role, item.path);
+    }
+
+    // للأدوار الأخرى: نتحقق من activeBranchAccess
     if (!activeBranchAccess) return false;
     const effectiveRole = getEffectiveRole(activeBranchAccess);
     return effectiveRole && canAccessPage(effectiveRole, item.path);
@@ -65,7 +71,10 @@ export default function Sidebar() {
     }
   }
 
-  const effectiveRole = activeBranchAccess ? getEffectiveRole(activeBranchAccess) : null;
+  // ✅ الدور الفعّال: من activeBranchAccess أو fallback لـ profile.role
+  const effectiveRole = activeBranchAccess
+    ? getEffectiveRole(activeBranchAccess)
+    : (profile?.role as UserRole ?? null);
 
   return (
     <>
@@ -114,7 +123,7 @@ export default function Sidebar() {
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-slate-900 dark:text-white truncate">{profile?.full_name}</p>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  {effectiveRole ? ROLE_LABELS[effectiveRole as UserRole] : ''}
+                  {effectiveRole ? ROLE_LABELS[effectiveRole as UserRole] : (profile?.role ? ROLE_LABELS[profile.role as UserRole] : '')}
                 </p>
               </div>
             </div>

@@ -50,7 +50,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 }
 
 function PermissionGuard({ path, children }: { path: string; children: React.ReactNode }) {
-  const { activeBranchAccess, loading } = useAuth();
+  const { activeBranchAccess, profile, loading } = useAuth();
   
   if (loading) {
     return (
@@ -59,7 +59,14 @@ function PermissionGuard({ path, children }: { path: string; children: React.Rea
       </div>
     );
   }
-  
+
+  // ✅ super_admin و dev_manager يصلون لأي صفحة مسموح بها بغض النظر عن الفرع
+  if (profile?.role === 'super_admin' || profile?.role === 'dev_manager') {
+    if (!canAccessPage(profile.role, path)) return <Navigate to="/" replace />;
+    return <>{children}</>;
+  }
+
+  // للأدوار الأخرى: نتحقق من الـ activeBranchAccess
   const effectiveRole = getEffectiveRole(activeBranchAccess);
   if (!effectiveRole || !canAccessPage(effectiveRole, path)) {
     return <Navigate to="/" replace />;

@@ -73,7 +73,10 @@ export async function createUser(userData: {
 /**
  * Reset user password
  */
-export async function resetUserPassword(userId: string, newPassword: string) {
+export async function resetUserPassword(userId: string | null, newPassword: string) {
+  if (!userId) {
+    return { error: 'معرّف المستخدم مطلوب' };
+  }
   return callCreateUserFunction({
     reset_password_for: userId,
     new_password: newPassword,

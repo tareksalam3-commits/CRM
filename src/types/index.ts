@@ -115,6 +115,11 @@ export interface UserBranchAccess {
   id: string;
   user_id: string;
   branch_id: string;
+  role: UserRole;
+  is_active: boolean;
+  assigned_at: string | null;
+  expires_at: string | null;
+  updated_at: string | null;
   created_at: string;
   branch?: Branch;
 }
