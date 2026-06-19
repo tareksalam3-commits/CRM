@@ -15,7 +15,7 @@ import {
 import toast from 'react-hot-toast';
 
 const EMPTY_FORM = {
-  policy_number: '', client_id: '', agent_id: '', team_leader_id: '', branch_id: '', product: '',
+  policy_number: '', client_id: '', agent_id: '', branch_id: '', product_id: '', product: '',
   coverage_amount: '', annual_premium: '', issue_date: '',
   status: 'under_issuance' as PolicyStatus,
   payment_frequency: 'monthly' as PaymentFrequency,
@@ -33,11 +33,10 @@ const STATUS_FILTER_OPTS = [
 export default function PolicyManagement() {
   const { profile } = useAuth();
   const [policies, setPolicies] = useState<Policy[]>([]);
-  const [clients, setClients] = useState<{ id: string; name: string; phone: string }[]>([]);
-  const [agents, setAgents] = useState<{ id: string; full_name: string }[]>([]);
-  const [groups, setGroups] = useState<{ id: string; name: string }[]>([]);
+  const [clients, setClients] = useState<{ id: string; name: string; phone: string; branch_id?: string }[]>([]);
+  const [agents, setAgents] = useState<{ id: string; full_name: string; active_branch_id?: string }[]>([]);
+  const [branches, setBranches] = useState<{ id: string; name: string }[]>([]);
   const [products, setProducts] = useState<string[]>([]);
-  const [companies, setCompanies] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -49,14 +48,14 @@ export default function PolicyManagement() {
   const [formData, setFormData] = useState({ ...EMPTY_FORM });
 
   const loadData = useCallback(async () => {
-    const [policiesRes, clientsRes, agentsRes, groupsRes, settingsRes] = await Promise.all([
+    const [policiesRes, clientsRes, agentsRes, branchesRes, settingsRes] = await Promise.all([
       supabase
         .from('policies')
-        .select('*, client:clients(name, phone), agent:profiles!policies_agent_id_fkey(full_name), group:insurance_groups(name)')
+        .select('*, client:clients(name, phone), agent:profiles!policies_agent_id_fkey(full_name), branch:branches(name), product_data:products(name)')
         .order('created_at', { ascending: false }),
-      supabase.from('clients').select('id, name, phone').order('name'),
-      supabase.from('profiles').select('id, full_name').eq('is_active', true).order('full_name'),
-      supabase.from('insurance_groups').select('id, name').order('name'),
+      supabase.from('clients').select('id, name, phone, branch_id').order('name'),
+      supabase.from('profiles').select('id, full_name, active_branch_id').eq('is_active', true).order('full_name'),
+      supabase.from('branches').select('id, name').eq('is_active', true).order('name'),
       supabase.from('system_settings').select('key, value'),
     ]);
 
@@ -67,17 +66,33 @@ export default function PolicyManagement() {
     }
     if (clientsRes.data) setClients(clientsRes.data);
     if (agentsRes.data) setAgents(agentsRes.data);
-    if (groupsRes.data) setGroups(groupsRes.data);
+    if (branchesRes.data) setBranches(branchesRes.data);
     if (settingsRes.data) {
       const mapped: Record<string, unknown[]> = {};
       settingsRes.data.forEach(s => { mapped[s.key] = s.value as unknown[]; });
       setProducts((mapped.insurance_products as string[]) || []);
-      setCompanies((mapped.insurance_companies as string[]) || []);
     }
     setLoading(false);
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Auto-populate branch when agent is selected
+  const handleAgentChange = (agentId: string) => {
+    const agent = agents.find(a => a.id === agentId);
+    if (agent?.active_branch_id) {
+      setFormData(prev => ({
+        ...prev,
+        agent_id: agentId,
+        branch_id: agent.active_branch_id || '',
+      }));
+    } else {
+      setFormData(prev => ({
+        ...prev,
+        agent_id: agentId,
+      }));
+    }
+  };
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -110,17 +125,16 @@ export default function PolicyManagement() {
       policy_number: formData.policy_number.trim(),
       client_id: formData.client_id,
       agent_id: formData.agent_id || profile?.id,
-      group_id: formData.group_id || null,
+      branch_id: formData.branch_id || null,
       product: formData.product,
-      insurance_company: formData.insurance_company,
+      product_id: formData.product_id || null,
       coverage_amount: coverageAmount,
       annual_premium: annualPremium,
       issue_date: formData.issue_date,
-      start_date: formData.start_date,
       status: formData.status,
       payment_frequency: formData.payment_frequency,
       payment_method: formData.payment_method || null,
-      policy_duration: formData.policy_duration ? Number(formData.policy_duration) : null,
+      // team_leader_id, supervisor_id, branch_manager_id will be auto-populated by trigger
     };
 
     if (editingPolicy) {
@@ -140,7 +154,7 @@ export default function PolicyManagement() {
 
       // Update installments if frequency or premium changed
       if (editingPolicy.payment_frequency !== formData.payment_frequency || editingPolicy.annual_premium !== annualPremium) {
-        await updateInstallments(editingPolicy.id, annualPremium, formData.payment_frequency, formData.start_date);
+        await updateInstallments(editingPolicy.id, annualPremium, formData.payment_frequency, editingPolicy.issue_date);
       }
 
       toast.success('✅ تم تحديث الوثيقة والأقساط');
@@ -158,7 +172,7 @@ export default function PolicyManagement() {
         return;
       }
       if (data) {
-        await generateInstallments(data.id, annualPremium, formData.payment_frequency, formData.start_date);
+        await generateInstallments(data.id, annualPremium, formData.payment_frequency, formData.issue_date);
       }
       toast.success('✅ تم إنشاء الوثيقة وجدول الأقساط');
     }
@@ -180,7 +194,6 @@ export default function PolicyManagement() {
 
     const installments = Array.from({ length: count }, (_, i) => {
       const dueDate = new Date(startDate);
-      // Correctly add months for each installment
       dueDate.setMonth(dueDate.getMonth() + i * monthsPerInstallment);
       
       return {
@@ -222,11 +235,6 @@ export default function PolicyManagement() {
     const remainingPremium = annualPremium - totalCollected;
     const totalCount = getInstallmentCount(frequency);
     
-    // We will keep the paid ones as they are, and redistribute the remaining amount 
-    // over the remaining slots of the new frequency.
-    // However, a simpler and more consistent business logic is:
-    // If frequency changes, we delete all non-paid installments and create new ones for the remaining balance.
-    
     // 4. Delete non-paid installments
     const nonPaidIds = existingInstallments.filter(i => !paidInstallments.find(p => p.id === i.id)).map(i => i.id);
     if (nonPaidIds.length > 0) {
@@ -236,18 +244,11 @@ export default function PolicyManagement() {
     // 5. Generate new installments for the remaining amount
     const paidCount = paidInstallments.length;
     
-    // If we changed from annual (fully paid) to monthly, 
-    // we should only create new installments if there is a remaining balance.
-    // If the annual premium was 120,000 and it was paid, and we change to monthly,
-    // the remaining 11 installments should be 0 or not created.
-    // Business rule: If remainingPremium <= 0, we don't need to create more installments.
-    
     if (remainingPremium > 0) {
       const remainingCount = Math.max(0, totalCount - paidCount);
 
       if (remainingCount > 0) {
         const amountPerRemaining = Math.round((remainingPremium / remainingCount) * 100) / 100;
-        const start = new Date(startDate);
         const monthsPerInstallment = 12 / totalCount;
 
         const newInstallments = Array.from({ length: remainingCount }, (_, i) => {
@@ -295,17 +296,15 @@ export default function PolicyManagement() {
       policy_number: policy.policy_number,
       client_id: policy.client_id,
       agent_id: policy.agent_id,
-      group_id: policy.group_id || '',
+      branch_id: policy.branch_id || '',
       product: policy.product,
-      insurance_company: policy.insurance_company,
+      product_id: policy.product_id || '',
       coverage_amount: String(policy.coverage_amount),
       annual_premium: String(policy.annual_premium),
       issue_date: policy.issue_date,
-      start_date: policy.start_date,
       status: policy.status,
       payment_frequency: policy.payment_frequency,
       payment_method: policy.payment_method || '',
-      policy_duration: policy.policy_duration ? String(policy.policy_duration) : '',
     });
     setShowForm(true);
   }
@@ -329,8 +328,7 @@ export default function PolicyManagement() {
     const matchSearch =
       p.policy_number.toLowerCase().includes(search.toLowerCase()) ||
       (p.client as unknown as { name: string })?.name?.includes(search) ||
-      p.product.includes(search) ||
-      p.insurance_company.includes(search);
+      p.product.includes(search);
     const matchStatus = statusFilter === 'all' || p.status === statusFilter;
     return matchSearch && matchStatus;
   });
@@ -348,133 +346,119 @@ export default function PolicyManagement() {
         actions={
           <button
             onClick={() => { setEditingPolicy(null); setFormData({ ...EMPTY_FORM }); setShowForm(true); }}
-            className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-medium transition-colors shadow-sm"
+            className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-medium transition-colors"
           >
             <Plus className="w-4 h-4" />
-            <span className="hidden sm:inline">إضافة وثيقة</span>
+            وثيقة جديدة
           </button>
         }
       />
 
       {/* Search & Filter */}
-      <div className="flex flex-col sm:flex-row gap-3 mb-4">
-        <div className="relative flex-1">
-          <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 pointer-events-none" />
+      <div className="mb-6 flex flex-col sm:flex-row gap-4">
+        <div className="flex-1 relative">
+          <Search className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <input
-            type="text"
-            value={search}
+            type="text" placeholder="ابحث عن رقم وثيقة أو عميل أو منتج..." value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="بحث برقم الوثيقة أو اسم العميل أو المنتج..."
-            className="w-full pr-10 pl-4 py-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white placeholder-slate-400 focus:ring-2 focus:ring-blue-500 outline-none"
+            className={`${inputCls} pl-4 pr-10`}
           />
         </div>
-        <div className="relative">
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as 'all' | PolicyStatus)}
-            className="appearance-none pr-4 pl-8 py-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm"
-          >
-            {STATUS_FILTER_OPTS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
-          </select>
-          <ChevronDown className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value as 'all' | PolicyStatus)}
+          className={inputCls}
+        >
+          {STATUS_FILTER_OPTS.map(opt => (
+            <option key={opt.key} value={opt.key}>{opt.label}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Policies Table */}
+      {filtered.length === 0 ? (
+        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-12 text-center">
+          <FileText className="w-12 h-12 text-slate-300 dark:text-slate-600 mx-auto mb-4" />
+          <p className="text-slate-500 dark:text-slate-400">لا توجد وثائق تطابق معايير البحث</p>
         </div>
-      </div>
-
-      {/* Policies List */}
-      <div className="space-y-3">
-        {filtered.map(policy => (
-          <div
-            key={policy.id}
-            className="bg-white dark:bg-slate-800 rounded-xl p-4 border border-slate-100 dark:border-slate-700 hover:border-blue-200 dark:hover:border-blue-700 transition-colors"
-          >
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1 flex-wrap">
-                  <p className="font-semibold text-slate-900 dark:text-white" dir="ltr">
-                    {policy.policy_number}
-                  </p>
-                  <span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${statusColors[policy.status]}`}>
-                    {POLICY_STATUS_LABELS[policy.status]}
-                  </span>
-                </div>
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
-                  <span className="font-medium text-slate-700 dark:text-slate-300">
-                    {(policy.client as unknown as { name: string })?.name || '—'}
-                  </span>
-                  <span>{policy.product}</span>
-                  <span>{policy.insurance_company}</span>
-                  <span className="flex items-center gap-1">
-                    <DollarSign className="w-3 h-3" />
-                    {formatCurrency(policy.annual_premium)}
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <Calendar className="w-3 h-3" />
-                    {formatDate(policy.start_date)}
-                  </span>
-                  <span>{PAYMENT_FREQUENCY_LABELS[policy.payment_frequency]}</span>
-                </div>
-                {/* Agent */}
-                <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">
-                  المندوب: {(policy.agent as unknown as { full_name: string })?.full_name || '—'}
-                </p>
-              </div>
-
-              <div className="flex items-center gap-1 flex-shrink-0">
-                <button
-                  onClick={() => setSelectedPolicy(policy)}
-                  className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
-                  title="عرض التفاصيل"
-                >
-                  <Eye className="w-4 h-4 text-slate-500" />
-                </button>
-                <button
-                  onClick={() => startEdit(policy)}
-                  className="p-2 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors"
-                  title="تعديل"
-                >
-                  <Edit2 className="w-4 h-4 text-blue-500" />
-                </button>
-                <button
-                  onClick={() => deletePolicy(policy)}
-                  className="p-2 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
-                  title="حذف"
-                >
-                  <Trash2 className="w-4 h-4 text-red-500" />
-                </button>
-              </div>
-            </div>
+      ) : (
+        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden shadow-sm">
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900">
+                  <th className="px-6 py-4 text-right text-sm font-semibold text-slate-900 dark:text-white">رقم الوثيقة</th>
+                  <th className="px-6 py-4 text-right text-sm font-semibold text-slate-900 dark:text-white">العميل</th>
+                  <th className="px-6 py-4 text-right text-sm font-semibold text-slate-900 dark:text-white">المنتج</th>
+                  <th className="px-6 py-4 text-right text-sm font-semibold text-slate-900 dark:text-white">القسط السنوي</th>
+                  <th className="px-6 py-4 text-right text-sm font-semibold text-slate-900 dark:text-white">تاريخ الإصدار</th>
+                  <th className="px-6 py-4 text-right text-sm font-semibold text-slate-900 dark:text-white">الحالة</th>
+                  <th className="px-6 py-4 text-right text-sm font-semibold text-slate-900 dark:text-white">الإجراء</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
+                {filtered.map(policy => (
+                  <tr key={policy.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
+                    <td className="px-6 py-4 text-sm font-medium text-slate-900 dark:text-white">{policy.policy_number}</td>
+                    <td className="px-6 py-4 text-sm text-slate-600 dark:text-slate-300">{(policy.client as unknown as { name: string })?.name}</td>
+                    <td className="px-6 py-4 text-sm text-slate-600 dark:text-slate-300">{policy.product}</td>
+                    <td className="px-6 py-4 text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(policy.annual_premium)}</td>
+                    <td className="px-6 py-4 text-sm text-slate-600 dark:text-slate-300">{formatDate(policy.issue_date)}</td>
+                    <td className="px-6 py-4">
+                      <span className={`inline-block px-3 py-1 rounded-full text-xs font-medium ${statusColors[policy.status]}`}>
+                        {POLICY_STATUS_LABELS[policy.status]}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => setSelectedPolicy(policy)}
+                          className="p-2 hover:bg-blue-50 dark:hover:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded-lg transition-colors"
+                          title="عرض التفاصيل"
+                        >
+                          <Eye className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => startEdit(policy)}
+                          className="p-2 hover:bg-amber-50 dark:hover:bg-amber-900/20 text-amber-600 dark:text-amber-400 rounded-lg transition-colors"
+                          title="تعديل"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => deletePolicy(policy)}
+                          className="p-2 hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 rounded-lg transition-colors"
+                          title="حذف"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        ))}
+        </div>
+      )}
 
-        {filtered.length === 0 && (
-          <div className="text-center py-16">
-            <FileText className="w-12 h-12 mx-auto text-slate-300 dark:text-slate-600 mb-3" />
-            <p className="text-slate-400 dark:text-slate-500">
-              {search ? `لا توجد نتائج لـ "${search}"` : 'لا توجد وثائق حتى الآن'}
-            </p>
-          </div>
-        )}
-      </div>
-
-      {/* Policy Form Modal */}
+      {/* Form Modal */}
       {showForm && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto shadow-2xl">
-            <div className="flex items-center justify-between p-6 border-b border-slate-100 dark:border-slate-700 sticky top-0 bg-white dark:bg-slate-800 z-10">
-              <div>
-                <h3 className="text-lg font-bold text-slate-900 dark:text-white">
-                  {editingPolicy ? 'تعديل وثيقة' : 'إضافة وثيقة جديدة'}
-                </h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  {editingPolicy ? 'عدّل البيانات ثم اضغط تحديث' : 'أدخل بيانات الوثيقة'}
-                </p>
-              </div>
-              <button onClick={resetForm} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-2xl shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-6 border-b border-slate-200 dark:border-slate-700 sticky top-0 bg-white dark:bg-slate-800">
+              <h2 className="text-xl font-bold text-slate-900 dark:text-white">
+                {editingPolicy ? 'تعديل الوثيقة' : 'وثيقة جديدة'}
+              </h2>
+              <button
+                onClick={resetForm}
+                className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg"
+              >
                 <X className="w-5 h-5 text-slate-500" />
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="p-6 space-y-4">
+            <form onSubmit={handleSubmit} className="p-6 space-y-6">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {/* Policy Number */}
                 <div>
@@ -484,7 +468,7 @@ export default function PolicyManagement() {
                   <input
                     type="text" value={formData.policy_number}
                     onChange={(e) => setFormData({ ...formData, policy_number: e.target.value })}
-                    required dir="ltr" placeholder="مثال: POL-2024-001"
+                    required placeholder="مثال: POL-2024-001"
                     className={inputCls}
                   />
                 </div>
@@ -504,6 +488,42 @@ export default function PolicyManagement() {
                   </select>
                 </div>
 
+                {/* Agent */}
+                {profile?.role !== 'agent' && (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                      الأيجنت <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      value={formData.agent_id}
+                      onChange={(e) => handleAgentChange(e.target.value)}
+                      className={inputCls}
+                    >
+                      <option value="">{profile?.full_name ?? 'أنا'} (أنا)</option>
+                      {agents
+                        .filter(a => a.id !== profile?.id)
+                        .map(a => <option key={a.id} value={a.id}>{a.full_name}</option>)
+                      }
+                    </select>
+                  </div>
+                )}
+
+                {/* Branch (auto-populated from agent) */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    الفرع
+                  </label>
+                  <select
+                    value={formData.branch_id}
+                    onChange={(e) => setFormData({ ...formData, branch_id: e.target.value })}
+                    className={inputCls}
+                  >
+                    <option value="">اختر الفرع</option>
+                    {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                  </select>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">يتم تحديده تلقائياً من الأيجنت إذا كان مرتبطاً بفرع واحد</p>
+                </div>
+
                 {/* Product */}
                 <div>
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
@@ -516,21 +536,6 @@ export default function PolicyManagement() {
                   >
                     <option value="">اختر المنتج</option>
                     {products.map(p => <option key={p} value={p}>{p}</option>)}
-                  </select>
-                </div>
-
-                {/* Insurance Company */}
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-                    شركة التأمين <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    value={formData.insurance_company}
-                    onChange={(e) => setFormData({ ...formData, insurance_company: e.target.value })}
-                    required className={inputCls}
-                  >
-                    <option value="">اختر الشركة</option>
-                    {companies.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
 
@@ -572,18 +577,6 @@ export default function PolicyManagement() {
                   />
                 </div>
 
-                {/* Start Date */}
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-                    تاريخ السريان <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="date" value={formData.start_date}
-                    onChange={(e) => setFormData({ ...formData, start_date: e.target.value })}
-                    required className={inputCls}
-                  />
-                </div>
-
                 {/* Payment Frequency */}
                 <div>
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">طريقة السداد</label>
@@ -596,6 +589,17 @@ export default function PolicyManagement() {
                       <option key={k} value={k}>{v}</option>
                     ))}
                   </select>
+                </div>
+
+                {/* Payment Method */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">طريقة الدفع</label>
+                  <input
+                    type="text" value={formData.payment_method}
+                    onChange={(e) => setFormData({ ...formData, payment_method: e.target.value })}
+                    placeholder="مثال: تحويل بنكي، نقداً"
+                    className={inputCls}
+                  />
                 </div>
 
                 {/* Status */}
@@ -611,59 +615,6 @@ export default function PolicyManagement() {
                     ))}
                   </select>
                 </div>
-
-                {/* Group */}
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">رئيس المجموعة</label>
-                  <select
-                    value={formData.group_id}
-                    onChange={(e) => setFormData({ ...formData, group_id: e.target.value })}
-                    className={inputCls}
-                  >
-                    <option value="">اختر مجموعة</option>
-                    {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
-                  </select>
-                </div>
-
-                {/* Payment Method */}
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">طريقة الدفع</label>
-                  <input
-                    type="text" value={formData.payment_method}
-                    onChange={(e) => setFormData({ ...formData, payment_method: e.target.value })}
-                    placeholder="مثال: تحويل بنكي"
-                    className={inputCls}
-                  />
-                </div>
-
-                {/* Policy Duration */}
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">مدة الوثيقة (سنوات)</label>
-                  <input
-                    type="number" value={formData.policy_duration}
-                    onChange={(e) => setFormData({ ...formData, policy_duration: e.target.value })}
-                    min="1" step="1" placeholder="مثال: 5"
-                    className={inputCls}
-                  />
-                </div>
-
-                {/* Agent */}
-                {profile?.role !== 'agent' && (
-                  <div className="sm:col-span-2">
-                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">المندوب</label>
-                    <select
-                      value={formData.agent_id}
-                      onChange={(e) => setFormData({ ...formData, agent_id: e.target.value })}
-                      className={inputCls}
-                    >
-                      <option value="">{profile?.full_name ?? 'أنا'} (أنا)</option>
-                      {agents
-                        .filter(a => a.id !== profile?.id)
-                        .map(a => <option key={a.id} value={a.id}>{a.full_name}</option>)
-                      }
-                    </select>
-                  </div>
-                )}
               </div>
 
               {/* Installments preview */}
@@ -722,17 +673,13 @@ export default function PolicyManagement() {
                 { label: 'رقم الوثيقة', value: selectedPolicy.policy_number, dir: 'ltr' as const },
                 { label: 'العميل', value: (selectedPolicy.client as unknown as { name: string })?.name },
                 { label: 'المنتج', value: selectedPolicy.product },
-                { label: 'شركة التأمين', value: selectedPolicy.insurance_company },
                 { label: 'الحالة', value: POLICY_STATUS_LABELS[selectedPolicy.status] },
                 { label: 'مبلغ التأمين', value: formatCurrency(selectedPolicy.coverage_amount) },
                 { label: 'القسط السنوي', value: formatCurrency(selectedPolicy.annual_premium) },
                 { label: 'تاريخ الإصدار', value: formatDate(selectedPolicy.issue_date) },
-                { label: 'تاريخ السريان', value: formatDate(selectedPolicy.start_date) },
                 { label: 'طريقة السداد', value: PAYMENT_FREQUENCY_LABELS[selectedPolicy.payment_frequency] },
                 { label: 'المندوب', value: (selectedPolicy.agent as unknown as { full_name: string })?.full_name },
-                { label: 'بداية السنة الأولى', value: selectedPolicy.first_year_start ? formatDate(selectedPolicy.first_year_start) : '—' },
-                { label: 'نهاية السنة الأولى', value: selectedPolicy.first_year_end ? formatDate(selectedPolicy.first_year_end) : '—' },
-                { label: 'احتسب كإنتاج جديد', value: selectedPolicy.has_new_business_counted ? 'نعم' : 'لا' },
+                { label: 'الفرع', value: (selectedPolicy.branch as unknown as { name: string })?.name || '—' },
               ].map(({ label, value, dir }) => (
                 <div key={label} className="flex justify-between items-center py-1.5 border-b border-slate-50 dark:border-slate-700/50 last:border-0">
                   <span className="text-slate-500 dark:text-slate-400">{label}</span>

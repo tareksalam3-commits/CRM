@@ -162,15 +162,15 @@ export interface Policy {
   group_id: string | null;
   product_id: string | null;
   product: string;
-  insurance_company: string;
   coverage_amount: number;
   annual_premium: number;
   issue_date: string;
-  start_date: string;
   status: PolicyStatus;
   payment_frequency: PaymentFrequency;
   payment_method: string | null;
-  policy_duration: number | null;
+  team_leader_id: string | null;
+  supervisor_id: string | null;
+  branch_manager_id: string | null;
   created_at: string;
   updated_at: string;
   client?: Client;
@@ -181,6 +181,9 @@ export interface Policy {
   first_year_start?: string;
   first_year_end?: string;
   has_new_business_counted?: boolean;
+  team_leader?: Profile;
+  supervisor?: Profile;
+  branch_manager?: Profile;
 }
 
 export interface Installment {
