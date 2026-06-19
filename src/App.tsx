@@ -32,7 +32,7 @@ function PageLoader() {
 }
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { session, loading, activeBranch, accessibleBranches } = useAuth();
+  const { session, loading } = useAuth();
   
   if (loading) {
     return (
@@ -43,11 +43,6 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   }
   
   if (!session) {
-    return <Navigate to="/login" replace />;
-  }
-  
-  // If user has no accessible branches, redirect to login
-  if (!activeBranch || accessibleBranches.length === 0) {
     return <Navigate to="/login" replace />;
   }
   

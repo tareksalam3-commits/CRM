@@ -43,7 +43,11 @@ export default function Sidebar() {
   const [showBranchMenu, setShowBranchMenu] = useState(false);
 
   const filteredItems = navItems.filter(item => {
-    if (!profile || !activeBranchAccess) return false;
+    if (!profile) return false;
+    // Allow dashboard access even without active branch access
+    if (item.path === '/') return true;
+    // For other pages, check if user has branch access
+    if (!activeBranchAccess) return false;
     const effectiveRole = getEffectiveRole(activeBranchAccess);
     return effectiveRole && canAccessPage(effectiveRole, item.path);
   });

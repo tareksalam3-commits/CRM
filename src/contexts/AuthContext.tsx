@@ -84,26 +84,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (accessError) {
         console.error('Error fetching branch access:', accessError);
-        setLoading(false);
-        return;
-      }
-
-      if (!accessData || accessData.length === 0) {
-        console.warn('No branch access found for user:', userId);
-        setAccessibleBranches([]);
-        setActiveBranchState(null);
-        setActiveBranchAccess(null);
-        setLoading(false);
-        return;
+        // Don't return early - allow user to proceed even if branch access fetch fails
       }
 
       // Extract branches from access data
-      const branches = accessData
-        .map(access => (access.branch as any))
-        .filter(branch => branch && branch.is_active);
-      
+      let branches: Branch[] = [];
+      let accessRecords: UserBranchAccess[] = [];
+
+      if (accessData && accessData.length > 0) {
+        branches = accessData
+          .map(access => (access.branch as any))
+          .filter(branch => branch && branch.is_active);
+        
+        accessRecords = accessData as UserBranchAccess[];
+      }
+
+      // If no branches found, create a temporary one for navigation
       if (branches.length === 0) {
-        console.warn('No active branches found for user:', userId);
+        console.warn('No active branches found for user, allowing temporary access');
+        // Set loading to false to allow user to proceed to dashboard
+        // They will see an error or be prompted to create/assign a branch
         setAccessibleBranches([]);
         setActiveBranchState(null);
         setActiveBranchAccess(null);
@@ -130,7 +130,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setActiveBranchState(activeBranchData);
         
         // Find the access record for the active branch
-        const access = accessData.find(a => a.branch_id === activeBranchData.id);
+        const access = accessRecords.find(a => a.branch_id === activeBranchData.id);
         if (access) {
           setActiveBranchAccess(access as UserBranchAccess);
         }
