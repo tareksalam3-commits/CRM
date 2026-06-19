@@ -3,6 +3,7 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { Profile, ROLE_LABELS, UserRole } from '../../types';
 import { assignableRoles, canManageRole, isManager } from '../../lib/rbac';
+import { createUser, deleteUser as deleteUserService, resetUserPassword, updateUserProfile, linkUserToBranches } from '../../services/usersService';
 import PageHeader from '../common/PageHeader';
 import LoadingSpinner from '../common/LoadingSpinner';
 import {
@@ -12,52 +13,13 @@ import {
 import toast from 'react-hot-toast';
 
 // URL الـ Edge Function مباشرة — بيتأخذ من env vars
-const FUNCTION_URL = "https://pojmoiuzeckhxbnahcrk.supabase.co/functions/v1/create-user";
 
-async function callAdminFunction(body: object) {
-  const { data: sessionData } = await supabase.auth.getSession();
-  const token = sessionData?.session?.access_token;
-  if (!token) return { error: 'انتهت الجلسة — يرجى إعادة تسجيل الدخول' };
-
-  if (!FUNCTION_URL || FUNCTION_URL.startsWith('undefined')) {
-    return { error: 'خطأ في الإعداد: متغير VITE_SUPABASE_URL مفقود' };
-  }
-
-  try {
-    const res = await fetch(FUNCTION_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-        'apikey': "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBvam1vaXV6ZWNraHhibmFoY3JrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEyNjA5NzUsImV4cCI6MjA5NjgzNjk3NX0.SzzaDxI4tuszQoaFQYQAkwyUNUG-mUun-DnyYOInn4s",
-      },
-      body: JSON.stringify(body),
-    });
-
-    // Handle non-JSON responses
-    const contentType = res.headers.get('content-type') || '';
-    if (!contentType.includes('application/json')) {
-      const text = await res.text();
-      return { error: `استجابة غير متوقعة من السيرفر (${res.status}): ${text.slice(0, 100)}` };
-    }
-
-    const data = await res.json();
-    if (!res.ok || data.error) return { error: data.error || `خطأ ${res.status}` };
-    return { success: true, ...data };
-  } catch (err) {
-    if (err instanceof TypeError && err.message.includes('fetch')) {
-      return { error: 'خطأ في الاتصال — تحقق من اتصالك بالإنترنت' };
-    }
-    return { error: 'خطأ غير متوقع: ' + String(err) };
-  }
-}
 
 interface FormData {
   email: string; password: string; full_name: string;
   phone: string; role: UserRole; manager_id: string;
 }
 const emptyForm: FormData = { email: '', password: '', full_name: '', phone: '', role: 'agent', manager_id: '' };
-const MAIN_BRANCH_CODE = 'MAIN';
 
 export default function UserManagement() {
   const { profile } = useAuth();
@@ -157,16 +119,16 @@ export default function UserManagement() {
         fetchUsers();
       }
     } else {
-      const result = await callAdminFunction({
+      const result = await createUser({
         email: formData.email.trim().toLowerCase(),
         password: formData.password,
         full_name: formData.full_name.trim(),
-        phone: formData.phone.trim() || null,
+        phone: formData.phone.trim() || undefined,
         role: formData.role,
-        manager_id: formData.manager_id || null,
+        manager_id: formData.manager_id || undefined,
       });
-      if (result.error) {
-        toast.error(result.error);
+      if ((result as { error?: string }).error) {
+        toast.error((result as { error?: string }).error);
       } else {
         toast.success('✅ تم إنشاء المستخدم بنجاح');
         resetForm();
@@ -183,10 +145,10 @@ export default function UserManagement() {
     else toast.error('خطأ: ' + error.message);
   }
 
-  async function deleteUser(user: Profile) {
+  async function deleteUserHandler(user: Profile) {
     if (user.id === profile?.id) { toast.error('لا يمكنك حذف حسابك'); return; }
     if (!confirm(`حذف "${user.full_name}"؟ سيتم محاولة الحذف النهائي، وفي حال وجود بيانات مرتبطة سيتم تعطيل الحساب فقط.`)) return;
-    const result = await callAdminFunction({ delete_user_id: user.id });
+    const result = await deleteUserService(user.id);
     if (result.error) {
       toast.error(result.error);
     } else {
@@ -201,7 +163,7 @@ export default function UserManagement() {
 
   async function handleResetPassword() {
     if (!newPassword || newPassword.length < 6) { toast.error('6 أحرف على الأقل'); return; }
-    const result = await callAdminFunction({ reset_password_for: resetPasswordId, new_password: newPassword });
+    const result = await resetUserPassword(resetPasswordId, newPassword);
     if (result.error) toast.error(result.error);
     else { toast.success('تم تغيير كلمة المرور'); setResetPasswordId(null); setNewPassword(''); }
   }
@@ -344,7 +306,7 @@ export default function UserManagement() {
                     {user.is_active ? <Ban className="w-4 h-4 text-orange-500" /> : <CheckCircle className="w-4 h-4 text-emerald-500" />}
                   </button>
                   {myRole === 'super_admin' && (
-                    <button onClick={() => deleteUser(user)} className="p-2 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg"><Trash2 className="w-4 h-4 text-red-500" /></button>
+                    <button onClick={() => deleteUserHandler(user)} className="p-2 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg"><Trash2 className="w-4 h-4 text-red-500" /></button>
                   )}
                 </div>
               )}

@@ -71,7 +71,7 @@ export default function Dashboard() {
       // Apply RLS implicitly, but we can also add explicit filters if needed
       let policiesQuery = supabase.from('policies').select('annual_premium, status, created_at, branch_id');
       let clientsQuery = supabase.from('clients').select('id, branch_id', { count: 'exact', head: true });
-      let collectionsQuery = supabase.from('collections').select('amount, created_at, branch_id');
+      let collectionsQuery = supabase.from('collections').select('amount, created_at, is_new_business, branch_id');
       let usersQuery = supabase.from('profiles').select('id', { count: 'exact', head: true });
       let installmentsQuery = supabase.from('installments').select('amount, status, due_date, policy:policies!inner(agent_id, branch_id)');
 
@@ -106,11 +106,12 @@ export default function Dashboard() {
       const monthStart = new Date(now_date.getFullYear(), now_date.getMonth(), 1).toISOString();
       const monthEnd = new Date(now_date.getFullYear(), now_date.getMonth() + 1, 0).toISOString();
       
-      // Calculate monthly new business based on installments due this month, not total annual premium
-      const monthlyInstallments = installments.filter((i: any) => i.due_date >= monthStart && i.due_date <= monthEnd);
-      const monthlyNewBusiness = monthlyInstallments.reduce((s, i: any) => s + Number(i.amount), 0);
+      // Calculate monthly new business (collections where is_new_business = true)
+      const monthlyNewBusinessData = collections.filter((c: any) => c.created_at >= monthStart && c.created_at <= monthEnd && c.is_new_business);
+      const monthlyNewBusiness = monthlyNewBusinessData.reduce((s, c: any) => s + Number(c.amount), 0);
       
-      const monthlyCollectionsData = collections.filter((c: any) => c.created_at >= monthStart && c.created_at <= monthEnd);
+      // Calculate monthly collections (collections where is_new_business = false)
+      const monthlyCollectionsData = collections.filter((c: any) => c.created_at >= monthStart && c.created_at <= monthEnd && !c.is_new_business);
       const monthlyCollections = monthlyCollectionsData.reduce((s, c: any) => s + Number(c.amount), 0);
 
       // Get top and bottom agents

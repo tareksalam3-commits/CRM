@@ -101,6 +101,9 @@ export default function CollectionManagement() {
         return;
       }
 
+      // Determine if this is new business (first installment only)
+      const is_new_business = selectedInstallment.installment_number === 1;
+
       const { error: insertError } = await supabase.from('collections').insert({
         installment_id: selectedInstallment.id,
         policy_id: selectedInstallment.policy_id,
@@ -109,6 +112,7 @@ export default function CollectionManagement() {
         receipt_number: formData.receipt_number || null,
         collected_by: profile.id,
         notes: formData.notes || null,
+        is_new_business,
       });
 
       if (insertError) {
