@@ -101,6 +101,16 @@ export interface Branch {
   updated_at: string;
 }
 
+export interface InsuranceGroup {
+  id: string;
+  name: string;
+  manager_id: string | null;
+  branch_id: string | null;
+  created_at: string;
+  manager?: Profile;
+  branch?: Branch;
+}
+
 export interface UserBranchAccess {
   id: string;
   user_id: string;
@@ -149,6 +159,8 @@ export interface Policy {
   client_id: string;
   agent_id: string;
   branch_id: string | null;
+  group_id: string | null;
+  product_id: string | null;
   product: string;
   insurance_company: string;
   coverage_amount: number;
@@ -157,11 +169,14 @@ export interface Policy {
   start_date: string;
   status: PolicyStatus;
   payment_frequency: PaymentFrequency;
+  payment_method: string | null;
+  policy_duration: number | null;
   created_at: string;
   updated_at: string;
   client?: Client;
   agent?: Profile;
   branch?: Branch;
+  group?: InsuranceGroup;
   installments?: Installment[];
   first_year_start?: string;
   first_year_end?: string;

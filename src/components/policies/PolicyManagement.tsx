@@ -15,10 +15,11 @@ import {
 import toast from 'react-hot-toast';
 
 const EMPTY_FORM = {
-  policy_number: '', client_id: '', agent_id: '', product: '', insurance_company: '',
+  policy_number: '', client_id: '', agent_id: '', group_id: '', product: '', insurance_company: '',
   coverage_amount: '', annual_premium: '', issue_date: '', start_date: '',
   status: 'under_issuance' as PolicyStatus,
   payment_frequency: 'monthly' as PaymentFrequency,
+  payment_method: '', policy_duration: '',
 };
 
 const STATUS_FILTER_OPTS = [
@@ -34,6 +35,7 @@ export default function PolicyManagement() {
   const [policies, setPolicies] = useState<Policy[]>([]);
   const [clients, setClients] = useState<{ id: string; name: string; phone: string }[]>([]);
   const [agents, setAgents] = useState<{ id: string; full_name: string }[]>([]);
+  const [groups, setGroups] = useState<{ id: string; name: string }[]>([]);
   const [products, setProducts] = useState<string[]>([]);
   const [companies, setCompanies] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -47,13 +49,14 @@ export default function PolicyManagement() {
   const [formData, setFormData] = useState({ ...EMPTY_FORM });
 
   const loadData = useCallback(async () => {
-    const [policiesRes, clientsRes, agentsRes, settingsRes] = await Promise.all([
+    const [policiesRes, clientsRes, agentsRes, groupsRes, settingsRes] = await Promise.all([
       supabase
         .from('policies')
-        .select('*, client:clients(name, phone), agent:profiles!policies_agent_id_fkey(full_name)')
+        .select('*, client:clients(name, phone), agent:profiles!policies_agent_id_fkey(full_name), group:insurance_groups(name)')
         .order('created_at', { ascending: false }),
       supabase.from('clients').select('id, name, phone').order('name'),
       supabase.from('profiles').select('id, full_name').eq('is_active', true).order('full_name'),
+      supabase.from('insurance_groups').select('id, name').order('name'),
       supabase.from('system_settings').select('key, value'),
     ]);
 
@@ -64,6 +67,7 @@ export default function PolicyManagement() {
     }
     if (clientsRes.data) setClients(clientsRes.data);
     if (agentsRes.data) setAgents(agentsRes.data);
+    if (groupsRes.data) setGroups(groupsRes.data);
     if (settingsRes.data) {
       const mapped: Record<string, unknown[]> = {};
       settingsRes.data.forEach(s => { mapped[s.key] = s.value as unknown[]; });
@@ -108,6 +112,7 @@ export default function PolicyManagement() {
       policy_number: formData.policy_number.trim(),
       client_id: formData.client_id,
       agent_id: formData.agent_id || profile?.id,
+      group_id: formData.group_id || null,
       product: formData.product,
       insurance_company: formData.insurance_company,
       coverage_amount: coverageAmount,
@@ -116,6 +121,8 @@ export default function PolicyManagement() {
       start_date: formData.start_date,
       status: formData.status,
       payment_frequency: formData.payment_frequency,
+      payment_method: formData.payment_method || null,
+      policy_duration: formData.policy_duration ? Number(formData.policy_duration) : null,
     };
 
     if (editingPolicy) {
@@ -290,6 +297,7 @@ export default function PolicyManagement() {
       policy_number: policy.policy_number,
       client_id: policy.client_id,
       agent_id: policy.agent_id,
+      group_id: policy.group_id || '',
       product: policy.product,
       insurance_company: policy.insurance_company,
       coverage_amount: String(policy.coverage_amount),
@@ -298,6 +306,8 @@ export default function PolicyManagement() {
       start_date: policy.start_date,
       status: policy.status,
       payment_frequency: policy.payment_frequency,
+      payment_method: policy.payment_method || '',
+      policy_duration: policy.policy_duration ? String(policy.policy_duration) : '',
     });
     setShowForm(true);
   }
@@ -602,6 +612,41 @@ export default function PolicyManagement() {
                       <option key={k} value={k}>{v}</option>
                     ))}
                   </select>
+                </div>
+
+                {/* Group */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">رئيس المجموعة</label>
+                  <select
+                    value={formData.group_id}
+                    onChange={(e) => setFormData({ ...formData, group_id: e.target.value })}
+                    className={inputCls}
+                  >
+                    <option value="">اختر مجموعة</option>
+                    {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                  </select>
+                </div>
+
+                {/* Payment Method */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">طريقة الدفع</label>
+                  <input
+                    type="text" value={formData.payment_method}
+                    onChange={(e) => setFormData({ ...formData, payment_method: e.target.value })}
+                    placeholder="مثال: تحويل بنكي"
+                    className={inputCls}
+                  />
+                </div>
+
+                {/* Policy Duration */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">مدة الوثيقة (سنوات)</label>
+                  <input
+                    type="number" value={formData.policy_duration}
+                    onChange={(e) => setFormData({ ...formData, policy_duration: e.target.value })}
+                    min="1" step="1" placeholder="مثال: 5"
+                    className={inputCls}
+                  />
                 </div>
 
                 {/* Agent */}

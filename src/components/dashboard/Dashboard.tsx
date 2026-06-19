@@ -80,13 +80,19 @@ export default function Dashboard() {
         collectionsQuery = collectionsQuery.in('branch_id', branchFilter);
       }
 
+      // Build unified metrics query with branch filter
+      let unifiedMetricsQuery = supabase.from('unified_performance_metrics').select('*');
+      if (branchFilter.length > 0) {
+        unifiedMetricsQuery = unifiedMetricsQuery.in('branch_id', branchFilter);
+      }
+
       const [policiesRes, clientsRes, collectionsRes, usersRes, installmentsRes, unifiedMetricsRes] = await Promise.all([
         policiesQuery,
         clientsQuery,
         collectionsQuery,
         usersQuery,
         installmentsQuery,
-        supabase.from('unified_performance_metrics').select('*')
+        unifiedMetricsQuery
       ]);
 
       if (policiesRes.error) throw new Error(policiesRes.error.message);
@@ -130,13 +136,16 @@ export default function Dashboard() {
       
       const monthlyTotal = monthlyNewBusiness + monthlyCollections;
 
-      // Get top and bottom agents
+      // Get top and bottom agents by branch
       let agentsQuery = supabase
         .from('profiles')
         .select('id, full_name')
         .limit(100);
       
-      // Filter agents by active branch is handled by RLS automatically
+      // If there's an active branch, filter agents by that branch
+      if (activeBranch) {
+        agentsQuery = agentsQuery.eq('active_branch_id', activeBranch.id);
+      }
       
       const { data: agentsData } = await agentsQuery;
 
@@ -226,11 +235,11 @@ export default function Dashboard() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeBranch]);
 
   useEffect(() => {
     fetchStats();
-  }, [fetchStats]);
+  }, [fetchStats, activeBranch]);
 
   if (loading) {
     return (
