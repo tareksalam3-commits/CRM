@@ -52,36 +52,37 @@ export async function calculateAgentPerformance(
       return { success: false, error: `خطأ في جلب بيانات المندوب: ${agentError.message}` };
     }
 
-    // Get collections
-    const { data: collections, error: collectionsError } = await supabase
-      .from('collections')
-      .select('amount, is_new_business, policy:policies(agent_id)')
+    // Get collections using unified metrics
+    const { data: metrics, error: metricsError } = await supabase
+      .from('unified_performance_metrics')
+      .select('amount, is_new_business, is_first_year_collection')
       .gte('collection_date', monthStart)
       .lt('collection_date', monthEnd)
-      .eq('policy.agent_id', agent_id);
+      .eq('agent_id', agent_id);
 
-    if (collectionsError) {
-      return { success: false, error: `خطأ في جلب التحصيلات: ${collectionsError.message}` };
+    if (metricsError) {
+      return { success: false, error: `خطأ في جلب البيانات: ${metricsError.message}` };
     }
 
     // Calculate totals
-    const new_business = collections
-      ?.filter(c => c.is_new_business)
-      .reduce((sum, c) => sum + Number(c.amount), 0) || 0;
+    const new_business = metrics
+      ?.filter(m => m.is_new_business)
+      .reduce((sum, m) => sum + Number(m.amount), 0) || 0;
 
-    const collections_total = collections
-      ?.filter(c => !c.is_new_business)
-      .reduce((sum, c) => sum + Number(c.amount), 0) || 0;
+    const collections_total = metrics
+      ?.filter(m => !m.is_new_business && m.is_first_year_collection)
+      .reduce((sum, m) => sum + Number(m.amount), 0) || 0;
 
     const total = new_business + collections_total;
 
-    // Get target
+    // Get target (fixed query)
     const { data: targetData } = await supabase
       .from('targets')
       .select('target_amount')
-      .eq('agent_id', agent_id)
-      .eq('month', month)
+      .eq('user_id', agent_id)
+      .eq('period_number', month)
       .eq('year', year)
+      .eq('period_type', 'monthly')
       .single();
 
     const target = targetData?.target_amount || 0;
@@ -145,36 +146,37 @@ export async function calculateBranchPerformance(
 
     const agentIds = agents?.map(a => a.id) || [];
 
-    // Get collections for all agents in this branch
-    const { data: collections, error: collectionsError } = await supabase
-      .from('collections')
-      .select('amount, is_new_business, policy:policies(agent_id)')
+    // Get collections using unified metrics
+    const { data: metrics, error: metricsError } = await supabase
+      .from('unified_performance_metrics')
+      .select('amount, is_new_business, is_first_year_collection')
       .gte('collection_date', monthStart)
       .lt('collection_date', monthEnd)
-      .in('policy.agent_id', agentIds);
+      .in('agent_id', agentIds);
 
-    if (collectionsError) {
-      return { success: false, error: `خطأ في جلب التحصيلات: ${collectionsError.message}` };
+    if (metricsError) {
+      return { success: false, error: `خطأ في جلب البيانات: ${metricsError.message}` };
     }
 
     // Calculate totals
-    const new_business = collections
-      ?.filter(c => c.is_new_business)
-      .reduce((sum, c) => sum + Number(c.amount), 0) || 0;
+    const new_business = metrics
+      ?.filter(m => m.is_new_business)
+      .reduce((sum, m) => sum + Number(m.amount), 0) || 0;
 
-    const collections_total = collections
-      ?.filter(c => !c.is_new_business)
-      .reduce((sum, c) => sum + Number(c.amount), 0) || 0;
+    const collections_total = metrics
+      ?.filter(m => !m.is_new_business && m.is_first_year_collection)
+      .reduce((sum, m) => sum + Number(m.amount), 0) || 0;
 
     const total = new_business + collections_total;
 
-    // Get target
+    // Get target (fixed query)
     const { data: targetData } = await supabase
       .from('targets')
       .select('target_amount')
-      .in('agent_id', agentIds)
-      .eq('month', month)
-      .eq('year', year);
+      .in('user_id', agentIds)
+      .eq('period_number', month)
+      .eq('year', year)
+      .eq('period_type', 'monthly');
 
     const target = targetData?.reduce((sum, t) => sum + Number(t.target_amount), 0) || 0;
     const achievement_rate = target > 0 ? (total / target) * 100 : 0;

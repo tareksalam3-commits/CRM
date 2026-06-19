@@ -78,37 +78,48 @@ export default function Dashboard() {
         collectionsQuery = collectionsQuery.in('branch_id', branchFilter);
       }
 
-      const [policiesRes, clientsRes, collectionsRes, usersRes, installmentsRes] = await Promise.all([
+      const [policiesRes, clientsRes, collectionsRes, usersRes, installmentsRes, unifiedMetricsRes] = await Promise.all([
         policiesQuery,
         clientsQuery,
         collectionsQuery,
         usersQuery,
         installmentsQuery,
+        supabase.from('unified_performance_metrics').select('*')
       ]);
 
       if (policiesRes.error) throw new Error(policiesRes.error.message);
       if (collectionsRes.error) throw new Error(collectionsRes.error.message);
       if (installmentsRes.error) throw new Error(installmentsRes.error.message);
+      if (unifiedMetricsRes.error) throw new Error(unifiedMetricsRes.error.message);
 
       const policies = policiesRes.data || [];
-      const collections = collectionsRes.data || [];
       const installments = installmentsRes.data || [];
+      const unifiedMetrics = unifiedMetricsRes.data || [];
 
-      const totalPremiums = installments.reduce((s, i: { amount: number }) => s + Number(i.amount), 0);
-      const totalCollected = collections.reduce((s, c: { amount: number }) => s + Number(c.amount), 0);
+      // Unified Logic: Use only first year collections
+      const validCollections = unifiedMetrics.filter((m: any) => m.is_first_year_collection);
+      const totalCollected = validCollections.reduce((s, c: any) => s + Number(c.amount), 0);
+      
+      // Total premiums should also be first-year only for rate calculation
+      const totalPremiums = installments.filter((i: any) => {
+        const policy = i.policy as any;
+        return policy?.first_year_end ? i.due_date <= policy.first_year_end : true;
+      }).reduce((s, i: { amount: number }) => s + Number(i.amount), 0);
 
       // Calculate monthly metrics
       const now_date = new Date();
-      const monthStart = new Date(now_date.getFullYear(), now_date.getMonth(), 1).toISOString();
-      const monthEnd = new Date(now_date.getFullYear(), now_date.getMonth() + 1, 0).toISOString();
+      const monthStart = new Date(now_date.getFullYear(), now_date.getMonth(), 1).toISOString().split('T')[0];
+      const monthEnd = new Date(now_date.getFullYear(), now_date.getMonth() + 1, 0).toISOString().split('T')[0];
       
-      // Calculate monthly new business (collections where is_new_business = true)
-      const monthlyNewBusinessData = collections.filter((c: any) => c.created_at >= monthStart && c.created_at <= monthEnd && c.is_new_business);
-      const monthlyNewBusiness = monthlyNewBusinessData.reduce((s, c: any) => s + Number(c.amount), 0);
+      // Monthly New Business: First installments paid this month
+      const monthlyNewBusiness = unifiedMetrics
+        .filter((m: any) => m.is_new_business && m.collection_date >= monthStart && m.collection_date <= monthEnd)
+        .reduce((s, m: any) => s + Number(m.amount), 0);
       
-      // Calculate monthly collections (collections where is_new_business = false)
-      const monthlyCollectionsData = collections.filter((c: any) => c.created_at >= monthStart && c.created_at <= monthEnd && !c.is_new_business);
-      const monthlyCollections = monthlyCollectionsData.reduce((s, c: any) => s + Number(c.amount), 0);
+      // Monthly Collections: Subsequent installments paid this month within first year
+      const monthlyCollections = unifiedMetrics
+        .filter((m: any) => !m.is_new_business && m.is_first_year_collection && m.collection_date >= monthStart && m.collection_date <= monthEnd)
+        .reduce((s, m: any) => s + Number(m.amount), 0);
 
       // Get top and bottom agents
       let agentsQuery = supabase
@@ -120,16 +131,16 @@ export default function Dashboard() {
       
       const { data: agentsData } = await agentsQuery;
 
-      const agentStats = await Promise.all(
-        (agentsData || []).map(async (agent: any) => {
-          const { data: agentPolicies } = await supabase
-            .from('policies')
-            .select('annual_premium')
-            .eq('agent_id', agent.id);
-          const production = agentPolicies?.reduce((s: number, p: any) => s + Number(p.annual_premium), 0) || 0;
-          return { name: agent.full_name, production };
-        })
-      );
+      const agentStats = (agentsData || []).map((agent: any) => {
+        const agentMetrics = unifiedMetrics.filter((m: any) => 
+          m.agent_id === agent.id && 
+          m.collection_date >= monthStart && 
+          m.collection_date <= monthEnd &&
+          (m.is_new_business || m.is_first_year_collection)
+        );
+        const production = agentMetrics.reduce((s, m: any) => s + Number(m.amount), 0);
+        return { name: agent.full_name, production };
+      });
 
       const sortedAgents = agentStats.sort((a, b) => b.production - a.production);
       const topAgents = sortedAgents.slice(0, 5);

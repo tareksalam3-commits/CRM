@@ -69,76 +69,59 @@ export default function MonthClosing() {
       const nextYear = selectedMonth === 12 ? selectedYear + 1 : selectedYear;
       const monthEnd = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
 
-      const [policiesRes, collectionsRes, clientsRes, installmentsRes, closingsRes, agentCollectionsRes] =
+      const [metricsRes, installmentsRes, closingsRes] =
         await Promise.all([
           supabase
-            .from('policies')
-            .select('annual_premium, created_at')
-            .gte('created_at', monthStart)
-            .lt('created_at', monthEnd),
-          supabase
-            .from('collections')
-            .select('amount, is_new_business')
+            .from('unified_performance_metrics')
+            .select('*, collector:profiles!collections_collected_by_fkey(full_name)')
             .gte('collection_date', monthStart)
             .lt('collection_date', monthEnd),
           supabase
-            .from('clients')
-            .select('id', { count: 'exact', head: true })
-            .gte('created_at', monthStart)
-            .lt('created_at', monthEnd),
-          supabase
             .from('installments')
-            .select('amount, status, due_date')
+            .select('amount, due_date, policy:policies(first_year_end)')
             .gte('due_date', monthStart)
             .lt('due_date', monthEnd),
           supabase.from('month_closings').select('month, year'),
-          supabase
-            .from('collections')
-            .select('*, policy:policies(agent_id, branch_id), collector:profiles(full_name, manager_id)')
-            .gte('collection_date', monthStart)
-            .lt('collection_date', monthEnd),
         ]);
 
-      const policies = policiesRes.data || [];
-      const collections = collectionsRes.data || [];
+      const metrics = metricsRes.data || [];
       const installments = installmentsRes.data || [];
 
-      // Calculate new business and collections
-      const newBusiness = collections.filter(c => c.is_new_business).reduce((s, c) => s + Number(c.amount), 0);
-      const collectionsTotal = collections.filter(c => !c.is_new_business).reduce((s, c) => s + Number(c.amount), 0);
-      const totalCollected = collections.reduce((s, c) => s + Number(c.amount), 0);
-      const totalRequired = installments.reduce((s, i) => s + Number(i.amount), 0);
-      const totalOverdue = installments.filter(i => i.status === 'overdue').reduce((s, i) => s + Number(i.amount), 0);
+      // Unified Logic: Calculate new business and collections (first year only)
+      const newBusiness = metrics.filter(m => m.is_new_business).reduce((s, m) => s + Number(m.amount), 0);
+      const collectionsTotal = metrics.filter(m => !m.is_new_business && m.is_first_year_collection).reduce((s, m) => s + Number(m.amount), 0);
+      const totalCollected = newBusiness + collectionsTotal;
+      
+      const totalRequired = installments
+        .filter(i => i.due_date <= (i.policy?.first_year_end || '9999-12-31'))
+        .reduce((s, i) => s + Number(i.amount), 0);
 
       setMonthData({
         newBusiness,
         collections: collectionsTotal,
         totalCollected,
-        totalOverdue,
-        newClients: clientsRes.count || 0,
-        newPolicies: policies.length,
+        totalOverdue: 0, // Not needed as per requirements
+        newClients: 0, // Not needed
+        newPolicies: 0, // Not needed
         collectionRate: totalRequired > 0 ? (totalCollected / totalRequired) * 100 : 0,
       });
 
       // Process agent collections
       const agentMap = new Map<string, { name: string; newBusiness: number; collections: number; total: number; count: number }>();
-      if (agentCollectionsRes.data) {
-        for (const col of agentCollectionsRes.data as any[]) {
-          const agentId = col.policy?.agent_id;
-          if (agentId) {
-            const existing = agentMap.get(agentId) || { name: '', newBusiness: 0, collections: 0, total: 0, count: 0 };
-            const amount = Number(col.amount);
-            const isNewBusiness = col.is_new_business;
+      for (const m of metrics) {
+        if (!m.is_new_business && !m.is_first_year_collection) continue;
+        
+        const agentId = m.agent_id;
+        const existing = agentMap.get(agentId) || { name: m.collector?.full_name || 'Unknown', newBusiness: 0, collections: 0, total: 0, count: 0 };
+        const amount = Number(m.amount);
 
-            agentMap.set(agentId, {
-              name: col.collector?.full_name || 'Unknown',
-              newBusiness: existing.newBusiness + (isNewBusiness ? amount : 0),
-              collections: existing.collections + (!isNewBusiness ? amount : 0),
-              total: existing.total + amount,
-              count: existing.count + 1,
-            });
-          }
-        }
+        agentMap.set(agentId, {
+          name: existing.name,
+          newBusiness: existing.newBusiness + (m.is_new_business ? amount : 0),
+          collections: existing.collections + (!m.is_new_business ? amount : 0),
+          total: existing.total + amount,
+          count: existing.count + 1,
+        });
       }
 
       const agentCollectionsArray = Array.from(agentMap.entries()).map(([agentId, data]) => ({
@@ -301,29 +284,23 @@ export default function MonthClosing() {
       </div>
 
       {/* Summary Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
         <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg">
-          <p className="text-sm text-slate-600 dark:text-slate-400">الإنتاج الجديد</p>
+          <p className="text-sm text-slate-600 dark:text-slate-400">الإنتاج الجديد المسدد</p>
           <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">
             {formatCurrency(monthData.newBusiness)}
           </p>
         </div>
         <div className="bg-green-50 dark:bg-green-900/20 p-4 rounded-lg">
-          <p className="text-sm text-slate-600 dark:text-slate-400">التحصيلات</p>
+          <p className="text-sm text-slate-600 dark:text-slate-400">التحصيل المسدد</p>
           <p className="text-2xl font-bold text-green-600 dark:text-green-400">
             {formatCurrency(monthData.collections)}
           </p>
         </div>
         <div className="bg-purple-50 dark:bg-purple-900/20 p-4 rounded-lg">
-          <p className="text-sm text-slate-600 dark:text-slate-400">معدل التحصيل</p>
+          <p className="text-sm text-slate-600 dark:text-slate-400">الإجمالي</p>
           <p className="text-2xl font-bold text-purple-600 dark:text-purple-400">
-            {formatPercent(monthData.collectionRate)}
-          </p>
-        </div>
-        <div className="bg-amber-50 dark:bg-amber-900/20 p-4 rounded-lg">
-          <p className="text-sm text-slate-600 dark:text-slate-400">المتأخر</p>
-          <p className="text-2xl font-bold text-amber-600 dark:text-amber-400">
-            {formatCurrency(monthData.totalOverdue)}
+            {formatCurrency(monthData.totalCollected)}
           </p>
         </div>
       </div>

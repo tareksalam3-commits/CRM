@@ -70,23 +70,15 @@ export default function ComprehensiveReports() {
     const monthEnd = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
 
     const { data, error } = await supabase
-      .from('collections')
+      .from('unified_performance_metrics')
       .select(`
-        id,
+        collection_id,
         amount,
         collection_date,
-        receipt_number,
         is_new_business,
-        policy:policies(
-          id,
-          policy_number,
-          product,
-          insurance_company,
-          annual_premium,
-          agent:profiles(full_name, email),
-          client:clients(name, phone)
-        ),
-        installment:installments(installment_number)
+        policy_id,
+        agent_id,
+        collector:profiles!collections_collected_by_fkey(full_name, email)
       `)
       .eq('is_new_business', true)
       .gte('collection_date', monthStart)
@@ -95,14 +87,12 @@ export default function ComprehensiveReports() {
 
     if (!error && data) {
       const totalNewBusiness = data.reduce((sum: number, c: any) => sum + Number(c.amount), 0);
-      const newClientsCount = new Set(data.map((c: any) => c.policy?.client?.name)).size;
 
       setReportData({
         type: 'New Business Report',
         month: selectedMonth,
         year: selectedYear,
         totalNewBusiness,
-        newClientsCount,
         collections: data,
         generatedAt: new Date().toLocaleString('ar-EG'),
       });
@@ -119,24 +109,18 @@ export default function ComprehensiveReports() {
     const monthEnd = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
 
     const { data, error } = await supabase
-      .from('collections')
+      .from('unified_performance_metrics')
       .select(`
-        id,
+        collection_id,
         amount,
         collection_date,
-        receipt_number,
         is_new_business,
-        policy:policies(
-          id,
-          policy_number,
-          product,
-          insurance_company,
-          agent:profiles(full_name, email),
-          client:clients(name, phone)
-        ),
-        installment:installments(installment_number)
+        is_first_year_collection,
+        agent_id,
+        collector:profiles!collections_collected_by_fkey(full_name, email)
       `)
       .eq('is_new_business', false)
+      .eq('is_first_year_collection', true)
       .gte('collection_date', monthStart)
       .lt('collection_date', monthEnd)
       .order('collection_date', { ascending: false });
@@ -164,30 +148,33 @@ export default function ComprehensiveReports() {
     const nextYear = selectedMonth === 12 ? selectedYear + 1 : selectedYear;
     const monthEnd = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
 
-    // Get all collections for the month
-    const { data: collections } = await supabase
-      .from('collections')
-      .select('amount, is_new_business')
+    // Get all collections for the month using unified metrics
+    const { data: metrics } = await supabase
+      .from('unified_performance_metrics')
+      .select('amount, is_new_business, is_first_year_collection')
       .gte('collection_date', monthStart)
       .lt('collection_date', monthEnd);
 
-    // Get all installments due this month
+    // Get all installments due this month (first year only)
     const { data: installments } = await supabase
       .from('installments')
-      .select('amount, status')
+      .select('amount, due_date, policy:policies(first_year_end)')
       .gte('due_date', monthStart)
       .lt('due_date', monthEnd);
 
-    const newBusiness = collections
-      ?.filter(c => c.is_new_business)
-      .reduce((sum, c) => sum + Number(c.amount), 0) || 0;
+    const newBusiness = metrics
+      ?.filter(m => m.is_new_business)
+      .reduce((sum, m) => sum + Number(m.amount), 0) || 0;
 
-    const collectionsTotal = collections
-      ?.filter(c => !c.is_new_business)
-      .reduce((sum, c) => sum + Number(c.amount), 0) || 0;
+    const collectionsTotal = metrics
+      ?.filter(m => !m.is_new_business && m.is_first_year_collection)
+      .reduce((sum, m) => sum + Number(m.amount), 0) || 0;
 
-    const totalDue = installments?.reduce((sum, i) => sum + Number(i.amount), 0) || 0;
-    const totalPaid = collections?.reduce((sum, c) => sum + Number(c.amount), 0) || 0;
+    const totalDue = installments
+      ?.filter(i => i.due_date <= (i.policy?.first_year_end || '9999-12-31'))
+      .reduce((sum, i) => sum + Number(i.amount), 0) || 0;
+      
+    const totalPaid = newBusiness + collectionsTotal;
 
     setReportData({
       type: 'Monthly Closing Report',

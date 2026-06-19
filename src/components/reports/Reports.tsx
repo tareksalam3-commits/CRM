@@ -56,10 +56,10 @@ export default function Reports() {
         // ── Personal / team production ──────────────────────────────
         case 'production': {
           let query = supabase
-            .from('policies')
-            .select('agent_id, annual_premium, status, profiles!policies_agent_id_fkey(full_name)')
-            .gte('created_at', monthStart)
-            .lt('created_at', monthEnd);
+            .from('unified_performance_metrics')
+            .select('agent_id, amount, is_new_business, is_first_year_collection, collection_date')
+            .gte('collection_date', monthStart)
+            .lt('collection_date', monthEnd);
 
           if (activeBranchAccess?.role === 'agent') {
             query = query.eq('agent_id', profile?.id);
@@ -68,22 +68,25 @@ export default function Reports() {
             query = query.in('agent_id', subordinateIds);
           }
 
-          const { data: policies, error: policiesError } = await query;
-          if (policiesError) {
-            console.error('Error fetching policies:', policiesError);
-            toast.error('خطأ في تحميل بيانات الوثائق');
+          const { data: metrics, error: metricsError } = await query;
+          if (metricsError) {
+            console.error('Error fetching metrics:', metricsError);
+            toast.error('خطأ في تحميل بيانات الإنتاج');
             setLoading(false);
             return;
           }
 
           const grouped: Record<string, { name: string; total: number; count: number; active: number }> = {};
-          (policies || []).forEach((p: Record<string, unknown>) => {
-            const agentId = p.agent_id as string;
-            const prof = p.profiles as { full_name: string } | null;
+          (metrics || []).forEach((m: any) => {
+            const agentId = m.agent_id;
+            const prof = allProfiles.find(p => p.id === agentId);
             if (!grouped[agentId]) grouped[agentId] = { name: prof?.full_name || 'غير معروف', total: 0, count: 0, active: 0 };
-            grouped[agentId].total += Number(p.annual_premium);
-            grouped[agentId].count++;
-            if (p.status === 'active') grouped[agentId].active++;
+            
+            // Only count if it's new business or a valid first-year collection
+            if (m.is_new_business || m.is_first_year_collection) {
+              grouped[agentId].total += Number(m.amount);
+              grouped[agentId].count++;
+            }
           });
 
           data = Object.values(grouped).sort((a, b) => (b as {total:number}).total - (a as {total:number}).total).map((r, i) => ({
@@ -107,21 +110,21 @@ export default function Reports() {
         // ── Collection ──────────────────────────────────────────────
         case 'collection': {
           let query = supabase
-            .from('collections')
-            .select('collected_by, amount, profiles!collections_collected_by_fkey(full_name)')
+            .from('unified_performance_metrics')
+            .select('agent_id, amount, is_new_business, is_first_year_collection, collection_date')
             .gte('collection_date', monthStart)
             .lt('collection_date', monthEnd);
 
           if (activeBranchAccess?.role === 'agent') {
-            query = query.eq('collected_by', profile?.id);
+            query = query.eq('agent_id', profile?.id);
           } else if (activeBranchAccess && ['team_leader', 'supervisor', 'general_supervisor'].includes(activeBranchAccess.role)) {
             const subordinateIds = [profile.id, ...getSubordinateIds(profile.id, allProfiles)];
-            query = query.in('collected_by', subordinateIds);
+            query = query.in('agent_id', subordinateIds);
           }
 
-          const { data: collections, error: collectionsError } = await query;
-          if (collectionsError) {
-            console.error('Error fetching collections:', collectionsError);
+          const { data: metrics, error: metricsError } = await query;
+          if (metricsError) {
+            console.error('Error fetching metrics:', metricsError);
             toast.error('خطأ في تحميل بيانات التحصيل');
             setLoading(false);
             return;
@@ -129,7 +132,10 @@ export default function Reports() {
 
           const { data: installments, error: installmentsError } = await supabase
             .from('installments')
-            .select('amount, status, due_date');
+            .select('amount, due_date, policy:policies(agent_id, first_year_end)')
+            .gte('due_date', monthStart)
+            .lt('due_date', monthEnd);
+            
           if (installmentsError) {
             console.error('Error fetching installments:', installmentsError);
             toast.error('خطأ في تحميل بيانات الأقساط');
@@ -138,12 +144,14 @@ export default function Reports() {
           }
 
           const grouped: Record<string, { name: string; total: number; count: number }> = {};
-          (collections || []).forEach((c: Record<string, unknown>) => {
-            const cBy = c.collected_by as string;
-            const prof = c.profiles as { full_name: string } | null;
-            if (!grouped[cBy]) grouped[cBy] = { name: prof?.full_name || 'غير معروف', total: 0, count: 0 };
-            grouped[cBy].total += Number(c.amount);
-            grouped[cBy].count++;
+          (metrics || []).forEach((m: any) => {
+            if (!m.is_first_year_collection) return; // Only count first year collections
+            
+            const agentId = m.agent_id;
+            const prof = allProfiles.find(p => p.id === agentId);
+            if (!grouped[agentId]) grouped[agentId] = { name: prof?.full_name || 'غير معروف', total: 0, count: 0 };
+            grouped[agentId].total += Number(m.amount);
+            grouped[agentId].count++;
           });
 
           data = Object.values(grouped).sort((a, b) => (b as {total:number}).total - (a as {total:number}).total).map((r, i) => ({
@@ -153,11 +161,15 @@ export default function Reports() {
             'إجمالي المحصل': formatCurrency((r as {total:number}).total),
           }));
 
-          const totalCollected = (collections || []).reduce((s, c: Record<string, unknown>) => s + Number(c.amount), 0);
+          const totalCollected = (metrics || [])
+            .filter((m: any) => m.is_first_year_collection)
+            .reduce((s, m: any) => s + Number(m.amount), 0);
+            
           const totalDue = (installments || [])
-            .filter((i: Record<string, unknown>) => i.status !== 'paid' && (i.due_date as string) < monthEnd && (i.due_date as string) >= monthStart)
-            .reduce((s, i: Record<string, unknown>) => s + Number(i.amount), 0);
-          const rate = totalDue > 0 ? (totalCollected / (totalCollected + totalDue)) * 100 : 0;
+            .filter((i: any) => i.due_date <= (i.policy?.first_year_end || '9999-12-31'))
+            .reduce((s, i: any) => s + Number(i.amount), 0);
+            
+          const rate = totalDue > 0 ? (totalCollected / totalDue) * 100 : 0;
 
           newKpis.push(
             { label: 'إجمالي المحصل', value: formatCurrency(totalCollected), icon: Wallet, color: 'text-emerald-600', trend: 'up' },

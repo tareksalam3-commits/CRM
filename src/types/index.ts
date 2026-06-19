@@ -163,6 +163,9 @@ export interface Policy {
   agent?: Profile;
   branch?: Branch;
   installments?: Installment[];
+  first_year_start?: string;
+  first_year_end?: string;
+  has_new_business_counted?: boolean;
 }
 
 export interface Installment {

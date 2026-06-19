@@ -687,6 +687,9 @@ export default function PolicyManagement() {
                 { label: 'تاريخ السريان', value: formatDate(selectedPolicy.start_date) },
                 { label: 'طريقة السداد', value: PAYMENT_FREQUENCY_LABELS[selectedPolicy.payment_frequency] },
                 { label: 'المندوب', value: (selectedPolicy.agent as unknown as { full_name: string })?.full_name },
+                { label: 'بداية السنة الأولى', value: selectedPolicy.first_year_start ? formatDate(selectedPolicy.first_year_start) : '—' },
+                { label: 'نهاية السنة الأولى', value: selectedPolicy.first_year_end ? formatDate(selectedPolicy.first_year_end) : '—' },
+                { label: 'احتسب كإنتاج جديد', value: selectedPolicy.has_new_business_counted ? 'نعم' : 'لا' },
               ].map(({ label, value, dir }) => (
                 <div key={label} className="flex justify-between items-center py-1.5 border-b border-slate-50 dark:border-slate-700/50 last:border-0">
                   <span className="text-slate-500 dark:text-slate-400">{label}</span>

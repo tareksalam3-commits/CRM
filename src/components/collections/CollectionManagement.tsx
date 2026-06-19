@@ -101,9 +101,6 @@ export default function CollectionManagement() {
         return;
       }
 
-      // Determine if this is new business (first installment only)
-      const is_new_business = selectedInstallment.installment_number === 1;
-
       const { error: insertError } = await supabase.from('collections').insert({
         installment_id: selectedInstallment.id,
         policy_id: selectedInstallment.policy_id,
@@ -112,7 +109,7 @@ export default function CollectionManagement() {
         receipt_number: formData.receipt_number || null,
         collected_by: profile.id,
         notes: formData.notes || null,
-        is_new_business,
+        // Logic for is_new_business is now handled by database trigger
       });
 
       if (insertError) {
@@ -216,8 +213,16 @@ export default function CollectionManagement() {
     pending: installments.filter(i => i.status === 'pending').length,
     overdue: installments.filter(i => i.status === 'overdue').length,
     paid: installments.filter(i => i.status === 'paid').length,
-    totalAmount: installments.reduce((s, i) => s + (i.amount || 0), 0),
-    collectedAmount: installments.filter(i => i.status === 'paid').reduce((s, i) => s + (i.amount || 0), 0),
+    // Unified Logic: Sum of amounts for first year installments only
+    totalAmount: installments.filter(i => {
+      const policy = i.policy as any;
+      return policy?.first_year_end ? i.due_date <= policy.first_year_end : true;
+    }).reduce((s, i) => s + (i.amount || 0), 0),
+    collectedAmount: installments.filter(i => {
+      const policy = i.policy as any;
+      const isFirstYear = policy?.first_year_end ? i.due_date <= policy.first_year_end : true;
+      return i.status === 'paid' && isFirstYear;
+    }).reduce((s, i) => s + (i.amount || 0), 0),
   };
 
   if (loading) {

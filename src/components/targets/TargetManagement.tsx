@@ -58,7 +58,7 @@ export default function TargetManagement() {
   const [form, setForm] = useState({
     user_id: '',
     year: new Date().getFullYear(),
-    month: new Date().getMonth() + 1,
+    period_number: new Date().getMonth() + 1,
     target_amount: '',
   });
 
@@ -161,7 +161,7 @@ export default function TargetManagement() {
       user_id: form.user_id,
       period_type: 'monthly' as const,
       year: form.year,
-      period_number: form.month,
+      period_number: form.period_number,
       target_amount: Number(form.target_amount),
     };
 
@@ -305,14 +305,14 @@ export default function TargetManagement() {
   function closeModal() {
     setModalMode(null);
     setEditingTarget(null);
-    setForm({ user_id: '', year: new Date().getFullYear(), month: new Date().getMonth() + 1, target_amount: '' });
+    setForm({ user_id: '', year: new Date().getFullYear(), period_number: new Date().getMonth() + 1, target_amount: '' });
     setBulkForm({ user_id: '', year: new Date().getFullYear(), monthly_amount: '' });
     setCopyForm({ source_year: new Date().getFullYear() - 1, target_year: new Date().getFullYear() });
   }
 
   function openAddModal() {
     setEditingTarget(null);
-    setForm({ user_id: '', year: new Date().getFullYear(), month: new Date().getMonth() + 1, target_amount: '' });
+    setForm({ user_id: '', year: new Date().getFullYear(), period_number: new Date().getMonth() + 1, target_amount: '' });
     setModalMode('add');
   }
 
@@ -328,7 +328,7 @@ export default function TargetManagement() {
 
   function startEdit(t: EnrichedTarget) {
     setEditingTarget(t);
-    setForm({ user_id: t.user_id, year: t.year, month: t.period_number, target_amount: String(t.target_amount) });
+    setForm({ user_id: t.user_id, year: t.year, period_number: t.period_number, target_amount: String(t.target_amount) });
     setModalMode('edit');
   }
 
@@ -466,7 +466,7 @@ export default function TargetManagement() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">الشهر</label>
-                  <select value={form.month} onChange={e => setForm({ ...form, month: Number(e.target.value) })}
+                  <select value={form.period_number} onChange={e => setForm({ ...form, period_number: Number(e.target.value) })}
                     className="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none">
                     {MONTHS.map(m => <option key={m.num} value={m.num}>{m.name}</option>)}
                   </select>
