@@ -3,11 +3,12 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { ROLE_LABELS, UserRole } from '../../types';
-import { canAccessPage } from '../../lib/rbac';
+import { canAccessPage, getEffectiveRole } from '../../lib/rbac';
 import {
   LayoutDashboard, Users, UserCircle, FileText, Wallet, Target,
   CheckSquare, Bell, Calendar, BarChart3, ClipboardList, Settings,
   Moon, Sun, LogOut, Menu, X, Shield, ChevronLeft, GitBranch, Building2,
+  ChevronDown,
 } from 'lucide-react';
 
 interface NavItem {
@@ -35,20 +36,32 @@ const navItems: NavItem[] = [
 ];
 
 export default function Sidebar() {
-  const { profile, signOut } = useAuth();
+  const { profile, signOut, activeBranch, accessibleBranches, setActiveBranch, activeBranchAccess } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
   const [isOpen, setIsOpen] = useState(false);
+  const [showBranchMenu, setShowBranchMenu] = useState(false);
 
   const filteredItems = navItems.filter(item => {
-    if (!profile) return false;
-    return canAccessPage(profile.role, item.path);
+    if (!profile || !activeBranchAccess) return false;
+    const effectiveRole = getEffectiveRole(activeBranchAccess);
+    return effectiveRole && canAccessPage(effectiveRole, item.path);
   });
 
   async function handleLogout() {
     await signOut();
     navigate('/login');
   }
+
+  async function handleBranchChange(branchId: string) {
+    const branch = accessibleBranches.find(b => b.id === branchId);
+    if (branch) {
+      await setActiveBranch(branch);
+      setShowBranchMenu(false);
+    }
+  }
+
+  const effectiveRole = activeBranchAccess ? getEffectiveRole(activeBranchAccess) : null;
 
   return (
     <>
@@ -96,10 +109,48 @@ export default function Sidebar() {
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-slate-900 dark:text-white truncate">{profile?.full_name}</p>
-                <p className="text-xs text-slate-500 dark:text-slate-400">{profile ? ROLE_LABELS[profile.role as UserRole] : ''}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  {effectiveRole ? ROLE_LABELS[effectiveRole as UserRole] : ''}
+                </p>
               </div>
             </div>
           </div>
+
+          {/* Branch Selector */}
+          {accessibleBranches.length > 0 && (
+            <div className="p-4 border-b border-slate-200 dark:border-slate-700">
+              <div className="relative">
+                <button
+                  onClick={() => setShowBranchMenu(!showBranchMenu)}
+                  className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-white hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors"
+                >
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                    <Building2 className="w-4 h-4 flex-shrink-0" />
+                    <span className="text-sm font-medium truncate">{activeBranch?.name || 'اختر فرع'}</span>
+                  </div>
+                  <ChevronDown className={`w-4 h-4 flex-shrink-0 transition-transform ${showBranchMenu ? 'rotate-180' : ''}`} />
+                </button>
+
+                {showBranchMenu && (
+                  <div className="absolute top-full left-0 right-0 mt-2 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg shadow-lg z-10">
+                    {accessibleBranches.map(branch => (
+                      <button
+                        key={branch.id}
+                        onClick={() => handleBranchChange(branch.id)}
+                        className={`w-full text-right px-3 py-2 text-sm transition-colors ${
+                          activeBranch?.id === branch.id
+                            ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 font-medium'
+                            : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-600'
+                        }`}
+                      >
+                        {branch.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Navigation */}
           <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">

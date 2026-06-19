@@ -1,15 +1,19 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
-import { Profile } from '../types';
+import { Profile, Branch, UserBranchAccess } from '../types';
 
 interface AuthContextType {
   session: Session | null;
   user: User | null;
   profile: Profile | null;
+  activeBranch: Branch | null;
+  activeBranchAccess: UserBranchAccess | null;
+  accessibleBranches: Branch[];
   loading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
+  setActiveBranch: (branch: Branch | null) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -18,6 +22,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [activeBranch, setActiveBranchState] = useState<Branch | null>(null);
+  const [activeBranchAccess, setActiveBranchAccess] = useState<UserBranchAccess | null>(null);
+  const [accessibleBranches, setAccessibleBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -26,7 +33,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(currentSession);
       setUser(currentSession?.user ?? null);
       if (currentSession?.user) {
-        fetchProfile(currentSession.user.id);
+        fetchProfileAndBranches(currentSession.user.id);
       } else {
         setLoading(false);
       }
@@ -40,9 +47,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(newSession);
       setUser(newSession?.user ?? null);
       if (newSession?.user) {
-        fetchProfile(newSession.user.id);
+        fetchProfileAndBranches(newSession.user.id);
       } else {
         setProfile(null);
+        setActiveBranchState(null);
+        setActiveBranchAccess(null);
+        setAccessibleBranches([]);
         setLoading(false);
       }
     });
@@ -50,22 +60,56 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => subscription?.unsubscribe();
   }, []);
 
-  async function fetchProfile(userId: string) {
+  async function fetchProfileAndBranches(userId: string) {
     try {
-      const { data, error } = await supabase
+      // Fetch user profile
+      const { data: profileData, error: profileError } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', userId)
         .maybeSingle();
 
-      if (error) {
-        console.error('Error fetching profile:', error);
-      } else if (data) {
-        setProfile(data);
+      if (profileError) {
+        console.error('Error fetching profile:', profileError);
+      } else if (profileData) {
+        setProfile(profileData);
       }
-      // If data is null (no profile row yet), profile stays null
+
+      // Fetch user branch access
+      const { data: accessData, error: accessError } = await supabase
+        .from('user_branch_access')
+        .select('*, branch:branches(*)')
+        .eq('user_id', userId)
+        .eq('is_active', true);
+
+      if (accessError) {
+        console.error('Error fetching branch access:', accessError);
+      } else if (accessData && accessData.length > 0) {
+        // Extract branches from access data
+        const branches = accessData
+          .map(access => (access.branch as any))
+          .filter(branch => branch && branch.is_active);
+        
+        setAccessibleBranches(branches);
+
+        // Set active branch from localStorage or use the first one
+        const savedBranchId = localStorage.getItem(`activeBranch_${userId}`);
+        const activeBranchData = savedBranchId
+          ? branches.find(b => b.id === savedBranchId)
+          : branches[0];
+
+        if (activeBranchData) {
+          setActiveBranchState(activeBranchData);
+          
+          // Find the access record for the active branch
+          const access = accessData.find(a => a.branch_id === activeBranchData.id);
+          if (access) {
+            setActiveBranchAccess(access as UserBranchAccess);
+          }
+        }
+      }
     } catch (err) {
-      console.error('Unexpected error fetching profile:', err);
+      console.error('Unexpected error fetching profile and branches:', err);
     } finally {
       setLoading(false);
     }
@@ -78,6 +122,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  async function setActiveBranch(branch: Branch | null) {
+    if (branch && user) {
+      setActiveBranchState(branch);
+      localStorage.setItem(`activeBranch_${user.id}`, branch.id);
+
+      // Fetch the access record for this branch
+      const { data: accessData } = await supabase
+        .from('user_branch_access')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('branch_id', branch.id)
+        .maybeSingle();
+
+      if (accessData) {
+        setActiveBranchAccess(accessData as UserBranchAccess);
+      }
+    } else {
+      setActiveBranchState(null);
+      setActiveBranchAccess(null);
+      if (user) {
+        localStorage.removeItem(`activeBranch_${user.id}`);
+      }
+    }
+  }
+
   async function signIn(email: string, password: string) {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     return { error: error?.message ?? null };
@@ -86,10 +155,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function signOut() {
     await supabase.auth.signOut();
     setProfile(null);
+    setActiveBranchState(null);
+    setActiveBranchAccess(null);
+    setAccessibleBranches([]);
   }
 
   return (
-    <AuthContext.Provider value={{ session, user, profile, loading, signIn, signOut }}>
+    <AuthContext.Provider value={{ 
+      session, 
+      user, 
+      profile, 
+      activeBranch, 
+      activeBranchAccess,
+      accessibleBranches,
+      loading, 
+      signIn, 
+      signOut,
+      setActiveBranch 
+    }}>
       {children}
     </AuthContext.Provider>
   );

@@ -5,7 +5,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import Layout from './components/common/Layout';
 import LoginPage from './pages/LoginPage';
-import { canAccessPage } from './lib/rbac';
+import { canAccessPage, getEffectiveRole } from './lib/rbac';
 
 const Dashboard = lazy(() => import('./components/dashboard/Dashboard'));
 const UserManagement = lazy(() => import('./components/users/UserManagement'));
@@ -32,7 +32,7 @@ function PageLoader() {
 }
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { session, loading } = useAuth();
+  const { session, loading, activeBranch } = useAuth();
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-900">
@@ -41,11 +41,12 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
     );
   }
   if (!session) return <Navigate to="/login" replace />;
+  if (!activeBranch) return <Navigate to="/login" replace />;
   return <>{children}</>;
 }
 
 function PermissionGuard({ path, children }: { path: string; children: React.ReactNode }) {
-  const { profile, loading } = useAuth();
+  const { activeBranchAccess, loading } = useAuth();
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[50vh]">
@@ -53,7 +54,9 @@ function PermissionGuard({ path, children }: { path: string; children: React.Rea
       </div>
     );
   }
-  if (!profile || !canAccessPage(profile.role, path)) {
+  
+  const effectiveRole = getEffectiveRole(activeBranchAccess);
+  if (!effectiveRole || !canAccessPage(effectiveRole, path)) {
     return <Navigate to="/" replace />;
   }
   return <>{children}</>;
