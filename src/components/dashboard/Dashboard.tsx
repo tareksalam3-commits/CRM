@@ -113,13 +113,10 @@ export default function Dashboard() {
       // Get top and bottom agents
       let agentsQuery = supabase
         .from('profiles')
-        .select('id, full_name, user_branch_access!inner(branch_id, role)')
+        .select('id, full_name')
         .limit(100);
       
-      // Filter agents by active branch
-      if (branchFilter.length > 0) {
-        agentsQuery = agentsQuery.in('user_branch_access.branch_id', branchFilter);
-      }
+      // Filter agents by active branch is handled by RLS automatically
       
       const { data: agentsData } = await agentsQuery;
 

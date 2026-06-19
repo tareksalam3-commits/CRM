@@ -21,7 +21,8 @@ export default function Reports() {
   const [year, setYear] = useState(new Date().getFullYear());
   const [allProfiles, setAllProfiles] = useState<any[]>([]);
 
-  const canViewAdmin = profile ? canViewAdminReports(profile.role) : false;
+  const { activeBranchAccess } = useAuth();
+  const canViewAdmin = activeBranchAccess ? canViewAdminReports(activeBranchAccess.role) : false;
 
   const getSubordinateIds = (userId: string, profiles: any[]): string[] => {
     const directReports = profiles.filter(p => p.manager_id === userId).map(p => p.id);
@@ -60,9 +61,9 @@ export default function Reports() {
             .gte('created_at', monthStart)
             .lt('created_at', monthEnd);
 
-          if (profile.role === 'agent') {
-            query = query.eq('agent_id', profile.id);
-          } else if (['team_leader', 'supervisor', 'general_supervisor'].includes(profile.role)) {
+          if (activeBranchAccess?.role === 'agent') {
+            query = query.eq('agent_id', profile?.id);
+          } else if (activeBranchAccess && ['team_leader', 'supervisor', 'general_supervisor'].includes(activeBranchAccess.role)) {
             const subordinateIds = [profile.id, ...getSubordinateIds(profile.id, allProfiles)];
             query = query.in('agent_id', subordinateIds);
           }
@@ -111,9 +112,9 @@ export default function Reports() {
             .gte('collection_date', monthStart)
             .lt('collection_date', monthEnd);
 
-          if (profile.role === 'agent') {
-            query = query.eq('collected_by', profile.id);
-          } else if (['team_leader', 'supervisor', 'general_supervisor'].includes(profile.role)) {
+          if (activeBranchAccess?.role === 'agent') {
+            query = query.eq('collected_by', profile?.id);
+          } else if (activeBranchAccess && ['team_leader', 'supervisor', 'general_supervisor'].includes(activeBranchAccess.role)) {
             const subordinateIds = [profile.id, ...getSubordinateIds(profile.id, allProfiles)];
             query = query.in('collected_by', subordinateIds);
           }

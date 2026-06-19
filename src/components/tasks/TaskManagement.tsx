@@ -26,7 +26,7 @@ export default function TaskManagement() {
   async function loadData() {
     const [tasksRes, usersRes] = await Promise.all([
       supabase.from('tasks').select('*, assignee:profiles!tasks_assigned_to_fkey(full_name), creator:profiles!tasks_created_by_fkey(full_name)').order('created_at', { ascending: false }),
-      supabase.from('profiles').select('id, full_name, role').eq('is_active', true),
+      supabase.from('profiles').select('id, full_name').eq('is_active', true),
     ]);
     if (tasksRes.data) setTasks(tasksRes.data as unknown as Task[]);
     if (usersRes.data) setUsers(usersRes.data);

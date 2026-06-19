@@ -50,7 +50,7 @@ function NodeCard({ node, allUsers, canRearrange, onMove }: {
   const [expanded, setExpanded] = useState(true);
   const [showMoveMenu, setShowMoveMenu] = useState(false);
 
-  const potentialManagers = allUsers.filter(u => u.id !== node.id && u.role !== 'agent');
+    const potentialManagers = allUsers.filter(u => u.id !== node.id);
 
   return (
     <div className="relative">
@@ -118,17 +118,9 @@ export default function OrgChart() {
   const canRearrange = profile ? canRearrangeOrg(profile.role) : false;
 
   const fetchUsers = useCallback(async () => {
-    let query = supabase.from('profiles').select('*').order('role').order('full_name');
+    let query = supabase.from('profiles').select('*').order('full_name');
     
-    // Data Isolation for Org Chart
-    if (profile && !['super_admin', 'dev_manager'].includes(profile.role)) {
-      if (profile.branch_id) {
-        query = query.eq('branch_id', profile.branch_id);
-      } else {
-        // Fallback: if no branch_id, show self and subordinates
-        // Note: RLS will also handle this, but explicit filtering is better for UI
-      }
-    }
+    // Data Isolation handled by RLS automatically
 
     const { data, error } = await query;
     if (!error && data) {

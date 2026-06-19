@@ -39,20 +39,16 @@ export default function UserManagement() {
   const [selectedUserForBranch, setSelectedUserForBranch] = useState<Profile | null>(null);
   const [selectedBranches, setSelectedBranches] = useState<string[]>([]);
 
+  const { activeBranchAccess } = useAuth();
   const fetchUsers = useCallback(async () => {
-    let query = supabase.from('profiles').select('*').order('role').order('full_name');
+    let query = supabase.from('profiles').select('*').order('full_name');
     
-    // Data Isolation for User Management
-    if (profile && !['super_admin', 'dev_manager', 'general_supervisor'].includes(profile.role)) {
-      if (profile.branch_id) {
-        query = query.eq('branch_id', profile.branch_id);
-      }
-    }
+    // Data Isolation handled by RLS automatically
 
     const { data, error } = await query;
     if (!error && data) setUsers(data as Profile[]);
     setLoading(false);
-  }, [profile]);
+  }, []);
 
   const fetchBranches = useCallback(async () => {
     const { data, error } = await supabase
@@ -77,12 +73,11 @@ export default function UserManagement() {
     fetchUserBranchAccess();
   }, [fetchUsers, fetchBranches, fetchUserBranchAccess]);
 
-  const myRole = profile?.role ?? 'agent';
-  const potentialManagers = users.filter(u => u.is_active && u.role !== 'agent' && u.id !== editingUser?.id);
+  const myRole = activeBranchAccess?.role ?? 'agent';
+  const potentialManagers = users.filter(u => u.is_active && u.id !== editingUser?.id);
   const filteredUsers = users.filter(u => {
     const matchSearch = u.full_name.includes(search) || u.email.includes(search) || (u.phone ?? '').includes(search);
-    const matchRole = roleFilter === '' || u.role === roleFilter;
-    return matchSearch && matchRole;
+    return matchSearch;
   });
 
   async function handleSubmit() {
