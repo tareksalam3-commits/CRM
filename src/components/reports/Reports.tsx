@@ -22,7 +22,11 @@ export default function Reports() {
   const [allProfiles, setAllProfiles] = useState<any[]>([]);
 
   const { activeBranchAccess } = useAuth();
-  const canViewAdmin = activeBranchAccess ? canViewAdminReports(activeBranchAccess.role) : false;
+  const canViewAdmin = profile?.role
+    ? canViewAdminReports(profile.role as any)
+    : activeBranchAccess
+      ? canViewAdminReports(activeBranchAccess.role)
+      : false;
 
   const getSubordinateIds = (userId: string, profiles: any[]): string[] => {
     const directReports = profiles.filter(p => p.manager_id === userId).map(p => p.id);
