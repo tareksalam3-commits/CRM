@@ -142,15 +142,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const savedBranchId = localStorage.getItem(`activeBranch_${userId}`);
       let activeBranchData = null;
 
+      // Try to find saved branch first
       if (savedBranchId) {
         activeBranchData = branches.find(b => b.id === savedBranchId);
       }
 
-      // Fallback to first branch if saved one not found
+      // If no saved branch, try to find "طنطا 3" or "Tanta 3" branch
       if (!activeBranchData) {
+        activeBranchData = branches.find(b => 
+          b.name?.includes('طنطا') || 
+          b.name?.includes('Tanta') || 
+          b.name?.includes('tanta')
+        );
+      }
+
+      // Fallback to first branch if no special branch found
+      if (!activeBranchData && branches.length > 0) {
         activeBranchData = branches[0];
       }
 
+      // Only set if we have a valid branch
       if (activeBranchData) {
         setActiveBranchState(activeBranchData);
         
@@ -159,6 +170,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (access) {
           setActiveBranchAccess(access as UserBranchAccess);
         }
+      } else if (branches.length === 0) {
+        // If no branches available, show error
+        console.error('No branches available for user');
       }
     } catch (err) {
       console.error('Unexpected error fetching profile and branches:', err);
