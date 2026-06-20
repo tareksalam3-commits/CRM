@@ -20,7 +20,7 @@ export function isManager(role: UserRole): boolean {
   return MANAGER_ROLES.includes(role);
 }
 
-/** Returns true if user can access admin reports */
+/** Returns true if user can view admin reports */
 export function canViewAdminReports(role: UserRole): boolean {
   return ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager', 'team_leader'].includes(role);
 }
@@ -62,7 +62,14 @@ export function assignableRoles(myRole: UserRole): UserRole[] {
 // ============================================================
 
 /** Returns true if user can access a specific page */
-export function canAccessPage(role: UserRole, pagePath: string): boolean {
+export function canAccessPage(role: UserRole | null, pagePath: string): boolean {
+  if (!role) return false;
+
+  // ✅ Super Admin و Dev Manager لديهم وصول كامل لجميع الصفحات
+  if (role === 'super_admin' || role === 'dev_manager') {
+    return true;
+  }
+
   const pagePermissions: Record<string, UserRole[]> = {
     '/': ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager', 'team_leader', 'agent'],
     '/users': ['super_admin', 'dev_manager', 'general_supervisor'],

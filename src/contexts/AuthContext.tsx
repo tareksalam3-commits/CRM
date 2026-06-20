@@ -71,8 +71,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (profileError) {
         console.error('Error fetching profile:', profileError);
-      } else if (profileData) {
-        setProfile(profileData);
+        setLoading(false);
+        return;
+      }
+
+      if (!profileData) {
+        console.error('No profile found for user');
+        setLoading(false);
+        return;
+      }
+
+      setProfile(profileData);
+
+      // ✅ إذا كان المستخدم super_admin أو dev_manager، لا نحتاج لفروع
+      if (profileData.role === 'super_admin' || profileData.role === 'dev_manager') {
+        console.log(`User is ${profileData.role}, skipping branch access fetch`);
+        setAccessibleBranches([]);
+        setActiveBranchState(null);
+        setActiveBranchAccess(null);
+        setLoading(false);
+        return;
       }
 
       // Fetch user branch access with proper filtering
@@ -84,7 +102,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (accessError) {
         console.error('Error fetching branch access:', accessError);
-        // Don't return early - allow user to proceed even if branch access fetch fails
       }
 
       // Extract branches from access data
@@ -99,11 +116,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         accessRecords = accessData as UserBranchAccess[];
       }
 
-      // If no branches found, create a temporary one for navigation
+      // If no branches found, allow user to proceed to dashboard
       if (branches.length === 0) {
         console.warn('No active branches found for user, allowing temporary access');
-        // Set loading to false to allow user to proceed to dashboard
-        // They will see an error or be prompted to create/assign a branch
         setAccessibleBranches([]);
         setActiveBranchState(null);
         setActiveBranchAccess(null);
