@@ -3,12 +3,12 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { Profile, ROLE_LABELS, UserRole } from '../../types';
 import { assignableRoles, canManageRole, isManager } from '../../lib/rbac';
-import { createUser, deleteUser as deleteUserService, resetUserPassword, updateUserProfile, linkUserToBranches } from '../../services/usersService';
+import { createUser, deleteUser as deleteUserService, resetUserPassword } from '../../services/usersService';
 import PageHeader from '../common/PageHeader';
 import LoadingSpinner from '../common/LoadingSpinner';
 import {
   Users, Plus, Edit2, Trash2, Ban, CheckCircle, X,
-  Search, Key, ChevronDown, Shield, Phone, Mail, Building2, AlertTriangle,
+  Search, Key, ChevronDown, Shield, Phone, Mail, Building2,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -34,8 +34,8 @@ export default function UserManagement() {
   const [resetPasswordId, setResetPasswordId] = useState<string | null>(null);
   const [resetPasswordName, setResetPasswordName] = useState<string>('');
   const [newPassword, setNewPassword] = useState('');
-  const [branches, setBranches] = useState<any[]>([]);
-  const [userBranchAccess, setUserBranchAccess] = useState<any[]>([]);
+  const [branches, setBranches] = useState<{ id: string; name: string; code: string | null; is_active: boolean }[]>([]);
+  const [userBranchAccess, setUserBranchAccess] = useState<{ id: string; user_id: string; branch_id: string; role: UserRole; is_active: boolean }[]>([]);
   const [showBranchModal, setShowBranchModal] = useState(false);
   const [selectedUserForBranch, setSelectedUserForBranch] = useState<Profile | null>(null);
   const [selectedBranches, setSelectedBranches] = useState<string[]>([]);
@@ -63,11 +63,11 @@ export default function UserManagement() {
     if (profile.id === targetUser.id) return true;
     
     // التحقق من التبعية الهرمية (إذا كان targetUser تابع لـ profile)
-    return isSubordinate(profile.id, targetUser.id);
-  }, [profile, isSuperAdmin, isDevManager]);
+    return checkIsSubordinate(profile.id, targetUser.id);
+  }, [profile, isSuperAdmin, isDevManager]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ✅ دالة للتحقق من التبعية الهرمية
-  const isSubordinate = (managerId: string, subordinateId: string): boolean => {
+  const checkIsSubordinate = (managerId: string, subordinateId: string): boolean => {
     // هذه دالة مساعدة بسيطة — يمكن تحسينها لاحقاً
     // للآن نستخدم البيانات المحملة محلياً
     const visited = new Set<string>();
@@ -150,7 +150,7 @@ export default function UserManagement() {
     if (isDevManager) return u.role !== 'super_admin';
     
     // بقية الأدوار ترى تابعيهم فقط
-    return isSubordinate(profile?.id || '', u.id);
+    return checkIsSubordinate(profile?.id || '', u.id);
   });
 
   // ✅ فلتر الأدوار مُفعَّل الآن
@@ -221,7 +221,7 @@ export default function UserManagement() {
     if (user.id === profile?.id) { toast.error('لا يمكنك تعطيل حسابك الخاص'); return; }
     
     // التحقق من الصلاحيات
-    if (!isSuperAdmin && !isDevManager && !isSubordinate(profile?.id || '', user.id)) {
+    if (!isSuperAdmin && !isDevManager && !checkIsSubordinate(profile?.id || '', user.id)) {
       toast.error('غير مصرح بتعديل حالة هذا المستخدم');
       return;
     }

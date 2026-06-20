@@ -99,7 +99,7 @@ export function canAccessPage(role: UserRole | null, pagePath: string): boolean 
 /** Returns true if user has permission to perform an action in a specific branch */
 export function canPerformActionInBranch(
   userRole: UserRole,
-  action: string,
+  _action: string,
   targetRole?: UserRole
 ): boolean {
   // Super admin can do anything

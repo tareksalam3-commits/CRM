@@ -4,12 +4,12 @@ import { useAuth } from '../../contexts/AuthContext';
 import {
   formatCurrency, formatPercent, formatNumber,
 } from '../../lib/utils';
-import { POLICY_STATUS_LABELS, UserRole } from '../../types';
+import { POLICY_STATUS_LABELS } from '../../types';
 import PageHeader from '../common/PageHeader';
 import LoadingSpinner from '../common/LoadingSpinner';
 import {
   LayoutDashboard, Users, FileText, Wallet, TrendingUp,
-  UserCircle, Target, AlertCircle, Award, RefreshCw, Clock,
+  Target, AlertCircle, RefreshCw,
 } from 'lucide-react';
 import {
   Tooltip,
@@ -58,7 +58,7 @@ const POLICY_COLORS: Record<string, string> = {
 };
 
 export default function Dashboard() {
-  const { profile, activeBranch, activeBranchAccess } = useAuth();
+  const { profile, activeBranch } = useAuth();
   const [stats, setStats] = useState<DashboardStats>(INITIAL_STATS);
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -83,8 +83,8 @@ export default function Dashboard() {
       let policiesQuery = supabase.from('policies').select('annual_premium, status, created_at, branch_id, first_year_end');
       let clientsQuery = supabase.from('clients').select('id, branch_id', { count: 'exact', head: true });
       let unifiedMetricsQuery = supabase.from('unified_performance_metrics').select('*');
-      let installmentsQuery = supabase.from('installments').select('amount, status, due_date, policy:policies!inner(agent_id, branch_id, first_year_end, team_leader_id)');
-      let usersQuery = supabase.from('profiles').select('id', { count: 'exact', head: true });
+      const installmentsQuery = supabase.from('installments').select('amount, status, due_date, policy:policies!inner(agent_id, branch_id, first_year_end, team_leader_id)');
+      const usersQuery = supabase.from('profiles').select('id', { count: 'exact', head: true });
       let targetsQuery = supabase.from('targets').select('target_amount, branch_id, user_id').eq('period_type', 'monthly').eq('year', now_date.getFullYear()).eq('period_number', now_date.getMonth() + 1);
 
       // ✅ تطبيق فلتر الفرع فقط إذا لم يكن مسؤول نظام أو مدير تطوير
@@ -523,7 +523,7 @@ function KPICard({ label, value, icon: Icon, color }: any) {
   );
 }
 
-function StatBox({ label, value, icon: Icon }: any) {
+function StatBox({ label, value }: any) {
   return (
     <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-4">
       <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">{label}</p>

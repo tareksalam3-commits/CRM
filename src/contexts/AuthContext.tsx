@@ -58,7 +58,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     return () => subscription?.unsubscribe();
-  }, []);
+  }, []);  
 
   async function fetchProfileAndBranches(userId: string) {
     try {
@@ -110,10 +110,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (accessData && accessData.length > 0) {
         branches = accessData
-          .map(access => (access.branch as any))
-          .filter(branch => branch && branch.is_active);
+          .map((access: any) => (access.branch as unknown as Branch))
+          .filter((branch: Branch) => branch && branch.is_active);
         
-        accessRecords = accessData as UserBranchAccess[];
+        accessRecords = accessData.map((record: any) => ({
+          id: record.id,
+          user_id: record.user_id,
+          branch_id: record.branch_id,
+          role: record.role,
+          is_active: record.is_active,
+          assigned_at: record.assigned_at,
+          expires_at: record.expires_at,
+          updated_at: record.updated_at,
+          created_at: record.created_at || new Date().toISOString(),
+        })) as UserBranchAccess[];
       }
 
       // If no branches found, allow user to proceed to dashboard

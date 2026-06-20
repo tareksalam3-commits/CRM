@@ -19,6 +19,7 @@ const ROLE_COLORS: Record<UserRole, string> = {
   general_supervisor: 'border-blue-400 bg-blue-50 dark:bg-blue-900/20',
   supervisor: 'border-cyan-400 bg-cyan-50 dark:bg-cyan-900/20',
   team_leader: 'border-teal-400 bg-teal-50 dark:bg-teal-900/20',
+  branch_manager: 'border-orange-400 bg-orange-50 dark:bg-orange-900/20',
   agent: 'border-slate-300 bg-white dark:bg-slate-800',
 };
 
@@ -28,6 +29,7 @@ const ROLE_DOT: Record<UserRole, string> = {
   general_supervisor: 'bg-blue-500',
   supervisor: 'bg-cyan-500',
   team_leader: 'bg-teal-500',
+  branch_manager: 'bg-orange-500',
   agent: 'bg-slate-400',
 };
 
@@ -118,7 +120,7 @@ export default function OrgChart() {
   const canRearrange = profile ? canRearrangeOrg(profile.role) : false;
 
   const fetchUsers = useCallback(async () => {
-    let query = supabase.from('profiles').select('*').order('full_name');
+    const query = supabase.from('profiles').select('*').order('full_name');
     
     // Data Isolation handled by RLS automatically
 
@@ -149,7 +151,7 @@ export default function OrgChart() {
 
   const ROLE_DOT: Record<UserRole, string> = {
     super_admin: 'bg-purple-500', dev_manager: 'bg-indigo-500', general_supervisor: 'bg-blue-500',
-    supervisor: 'bg-cyan-500', team_leader: 'bg-teal-500', agent: 'bg-slate-400',
+    supervisor: 'bg-cyan-500', team_leader: 'bg-teal-500', branch_manager: 'bg-orange-500', agent: 'bg-slate-400',
   };
 
   return (

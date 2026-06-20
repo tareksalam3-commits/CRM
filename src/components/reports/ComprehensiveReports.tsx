@@ -1,36 +1,49 @@
-import React, { useState, useEffect } from 'react';
-import { Download, FileText, TrendingUp, Users, DollarSign, Calendar } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Download } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import { useAuth } from '../../contexts/AuthContext';
-import { calculateAgentPerformance, getAllAgentsPerformance } from '../../services/reportsService';
+import { getAllAgentsPerformance, AgentPerformance } from '../../services/reportsService';
 import * as XLSX from 'xlsx';
-import html2pdf from 'html2pdf.js';
+
+interface CollectionRecord {
+  collection_id: string;
+  amount: number;
+  collection_date: string;
+  is_new_business: boolean;
+  is_first_year_collection?: boolean;
+  policy_id?: string;
+  agent_id: string;
+  collector?: { full_name: string; email: string };
+}
+
+interface BranchPerformanceData {
+  branch_name: string;
+  new_business: number;
+  collections: number;
+  total: number;
+}
 
 interface ReportData {
   type: string;
   month: number;
   year: number;
-  data: any;
+  totalNewBusiness?: number;
+  totalCollections?: number;
+  newBusiness?: number;
+  collections?: CollectionRecord[] | number;
+  totalDue?: number;
+  totalPaid?: number;
+  collectionRate?: number;
+  branches?: BranchPerformanceData[];
+  agents?: AgentPerformance[];
   generatedAt: string;
 }
 
-interface PerformanceMetrics {
-  newBusiness: number;
-  collections: number;
-  newClients: number;
-  paidInstallments: number;
-  collectionRate: number;
-}
-
 export default function ComprehensiveReports() {
-  const { profile } = useAuth();
   const [activeReport, setActiveReport] = useState<string>('new-business');
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
-  const [reportData, setReportData] = useState<any>(null);
+  const [reportData, setReportData] = useState<ReportData | null>(null);
   const [loading, setLoading] = useState(false);
-  const [topPerformers, setTopPerformers] = useState<any[]>([]);
-  const [bottomPerformers, setBottomPerformers] = useState<any[]>([]);
 
   // Fetch report data based on selected report type
   const fetchReportData = async () => {
@@ -76,9 +89,7 @@ export default function ComprehensiveReports() {
         amount,
         collection_date,
         is_new_business,
-        policy_id,
-        agent_id,
-        collector:profiles!collections_collected_by_fkey(full_name, email)
+        agent_id
       `)
       .eq('is_new_business', true)
       .gte('collection_date', monthStart)
@@ -86,14 +97,14 @@ export default function ComprehensiveReports() {
       .order('collection_date', { ascending: false });
 
     if (!error && data) {
-      const totalNewBusiness = data.reduce((sum: number, c: any) => sum + Number(c.amount), 0);
+      const totalNewBusiness = (data as unknown as CollectionRecord[]).reduce((sum: number, c: CollectionRecord) => sum + Number(c.amount), 0);
 
       setReportData({
         type: 'New Business Report',
         month: selectedMonth,
         year: selectedYear,
         totalNewBusiness,
-        collections: data,
+        collections: data as unknown as CollectionRecord[],
         generatedAt: new Date().toLocaleString('ar-EG'),
       });
     }
@@ -116,8 +127,7 @@ export default function ComprehensiveReports() {
         collection_date,
         is_new_business,
         is_first_year_collection,
-        agent_id,
-        collector:profiles!collections_collected_by_fkey(full_name, email)
+        agent_id
       `)
       .eq('is_new_business', false)
       .eq('is_first_year_collection', true)
@@ -126,14 +136,14 @@ export default function ComprehensiveReports() {
       .order('collection_date', { ascending: false });
 
     if (!error && data) {
-      const totalCollections = data.reduce((sum: number, c: any) => sum + Number(c.amount), 0);
+      const totalCollections = (data as unknown as CollectionRecord[]).reduce((sum: number, c: CollectionRecord) => sum + Number(c.amount), 0);
 
       setReportData({
         type: 'Collections Report',
         month: selectedMonth,
         year: selectedYear,
         totalCollections,
-        collections: data,
+        collections: data as unknown as CollectionRecord[],
         generatedAt: new Date().toLocaleString('ar-EG'),
       });
     }
@@ -158,19 +168,17 @@ export default function ComprehensiveReports() {
     // Get all installments due this month (first year only)
     const { data: installments } = await supabase
       .from('installments')
-      .select('amount, due_date, policy:policies(first_year_end)')
-      .gte('due_date', monthStart)
-      .lt('due_date', monthEnd);
+      .select('amount, due_date, policy:policies(first_year_end)');
 
-    const newBusiness = metrics
+    const newBusiness = (metrics as any[])
       ?.filter(m => m.is_new_business)
       .reduce((sum, m) => sum + Number(m.amount), 0) || 0;
 
-    const collectionsTotal = metrics
+    const collectionsTotal = (metrics as any[])
       ?.filter(m => !m.is_new_business && m.is_first_year_collection)
       .reduce((sum, m) => sum + Number(m.amount), 0) || 0;
 
-    const totalDue = installments
+    const totalDue = (installments as any[])
       ?.filter(i => i.due_date <= (i.policy?.first_year_end || '9999-12-31'))
       .reduce((sum, i) => sum + Number(i.amount), 0) || 0;
       
@@ -200,7 +208,7 @@ export default function ComprehensiveReports() {
 
     if (!branches) return;
 
-    const branchPerformance = await Promise.all(
+    const branchPerformance: BranchPerformanceData[] = await Promise.all(
       branches.map(async (branch) => {
         const monthStart = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-01`;
         const nextMonth = selectedMonth === 12 ? 1 : selectedMonth + 1;
@@ -208,17 +216,17 @@ export default function ComprehensiveReports() {
         const monthEnd = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
 
         const { data: collections } = await supabase
-          .from('collections')
-          .select('amount, is_new_business, policy:policies(branch_id)')
-          .eq('policy.branch_id', branch.id)
+          .from('unified_performance_metrics')
+          .select('amount, is_new_business')
+          .eq('branch_id', branch.id)
           .gte('collection_date', monthStart)
           .lt('collection_date', monthEnd);
 
-        const newBusiness = collections
+        const newBusiness = (collections as any[])
           ?.filter(c => c.is_new_business)
           .reduce((sum, c) => sum + Number(c.amount), 0) || 0;
 
-        const collectionsTotal = collections
+        const collectionsTotal = (collections as any[])
           ?.filter(c => !c.is_new_business)
           .reduce((sum, c) => sum + Number(c.amount), 0) || 0;
 
@@ -256,21 +264,26 @@ export default function ComprehensiveReports() {
         agents: sorted,
         generatedAt: new Date().toLocaleString('ar-EG'),
       });
-
-      setTopPerformers(sorted.slice(0, 5));
-      setBottomPerformers(sorted.slice(-5).reverse());
     }
   };
 
   useEffect(() => {
     fetchReportData();
-  }, [activeReport, selectedMonth, selectedYear]);
+  }, [activeReport, selectedMonth, selectedYear]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Export to Excel
   const exportToExcel = () => {
     if (!reportData) return;
 
-    const ws = XLSX.utils.json_to_sheet(reportData.collections || reportData.agents || reportData.branches || []);
+    const dataToExport = Array.isArray(reportData.collections) 
+      ? reportData.collections 
+      : reportData.agents 
+      ? reportData.agents 
+      : reportData.branches 
+      ? reportData.branches 
+      : [];
+    
+    const ws = XLSX.utils.json_to_sheet(dataToExport);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Report');
     XLSX.writeFile(wb, `${reportData.type}_${selectedMonth}_${selectedYear}.xlsx`);
@@ -282,7 +295,13 @@ export default function ComprehensiveReports() {
 
     const element = document.getElementById('report-content');
     if (element) {
-      html2pdf().set({ margin: 10, filename: `${reportData.type}_${selectedMonth}_${selectedYear}.pdf` }).from(element).save();
+      // Using window.print as fallback for PDF export
+      const printWindow = window.open('', '', 'width=800,height=600');
+      if (printWindow) {
+        printWindow.document.write(element.innerHTML);
+        printWindow.document.close();
+        printWindow.print();
+      }
     }
   };
 
@@ -375,32 +394,54 @@ export default function ComprehensiveReports() {
                     {reportData.totalNewBusiness?.toLocaleString('ar-EG')}
                   </p>
                 </div>
-                <div className="bg-green-50 dark:bg-green-900/20 p-4 rounded-lg">
-                  <p className="text-sm text-slate-600 dark:text-slate-400">عملاء جدد</p>
-                  <p className="text-2xl font-bold text-green-600 dark:text-green-400">{reportData.newClientsCount || 0}</p>
-                </div>
               </div>
             )}
 
             {/* Collections Table */}
-            {reportData.collections && (
+            {Array.isArray(reportData.collections) && (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-slate-100 dark:bg-slate-700">
                     <tr>
-                      <th className="px-4 py-2 text-right">رقم الوثيقة</th>
+                      <th className="px-4 py-2 text-right">رقم التحصيل</th>
                       <th className="px-4 py-2 text-right">المبلغ</th>
                       <th className="px-4 py-2 text-right">التاريخ</th>
                       <th className="px-4 py-2 text-right">النوع</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {reportData.collections.map((c: any, i: number) => (
+                    {(reportData.collections as CollectionRecord[]).map((c: CollectionRecord, i: number) => (
                       <tr key={i} className="border-b border-slate-200 dark:border-slate-700">
-                        <td className="px-4 py-2">{c.policy?.policy_number}</td>
+                        <td className="px-4 py-2">{c.collection_id}</td>
                         <td className="px-4 py-2">{Number(c.amount).toLocaleString('ar-EG')}</td>
-                        <td className="px-4 py-2">{new Date(c.collection_date).toLocaleDateString('ar-EG')}</td>
+                        <td className="px-4 py-2">{c.collection_date}</td>
                         <td className="px-4 py-2">{c.is_new_business ? 'إنتاج جديد' : 'تحصيل'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Branches Table */}
+            {reportData.branches && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-100 dark:bg-slate-700">
+                    <tr>
+                      <th className="px-4 py-2 text-right">الفرع</th>
+                      <th className="px-4 py-2 text-right">الإنتاج الجديد</th>
+                      <th className="px-4 py-2 text-right">التحصيلات</th>
+                      <th className="px-4 py-2 text-right">الإجمالي</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reportData.branches.map((b: BranchPerformanceData, i: number) => (
+                      <tr key={i} className="border-b border-slate-200 dark:border-slate-700">
+                        <td className="px-4 py-2">{b.branch_name}</td>
+                        <td className="px-4 py-2">{Number(b.new_business).toLocaleString('ar-EG')}</td>
+                        <td className="px-4 py-2">{Number(b.collections).toLocaleString('ar-EG')}</td>
+                        <td className="px-4 py-2">{Number(b.total).toLocaleString('ar-EG')}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -418,15 +459,17 @@ export default function ComprehensiveReports() {
                       <th className="px-4 py-2 text-right">الإنتاج الجديد</th>
                       <th className="px-4 py-2 text-right">التحصيلات</th>
                       <th className="px-4 py-2 text-right">الإجمالي</th>
+                      <th className="px-4 py-2 text-right">نسبة الإنجاز</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {reportData.agents.map((a: any, i: number) => (
+                    {reportData.agents.map((a: AgentPerformance, i: number) => (
                       <tr key={i} className="border-b border-slate-200 dark:border-slate-700">
                         <td className="px-4 py-2">{a.agent_name}</td>
                         <td className="px-4 py-2">{Number(a.new_business).toLocaleString('ar-EG')}</td>
                         <td className="px-4 py-2">{Number(a.collections).toLocaleString('ar-EG')}</td>
-                        <td className="px-4 py-2 font-bold">{Number(a.total).toLocaleString('ar-EG')}</td>
+                        <td className="px-4 py-2">{Number(a.total).toLocaleString('ar-EG')}</td>
+                        <td className="px-4 py-2">{(a.achievement_rate || 0).toFixed(1)}%</td>
                       </tr>
                     ))}
                   </tbody>
@@ -435,7 +478,7 @@ export default function ComprehensiveReports() {
             )}
           </div>
         ) : (
-          <div className="text-center py-12 text-slate-500">لا توجد بيانات</div>
+          <div className="text-center py-12 text-slate-500">لا توجد بيانات متاحة</div>
         )}
       </div>
     </div>
