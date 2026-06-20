@@ -48,6 +48,7 @@ export default function PolicyManagement() {
   const [formData, setFormData] = useState({ ...EMPTY_FORM });
 
   const loadData = useCallback(async () => {
+    // ✅ للمسؤولين: جلب جميع البيانات بدون قائدة
     const [policiesRes, clientsRes, agentsRes, branchesRes, settingsRes] = await Promise.all([
       supabase
         .from('policies')
@@ -73,10 +74,11 @@ export default function PolicyManagement() {
       setProducts((mapped.insurance_products as string[]) || []);
     }
     setLoading(false);
-  }, []);
+  }, [profile]);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  useEffect(() => { loadData(); }, [loadData, profile]);
 
+  // ✅ الوصول الكامل للمسؤولين: لا تطبيق أي قيود
   // Auto-populate branch when agent is selected
   const handleAgentChange = (agentId: string) => {
     const agent = agents.find(a => a.id === agentId);

@@ -66,9 +66,12 @@ export default function Dashboard() {
   const fetchStats = useCallback(async () => {
     setLoading(true);
     try {
-      // Get active branch ID for filtering
+      // ✅ للمسؤولين: جلب البيانات الكاملة بدون تصفية حسب الفرع
+      const isSuperAdmin = profile?.role === 'super_admin';
+      const isDevManager = profile?.role === 'dev_manager';
       const branchId = activeBranch?.id;
-      if (!branchId && profile?.role !== 'super_admin') {
+      
+      if (!branchId && !isSuperAdmin && !isDevManager) {
         throw new Error('لم يتم تحديد فرع نشط');
       }
 
@@ -84,8 +87,8 @@ export default function Dashboard() {
       let usersQuery = supabase.from('profiles').select('id', { count: 'exact', head: true });
       let targetsQuery = supabase.from('targets').select('target_amount, branch_id, user_id').eq('period_type', 'monthly').eq('year', now_date.getFullYear()).eq('period_number', now_date.getMonth() + 1);
 
-      // Apply branch filter if not super admin
-      if (branchId) {
+      // ✅ تطبيق فلتر الفرع فقط إذا لم يكن مسؤول نظام أو مدير تطوير
+      if (branchId && !isSuperAdmin && !isDevManager) {
         policiesQuery = policiesQuery.eq('branch_id', branchId);
         clientsQuery = clientsQuery.eq('branch_id', branchId);
         unifiedMetricsQuery = unifiedMetricsQuery.eq('branch_id', branchId);

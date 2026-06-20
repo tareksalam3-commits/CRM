@@ -30,10 +30,16 @@ export default function ClientManagement() {
   const [formData, setFormData] = useState({ ...EMPTY_FORM });
 
   const fetchClients = useCallback(async () => {
-    const { data, error } = await supabase
+    // ✅ للمسؤولين: جلب جميع العملاء بدون قائدة
+    const isSuperAdmin = profile?.role === 'super_admin';
+    const isDevManager = profile?.role === 'dev_manager';
+    
+    let query = supabase
       .from('clients')
       .select('*, agent:profiles!clients_agent_id_fkey(full_name, role)')
       .order('created_at', { ascending: false });
+    
+    const { data, error } = await query;
     if (error) {
       console.error('fetchClients error:', error);
       toast.error('خطأ في تحميل العملاء: ' + error.message);
@@ -41,9 +47,10 @@ export default function ClientManagement() {
       setClients(data as Client[]);
     }
     setLoading(false);
-  }, []);
+  }, [profile]);
 
   const fetchAgents = useCallback(async () => {
+    // ✅ للمسؤولين: جلب جميع المندوبين بدون قائدة
     const { data, error } = await supabase
       .from('profiles')
       .select('id, full_name, role')
@@ -54,7 +61,7 @@ export default function ClientManagement() {
     } else if (data) {
       setAgents(data);
     }
-  }, []);
+  }, [profile]);
 
   const fetchBranches = useCallback(async () => {
     const { data, error } = await supabase

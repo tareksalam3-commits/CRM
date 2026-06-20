@@ -31,6 +31,7 @@ export default function CollectionManagement() {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
+      // ✅ للمسؤولين: جلب جميع الأقساط بدون قائدة
       const { data, error } = await supabase
         .from('installments')
         .select('*, policy:policies(policy_number, client_id, agent_id, annual_premium, client:clients(name))')
@@ -48,11 +49,11 @@ export default function CollectionManagement() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [profile]);
 
   useEffect(() => {
     loadData();
-  }, [loadData]);
+  }, [loadData, profile]);
 
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
