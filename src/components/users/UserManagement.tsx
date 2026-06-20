@@ -49,39 +49,87 @@ export default function UserManagement() {
   const isDevManager = myRole === 'dev_manager';
   const hasFullAccess = isSuperAdmin || isDevManager;
 
+  // ✅ دالة للتحقق من إمكانية رؤية المستخدم بناءً على الهيكل الهرمي
+  const canViewUser = useCallback((targetUser: Profile): boolean => {
+    if (!profile) return false;
+    
+    // السوبر أدمن يرى الجميع
+    if (isSuperAdmin) return true;
+    
+    // مدير التطوير يرى الجميع
+    if (isDevManager) return true;
+    
+    // بقية الأدوار ترى تابعيهم فقط
+    if (profile.id === targetUser.id) return true;
+    
+    // التحقق من التبعية الهرمية (إذا كان targetUser تابع لـ profile)
+    return isSubordinate(profile.id, targetUser.id);
+  }, [profile, isSuperAdmin, isDevManager]);
+
+  // ✅ دالة للتحقق من التبعية الهرمية
+  const isSubordinate = (managerId: string, subordinateId: string): boolean => {
+    // هذه دالة مساعدة بسيطة — يمكن تحسينها لاحقاً
+    // للآن نستخدم البيانات المحملة محلياً
+    const visited = new Set<string>();
+    let current = subordinateId;
+    
+    while (current && !visited.has(current)) {
+      visited.add(current);
+      const user = users.find(u => u.id === current);
+      if (!user) return false;
+      if (user.manager_id === managerId) return true;
+      current = user.manager_id || '';
+    }
+    
+    return false;
+  };
+
   const fetchUsers = useCallback(async () => {
     setLoading(true);
-    // RLS على profiles تسمح لـ authenticated users برؤية كل الـ profiles
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .order('full_name');
+    try {
+      // RLS على profiles تسمح لـ authenticated users برؤية المستخدمين المصرح لهم
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .order('full_name');
 
-    if (error) {
-      toast.error('خطأ في جلب المستخدمين: ' + error.message);
-    } else if (data) {
-      setUsers(data as Profile[]);
+      if (error) {
+        toast.error('خطأ في جلب المستخدمين: ' + error.message);
+      } else if (data) {
+        // ✅ فلترة المستخدمين بناءً على الصلاحيات
+        const visibleUsers = data.filter((user: Profile) => canViewUser(user));
+        setUsers(visibleUsers as Profile[]);
+      }
+    } catch (err) {
+      toast.error('خطأ غير متوقع: ' + String(err));
     }
     setLoading(false);
-  }, []);
+  }, [canViewUser]);
 
   const fetchBranches = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('branches')
-      .select('*')
-      .eq('is_active', true)
-      .neq('code', MAIN_BRANCH_CODE)
-      .order('name');
-    if (!error && data) setBranches(data);
+    try {
+      const { data, error } = await supabase
+        .from('branches')
+        .select('*')
+        .eq('is_active', true)
+        .neq('code', MAIN_BRANCH_CODE)
+        .order('name');
+      if (!error && data) setBranches(data);
+    } catch (err) {
+      console.error('Error fetching branches:', err);
+    }
   }, []);
 
   const fetchUserBranchAccess = useCallback(async () => {
-    // super_admin و dev_manager يجب أن يروا كل سجلات user_branch_access
-    // هذا يعتمد على migration الجديد الذي يضيف policy مناسبة
-    const { data, error } = await supabase
-      .from('user_branch_access')
-      .select('*');
-    if (!error && data) setUserBranchAccess(data);
+    try {
+      // super_admin و dev_manager يجب أن يروا كل سجلات user_branch_access
+      const { data, error } = await supabase
+        .from('user_branch_access')
+        .select('*');
+      if (!error && data) setUserBranchAccess(data);
+    } catch (err) {
+      console.error('Error fetching user branch access:', err);
+    }
   }, []);
 
   useEffect(() => {
@@ -90,7 +138,20 @@ export default function UserManagement() {
     fetchUserBranchAccess();
   }, [fetchUsers, fetchBranches, fetchUserBranchAccess]);
 
-  const potentialManagers = users.filter(u => u.is_active && u.id !== editingUser?.id);
+  // ✅ فلترة المديرين المحتملين بناءً على الصلاحيات
+  const potentialManagers = users.filter(u => {
+    if (u.is_active === false) return false;
+    if (u.id === editingUser?.id) return false;
+    
+    // السوبر أدمن يمكنه اختيار أي مدير
+    if (isSuperAdmin) return true;
+    
+    // مدير التطوير يمكنه اختيار أي مدير ما عدا السوبر أدمن
+    if (isDevManager) return u.role !== 'super_admin';
+    
+    // بقية الأدوار ترى تابعيهم فقط
+    return isSubordinate(profile?.id || '', u.id);
+  });
 
   // ✅ فلتر الأدوار مُفعَّل الآن
   const filteredUsers = users.filter(u => {
@@ -115,7 +176,7 @@ export default function UserManagement() {
     setSubmitting(true);
 
     if (editingUser) {
-      // ✅ تعديل الصلاحيات — يعتمد على migration الجديد الذي يضيف UPDATE policy
+      // ✅ تعديل الصلاحيات — يعتمد على سياسات RLS المحدثة
       const { error } = await supabase.from('profiles').update({
         full_name: formData.full_name.trim(),
         phone: formData.phone.trim() || null,
@@ -158,6 +219,13 @@ export default function UserManagement() {
   // ✅ تفعيل/تعطيل المستخدم
   async function toggleActive(user: Profile) {
     if (user.id === profile?.id) { toast.error('لا يمكنك تعطيل حسابك الخاص'); return; }
+    
+    // التحقق من الصلاحيات
+    if (!isSuperAdmin && !isDevManager && !isSubordinate(profile?.id || '', user.id)) {
+      toast.error('غير مصرح بتعديل حالة هذا المستخدم');
+      return;
+    }
+
     const { error } = await supabase
       .from('profiles')
       .update({ is_active: !user.is_active, updated_at: new Date().toISOString() })
@@ -330,12 +398,46 @@ export default function UserManagement() {
         description={`${filteredUsers.length} من ${users.length} مستخدم`}
         icon={Users}
         actions={
-          <button
-            onClick={() => { setEditingUser(null); setFormData(emptyForm); setShowForm(true); }}
-            className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-medium transition-colors"
-          >
-            <Plus className="w-4 h-4" /><span className="hidden sm:inline">إضافة مستخدم</span>
-          </button>
+            <div className="flex items-center gap-2">
+            {isSuperAdmin && (
+              <button
+                onClick={async () => {
+                  if (!confirm('⚠️ هل أنت متأكد من إعادة تعيين كلمات مرور جميع المستخدمين في النظام إلى 123456؟ لا يمكن التراجع عن هذا الإجراء.')) return;
+                  setLoading(true);
+                  try {
+                    const { data: { session } } = await supabase.auth.getSession();
+                    const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-user`, {
+                      method: 'POST',
+                      headers: {
+                        'Authorization': `Bearer ${session?.access_token}`,
+                        'Content-Type': 'application/json',
+                      },
+                      body: JSON.stringify({ reset_all_passwords: true }),
+                    });
+                    const result = await response.json();
+                    if (result.success) {
+                      toast.success(result.message);
+                    } else {
+                      toast.error(result.error || 'فشلت العملية');
+                    }
+                  } catch (err) {
+                    toast.error('خطأ في الاتصال بالسيرفر');
+                  } finally {
+                    setLoading(false);
+                  }
+                }}
+                className="flex items-center gap-2 px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-sm font-medium transition-colors"
+              >
+                <Key className="w-4 h-4" /><span className="hidden sm:inline">إعادة تعيين الجميع لـ 123456</span>
+              </button>
+            )}
+            <button
+              onClick={() => { setEditingUser(null); setFormData(emptyForm); setShowForm(true); }}
+              className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-medium transition-colors"
+            >
+              <Plus className="w-4 h-4" /><span className="hidden sm:inline">إضافة مستخدم</span>
+            </button>
+          </div>
         }
       />
 
