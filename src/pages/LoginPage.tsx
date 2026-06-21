@@ -2,7 +2,7 @@
 // The system uses admin-created accounts only (manager creates via UserManagement).
 import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { Shield, Mail, Lock, Eye, EyeOff } from 'lucide-react';
+import { Shield, Mail, Lock, Eye, EyeOff, AlertTriangle } from 'lucide-react';
 
 export default function LoginPage() {
   const { signIn } = useAuth();
@@ -11,24 +11,34 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [usingFallback, setUsingFallback] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError('');
+    setUsingFallback(false);
     setLoading(true);
-    const { error } = await signIn(email, password);
-    if (error) {
+    
+    const { error: signInError } = await signIn(email, password);
+    
+    if (signInError) {
       // Friendly Arabic error messages
-      if (error.includes('Invalid login credentials')) {
+      if (signInError.includes('Invalid login credentials')) {
         setError('البريد الإلكتروني أو كلمة المرور غير صحيحة');
-      } else if (error.includes('Email not confirmed')) {
+      } else if (signInError.includes('Email not confirmed')) {
         setError('يرجى تأكيد البريد الإلكتروني أولاً');
-      } else if (error.includes('Too many requests')) {
+      } else if (signInError.includes('Too many requests')) {
         setError('محاولات كثيرة، يرجى الانتظار قليلاً');
+      } else if (signInError.includes('Database error querying schema') || 
+                 signInError.includes('unexpected_failure') ||
+                 signInError.includes('AUTH_SCHEMA_ISSUE')) {
+        setError('مشكلة مؤقتة في خدمة المصادقة. جاري المحاولة بالطريقة البديلة...');
+        setUsingFallback(true);
       } else {
-        setError(error);
+        setError(signInError);
       }
     }
+    
     setLoading(false);
   }
 
@@ -47,6 +57,16 @@ export default function LoginPage() {
           <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-6 text-center">
             تسجيل الدخول
           </h2>
+
+          {usingFallback && (
+            <div className="mb-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl text-amber-700 dark:text-amber-400 text-sm flex items-start gap-2">
+              <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="font-medium">يتم استخدام نظام المصادقة البديل</p>
+                <p className="text-xs mt-1 opacity-80">تم اكتشاف مشكلة مؤقتة في خدمة المصادقة الرئيسية. يتم الآن استخدام النظام البديل للدخول.</p>
+              </div>
+            </div>
+          )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
