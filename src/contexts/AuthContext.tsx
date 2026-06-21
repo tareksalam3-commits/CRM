@@ -18,6 +18,9 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// Edge Function URL for fallback authentication
+const EDGE_FUNCTION_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/auth-login`;
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
@@ -197,26 +200,115 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  /**
+   * 🔧 FIX: Try normal sign in first, fallback to Edge Function on GoTrue schema error
+   */
   async function signIn(email: string, password: string) {
+    // Try 1: Normal Supabase Auth sign in
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) {
-      return { error: error.message };
-    }
+    
+    if (!error && data.session) {
+      // Normal sign in successful
+      if (data.user) {
+        const { data: profileData, error: profileError } = await supabase
+          .from('profiles')
+          .select('is_active')
+          .eq('id', data.user.id)
+          .maybeSingle();
 
-    if (data.user) {
-      const { data: profileData, error: profileError } = await supabase
-        .from('profiles')
-        .select('is_active')
-        .eq('id', data.user.id)
-        .maybeSingle();
-
-      if (!profileError && profileData && profileData.is_active === false) {
-        await supabase.auth.signOut();
-        return { error: 'هذا الحساب معطّل — يرجى التواصل مع مسؤول النظام' };
+        if (!profileError && profileData && profileData.is_active === false) {
+          await supabase.auth.signOut();
+          return { error: 'هذا الحساب معطّل — يرجى التواصل مع مسؤول النظام' };
+        }
       }
+      return { error: null };
     }
 
-    return { error: null };
+    // Check if error is the GoTrue schema issue
+    const isSchemaError = error && (
+      error.message?.includes('Database error querying schema') ||
+      error.status === 500 ||
+      error.message?.includes('unexpected_failure')
+    );
+
+    if (!isSchemaError) {
+      // Normal auth error (wrong password, etc.)
+      return { error: error?.message || 'فشل تسجيل الدخول' };
+    }
+
+    // Try 2: Fallback to Edge Function for GoTrue schema issue
+    console.log('[Auth] GoTrue schema error detected, trying Edge Function fallback...');
+    
+    try {
+      const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+      const response = await fetch(EDGE_FUNCTION_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': anonKey,
+          'Authorization': `Bearer ${anonKey}`,
+        },
+        body: JSON.stringify({ email, password }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        console.error('[Auth] Edge Function error:', result);
+        return { error: result.error || 'فشل تسجيل الدخول' };
+      }
+
+      // Edge Function returned a session - set it manually
+      if (result.session?.access_token) {
+        const { data: sessionData, error: sessionError } = await supabase.auth.setSession({
+          access_token: result.session.access_token,
+          refresh_token: result.session.refresh_token || result.session.access_token,
+        });
+
+        if (sessionError) {
+          console.error('[Auth] Error setting session:', sessionError);
+          // Even if setSession fails, we can manually set the user/session state
+          // Create a compatible user object
+          const fallbackUser: User = {
+            id: result.user.id,
+            email: result.user.email,
+            role: result.user.role || 'authenticated',
+            aud: result.user.aud || 'authenticated',
+            created_at: result.user.created_at,
+            app_metadata: {},
+            user_metadata: {},
+            identities: [],
+            factors: [],
+          } as User;
+
+          // Create a compatible session object
+          const expiresAt = result.session.expires_at || Math.floor(Date.now() / 1000) + 3600;
+          const fallbackSession: Session = {
+            access_token: result.session.access_token,
+            token_type: result.session.token_type || 'bearer',
+            expires_in: result.session.expires_in || 3600,
+            expires_at: expiresAt,
+            refresh_token: result.session.refresh_token || result.session.access_token,
+            user: fallbackUser,
+          };
+
+          setSession(fallbackSession);
+          setUser(fallbackUser);
+          await fetchProfileAndBranches(result.user.id);
+          
+          return { error: null };
+        }
+
+        // Session set successfully via setSession
+        return { error: null };
+      }
+
+      return { error: 'لم يتم إرجاع جلسة من خادم المصادقة' };
+
+    } catch (fetchError) {
+      console.error('[Auth] Edge Function fetch error:', fetchError);
+      return { error: 'خطأ في الاتصال بخادم المصادقة البديل' };
+    }
   }
 
   async function signOut() {
