@@ -41,6 +41,31 @@ function createAuthClient(userId: string) {
   });
 }
 
+/**
+ * 🔧 Create a fake session object for fallback auth mode
+ */
+function createFallbackSession(userId: string, email: string): Session {
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    access_token: 'fallback_token',
+    token_type: 'bearer',
+    expires_in: 3600,
+    expires_at: now + 3600,
+    refresh_token: 'fallback_refresh',
+    user: {
+      id: userId,
+      email,
+      role: 'authenticated',
+      aud: 'authenticated',
+      created_at: new Date().toISOString(),
+      app_metadata: {},
+      user_metadata: {},
+      identities: [],
+      factors: [],
+    } as User,
+  };
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
@@ -55,12 +80,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     // Check for fallback auth in localStorage
     const savedFallbackUserId = localStorage.getItem('fallback_user_id');
+    const savedFallbackEmail = localStorage.getItem('fallback_user_email') || '';
+    
     if (savedFallbackUserId) {
+      console.log('[Auth] Restoring fallback auth session');
       setFallbackUserId(savedFallbackUserId);
-      // Create a minimal user object
+      
+      // Create fallback user and session
       const fallbackUser: User = {
         id: savedFallbackUserId,
-        email: localStorage.getItem('fallback_user_email') || '',
+        email: savedFallbackEmail,
         role: 'authenticated',
         aud: 'authenticated',
         created_at: new Date().toISOString(),
@@ -69,7 +98,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         identities: [],
         factors: [],
       } as User;
+      
       setUser(fallbackUser);
+      setSession(createFallbackSession(savedFallbackUserId, savedFallbackEmail));
       fetchProfileAndBranches(savedFallbackUserId);
       return;
     }
@@ -90,16 +121,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     // Listen for auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, newSession) => {
-      setSession(newSession);
-      setUser(newSession?.user ?? null);
-      if (newSession?.user) {
-        fetchProfileAndBranches(newSession.user.id);
-      } else {
-        setProfile(null);
-        setActiveBranchState(null);
-        setActiveBranchAccess(null);
-        setAccessibleBranches([]);
-        setLoading(false);
+      // Only handle normal auth state changes (not fallback)
+      if (!localStorage.getItem('fallback_user_id')) {
+        setSession(newSession);
+        setUser(newSession?.user ?? null);
+        if (newSession?.user) {
+          fetchProfileAndBranches(newSession.user.id);
+        } else {
+          setProfile(null);
+          setActiveBranchState(null);
+          setActiveBranchAccess(null);
+          setAccessibleBranches([]);
+          setLoading(false);
+        }
       }
     });
 
@@ -142,34 +176,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // ✅ منع المستخدم المعطّل (is_active = false) من الاستمرار بالجلسة.
       if (profileData.is_active === false) {
         console.warn('Session terminated: user account is deactivated');
-        await supabase.auth.signOut();
-        setProfile(null);
-        setActiveBranchState(null);
-        setActiveBranchAccess(null);
-        setAccessibleBranches([]);
-        setSession(null);
-        setUser(null);
-        setFallbackUserId(null);
-        localStorage.removeItem('fallback_user_id');
-        localStorage.removeItem('fallback_user_email');
-        setLoading(false);
+        await signOut();
         return;
       }
 
       setProfile(profileData);
 
       // ✅ جلب الفروع المتاحة دائماً ولكن بدون جعلها عائقاً
-      // للمسؤولين، نصل لكل الفروع
       if (profileData.role === 'super_admin' || profileData.role === 'dev_manager') {
         const { data: allBranches } = await client.from('branches').select('*').eq('is_active', true);
         if (allBranches) {
           setAccessibleBranches(allBranches);
-          // الحالة الافتراضية هي "جميع الفروع"
           setActiveBranchState({ id: 'all', name: 'جميع الفروع', code: 'ALL', is_active: true, created_at: '', updated_at: '' });
           setActiveBranchAccess(null);
         }
       } else {
-        // للمستخدمين العاديين، نجلب الفروع المخصصة لهم إن وجدت
         const { data: accessData } = await client
           .from('user_branch_access')
           .select('id, user_id, branch_id, role, is_active, assigned_at, expires_at, updated_at, branch:branches(id, name, code, is_active, created_at, updated_at)')
@@ -187,7 +208,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           accessRecords = accessData as UserBranchAccess[];
           setAccessibleBranches(branches);
 
-          // محاولة استعادة الفرع النشط من localStorage
           const savedBranchId = localStorage.getItem(`activeBranch_${userId}`);
           let activeBranchData = null;
 
@@ -195,7 +215,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             activeBranchData = branches.find(b => b.id === savedBranchId);
           }
 
-          // إذا لم يوجد فرع محفوظ، نستخدم الأول كخيار تلقائي لكن لا نعطل النظام إذا لم يوجد
           if (!activeBranchData && branches.length > 0) {
             activeBranchData = branches[0];
           }
@@ -208,7 +227,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             }
           }
         } else {
-          // إذا لم يكن لديه فروع، نترك الفروع فارغة ونكمل الدخول بشكل طبيعي
           setAccessibleBranches([]);
           setActiveBranchState(null);
           setActiveBranchAccess(null);
@@ -268,7 +286,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     
     if (!error && data.session) {
-      // Normal sign in successful
       if (data.user) {
         const { data: profileData, error: profileError } = await supabase
           .from('profiles')
@@ -292,7 +309,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     );
 
     if (!isSchemaError) {
-      // Normal auth error (wrong password, etc.)
       return { error: error?.message || 'فشل تسجيل الدخول' };
     }
 
@@ -320,17 +336,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       // Edge Function returned userId
       if (result.userId) {
-        // Try setSession first (in case GoTrue is working again)
-        const { error: sessionError } = await supabase.auth.setSession({
-          access_token: 'fallback',
-          refresh_token: 'fallback',
-        });
-
-        if (!sessionError) {
-          // setSession worked somehow
-          return { error: null };
-        }
-
         console.log('[Auth] Using fallback auth mode with x-user-id header');
         
         // 🔧 Fallback: Use x-user-id header auth
@@ -351,7 +356,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           factors: [],
         } as User;
 
+        // 🔧 Set both user AND session for fallback mode
         setUser(fallbackUser);
+        setSession(createFallbackSession(result.userId, result.email || email));
         await fetchProfileAndBranches(result.userId);
         
         return { error: null };
