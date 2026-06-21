@@ -19,5 +19,37 @@ if (!supabaseUrl || !supabaseAnonKey) {
   }
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
-// force update Thu Jun 18 21:05:06 UTC 2026
+/**
+ * 🔧 Get headers including x-user-id for fallback auth mode
+ */
+function getSupabaseHeaders() {
+  const headers: Record<string, string> = {};
+  
+  // Check if we're in fallback auth mode
+  if (typeof window !== 'undefined') {
+    const fallbackUserId = localStorage.getItem('fallback_user_id');
+    if (fallbackUserId) {
+      headers['x-user-id'] = fallbackUserId;
+    }
+  }
+  
+  return headers;
+}
+
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  global: {
+    headers: getSupabaseHeaders(),
+  },
+});
+
+// 🔧 Force update headers before each request for fallback auth
+const originalFrom = supabase.from.bind(supabase);
+supabase.from = function(table: string) {
+  // Refresh headers from localStorage before each query
+  const fallbackUserId = typeof window !== 'undefined' ? localStorage.getItem('fallback_user_id') : null;
+  if (fallbackUserId) {
+    // @ts-ignore - internal method to set headers
+    supabase.rest.headers['x-user-id'] = fallbackUserId;
+  }
+  return originalFrom(table);
+} as typeof supabase.from;
