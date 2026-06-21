@@ -87,8 +87,8 @@ export default function Dashboard() {
       let usersQuery = supabase.from('profiles').select('id', { count: 'exact', head: true });
       let targetsQuery = supabase.from('targets').select('target_amount, branch_id, user_id').eq('period_type', 'monthly').eq('year', now_date.getFullYear()).eq('period_number', now_date.getMonth() + 1);
 
-      // ✅ تطبيق فلتر الفرع فقط إذا لم يكن مسؤول نظام أو مدير تطوير
-      if (branchId && !isSuperAdmin && !isDevManager) {
+      // ✅ تطبيق فلتر الفرع: إذا كان "جميع الفروع" (all) لا نفلتر، وإذا كان فرعاً محدداً نفلتر به
+      if (branchId && branchId !== 'all') {
         policiesQuery = policiesQuery.eq('branch_id', branchId);
         clientsQuery = clientsQuery.eq('branch_id', branchId);
         unifiedMetricsQuery = unifiedMetricsQuery.eq('branch_id', branchId);

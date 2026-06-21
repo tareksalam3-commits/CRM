@@ -105,8 +105,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const { data: allBranches } = await supabase.from('branches').select('*').eq('is_active', true);
         if (allBranches) {
           setAccessibleBranches(allBranches);
-          // لا نضبط فرعاً نشطاً افتراضياً للآدمن، يرى كل البيانات
-          setActiveBranchState(null);
+          // للمسؤولين، "كل الفروع" هي الحالة الافتراضية النشطة
+          setActiveBranchState({ id: 'all', name: 'جميع الفروع', code: 'ALL', is_active: true, created_at: '', updated_at: '' });
           setActiveBranchAccess(null);
         }
         setLoading(false);
@@ -189,6 +189,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (branch && user) {
       setActiveBranchState(branch);
       localStorage.setItem(`activeBranch_${user.id}`, branch.id);
+
+      // إذا كان "جميع الفروع"، لا يوجد سجل وصول محدد
+      if (branch.id === 'all') {
+        setActiveBranchAccess(null);
+        return;
+      }
 
       // Fetch the access record for this branch
       const { data: accessData, error } = await supabase

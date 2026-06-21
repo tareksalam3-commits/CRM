@@ -42,16 +42,8 @@ export default function Sidebar() {
   const [isOpen, setIsOpen] = useState(false);
   const [showBranchMenu, setShowBranchMenu] = useState(false);
 
-  // ✅ الدور الفعّال: للمسؤولين العامين استخدام profile.role، وللآخرين استخدام دور الفرع النشط
-  let userRole: UserRole | null = null;
-  
-  if (profile?.role === 'super_admin' || profile?.role === 'dev_manager') {
-    // المسؤولون العامون يستخدمون دورهم من الملف الشخصي
-    userRole = profile.role as UserRole;
-  } else {
-    // الأدوار الأخرى تستخدم الدور من صلاحيات الفرع النشط
-    userRole = getEffectiveRole(activeBranchAccess);
-  }
+  // ✅ الدور الفعّال: نعتمد دائماً على الدور في الملف الشخصي كمصدر أساسي للحقيقة
+  const userRole = profile?.role as UserRole | null;
 
   // ✅ فلترة العناصر بناءً على الدور الفعال
   const filteredItems = navItems.filter(item => {
@@ -65,6 +57,11 @@ export default function Sidebar() {
   }
 
   async function handleBranchChange(branchId: string) {
+    if (branchId === 'all') {
+      await setActiveBranch({ id: 'all', name: 'جميع الفروع', code: 'ALL', is_active: true, created_at: '', updated_at: '' });
+      setShowBranchMenu(false);
+      return;
+    }
     const branch = accessibleBranches.find(b => b.id === branchId);
     if (branch) {
       await setActiveBranch(branch);
@@ -72,10 +69,10 @@ export default function Sidebar() {
     }
   }
 
-  // ✅ إذا كان المستخدم super_admin أو dev_manager، لا نعرض selector الفروع
+  // ✅ عرض selector الفروع للجميع إذا كان لديهم فروع متاحة
   const isSuperAdmin = userRole === 'super_admin';
   const isDevManager = userRole === 'dev_manager';
-  const showBranchSelector = accessibleBranches.length > 0 && !isSuperAdmin && !isDevManager;
+  const showBranchSelector = accessibleBranches.length > 0;
 
   return (
     <>
@@ -146,6 +143,18 @@ export default function Sidebar() {
 
               {showBranchMenu && (
                 <div className="absolute top-full left-0 right-0 mt-2 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg shadow-xl z-10 max-h-48 overflow-y-auto">
+                  {(isSuperAdmin || isDevManager) && (
+                    <button
+                      onClick={() => handleBranchChange('all')}
+                      className={`w-full text-right px-3 py-2 text-sm transition-colors border-b border-slate-100 dark:border-slate-600 ${
+                        activeBranch?.id === 'all'
+                          ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 font-medium'
+                          : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-600'
+                      }`}
+                    >
+                      جميع الفروع
+                    </button>
+                  )}
                   {accessibleBranches.map(branch => (
                     <button
                       key={branch.id}
