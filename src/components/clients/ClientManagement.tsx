@@ -19,8 +19,7 @@ export default function ClientManagement() {
   const { profile } = useAuth();
   const [clients, setClients] = useState<Client[]>([]);
   const [agents, setAgents] = useState<{ id: string; full_name: string; role: string }[]>([]);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [_branches, _setBranches] = useState<{ id: string; name: string }[]>([]);
+  const [branches, setBranches] = useState<{ id: string; name: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -31,7 +30,11 @@ export default function ClientManagement() {
   const [formData, setFormData] = useState({ ...EMPTY_FORM });
 
   const fetchClients = useCallback(async () => {
-    const query = supabase
+    // ✅ للمسؤولين: جلب جميع العملاء بدون قائدة
+    const isSuperAdmin = profile?.role === 'super_admin';
+    const isDevManager = profile?.role === 'dev_manager';
+    
+    let query = supabase
       .from('clients')
       .select('*, agent:profiles!clients_agent_id_fkey(full_name, role)')
       .order('created_at', { ascending: false });
@@ -44,7 +47,7 @@ export default function ClientManagement() {
       setClients(data as Client[]);
     }
     setLoading(false);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [profile]);
 
   const fetchAgents = useCallback(async () => {
     // ✅ للمسؤولين: جلب جميع المندوبين بدون قائدة
@@ -58,7 +61,7 @@ export default function ClientManagement() {
     } else if (data) {
       setAgents(data);
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [profile]);
 
   const fetchBranches = useCallback(async () => {
     const { data, error } = await supabase
@@ -69,7 +72,7 @@ export default function ClientManagement() {
     if (error) {
       console.error('fetchBranches error:', error);
     } else if (data) {
-      _setBranches(data);
+      setBranches(data);
     }
   }, []);
 

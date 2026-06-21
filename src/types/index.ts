@@ -1,7 +1,12 @@
 // ============================================================
 // Insurance CRM Pro - Types & Constants
-// Roles aligned: super_admin > dev_manager > general_supervisor
-//                > supervisor > team_leader > agent
+// الأدوار الرسمية الستة المعتمدة في النظام (مصدر الحقيقة الوحيد):
+// super_admin > dev_manager > general_supervisor > supervisor
+//   > team_leader (رئيس مجموعة) > agent
+// ملاحظة: تم حذف 'branch_manager' كدور مستخدم مستقل لأنه لم يكن من
+// ضمن الأدوار الستة المطلوبة، ولم يكن مستخدَماً فعلياً في قاعدة البيانات.
+// أعمدة policies.branch_manager_id / team_leader_id / supervisor_id
+// (مراجع بيانات داخل جدول الوثائق) لم تُلمس لأنها خارج نطاق نظام المستخدمين.
 // ============================================================
 
 export type UserRole =
@@ -10,7 +15,6 @@ export type UserRole =
   | 'general_supervisor'
   | 'supervisor'
   | 'team_leader'
-  | 'branch_manager'
   | 'agent';
 
 export type PolicyStatus = 'under_issuance' | 'active' | 'suspended' | 'cancelled' | 'rejected';
@@ -22,13 +26,12 @@ export type MaritalStatus = 'single' | 'married' | 'divorced' | 'widowed';
 export type TargetPeriod = 'monthly' | 'quarterly' | 'semi_annual' | 'annual';
 
 export const ROLE_LABELS: Record<UserRole, string> = {
-  super_admin: 'مسؤول النظام',
-  dev_manager: 'مدير التطوير',
+  super_admin: 'Super Admin',
+  dev_manager: 'مدير تطوير',
   general_supervisor: 'مراقب عام',
   supervisor: 'مراقب',
-  team_leader: 'قائد فريق',
-  branch_manager: 'مدير فرع',
-  agent: 'وكيل',
+  team_leader: 'رئيس مجموعة',
+  agent: 'Agent',
 };
 
 export const ROLE_LEVELS: Record<UserRole, number> = {
@@ -37,11 +40,10 @@ export const ROLE_LEVELS: Record<UserRole, number> = {
   general_supervisor: 2,
   supervisor: 3,
   team_leader: 4,
-  branch_manager: 4,
   agent: 5,
 };
 
-export const MANAGER_ROLES: UserRole[] = ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'branch_manager', 'team_leader'];
+export const MANAGER_ROLES: UserRole[] = ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'team_leader'];
 
 export const POLICY_STATUS_LABELS: Record<PolicyStatus, string> = {
   under_issuance: 'تحت الإصدار',
@@ -131,7 +133,8 @@ export interface Profile {
   phone: string | null;
   role: UserRole;
   manager_id: string | null;
-  branch_id: string | null;
+  /** العمود الفعلي في قاعدة البيانات هو active_branch_id (لا يوجد عمود branch_id على profiles) */
+  active_branch_id: string | null;
   is_active: boolean;
   created_at: string;
   updated_at: string;

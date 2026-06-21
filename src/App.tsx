@@ -5,7 +5,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import Layout from './components/common/Layout';
 import LoginPage from './pages/LoginPage';
-import { canAccessPage, getEffectiveRole } from './lib/rbac';
+import { canAccessPage } from './lib/rbac';
 
 const Dashboard = lazy(() => import('./components/dashboard/Dashboard'));
 const UserManagement = lazy(() => import('./components/users/UserManagement'));
@@ -50,8 +50,8 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 }
 
 function PermissionGuard({ path, children }: { path: string; children: React.ReactNode }) {
-  const { activeBranchAccess, profile, loading } = useAuth();
-  
+  const { profile, loading } = useAuth();
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[50vh]">
@@ -60,18 +60,14 @@ function PermissionGuard({ path, children }: { path: string; children: React.Rea
     );
   }
 
-  // ✅ super_admin و dev_manager يصلون لأي صفحة مسموح بها بغض النظر عن الفرع
-  if (profile?.role === 'super_admin' || profile?.role === 'dev_manager') {
-    if (!canAccessPage(profile.role, path)) return <Navigate to="/" replace />;
-    return <>{children}</>;
-  }
-
-  // للأدوار الأخرى: نتحقق من الـ activeBranchAccess
-  const effectiveRole = getEffectiveRole(activeBranchAccess);
-  if (!effectiveRole || !canAccessPage(effectiveRole, path)) {
+  // ✅ الصفحات تُحدَّد دائماً عبر profiles.role (دور المستخدم الوظيفي)،
+  // وهو نفس المنطق المستخدم في Sidebar.tsx لإظهار/إخفاء الروابط.
+  // لا علاقة لـ activeBranchAccess بصلاحية الوصول للصفحة — الفروع تُستخدم
+  // فقط لتصفية البيانات المعروضة داخل الصفحة، لا للتحكم في الوصول إليها.
+  if (!profile?.role || !canAccessPage(profile.role, path)) {
     return <Navigate to="/" replace />;
   }
-  
+
   return <>{children}</>;
 }
 

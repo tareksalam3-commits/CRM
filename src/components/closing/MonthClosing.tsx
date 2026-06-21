@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
-import { formatCurrency, formatPercent, getMonthName } from '../../lib/utils';
+import { formatCurrency, formatPercent, getMonthName, formatDate } from '../../lib/utils';
 import PageHeader from '../common/PageHeader';
 import LoadingSpinner from '../common/LoadingSpinner';
-import { Calendar, Lock, FileText } from 'lucide-react';
+import { Calendar, Lock, FileText, Table2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
@@ -55,7 +55,7 @@ export default function MonthClosing() {
   });
   const [isCurrentClosed, setIsCurrentClosed] = useState(false);
   const [agentCollections, setAgentCollections] = useState<AgentCollection[]>([]);
-  const [_branchSummary, _setBranchSummary] = useState<BranchSummary[]>([]);
+  const [branchSummary, setBranchSummary] = useState<BranchSummary[]>([]);
 
   useEffect(() => {
     loadData();
@@ -93,7 +93,7 @@ export default function MonthClosing() {
       const totalCollected = newBusiness + collectionsTotal;
       
       const totalRequired = installments
-        .filter(i => i.due_date <= ((i.policy as any)?.[0]?.first_year_end || '9999-12-31'))
+        .filter(i => i.due_date <= (i.policy?.first_year_end || '9999-12-31'))
         .reduce((s, i) => s + Number(i.amount), 0);
 
       setMonthData({

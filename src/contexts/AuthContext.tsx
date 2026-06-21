@@ -58,7 +58,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     return () => subscription?.unsubscribe();
-  }, []);  
+  }, []);
 
   async function fetchProfileAndBranches(userId: string) {
     try {
@@ -77,6 +77,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (!profileData) {
         console.error('No profile found for user');
+        setLoading(false);
+        return;
+      }
+
+      // ✅ منع المستخدم المعطّل (is_active = false) من الاستمرار بالجلسة.
+      // الفحص الأساسي يتم داخل signIn() قبل فتح الجلسة فعلياً، وهذا فحص
+      // إضافي للحالات التي تتغير فيها حالة الحساب أثناء وجود جلسة مفتوحة
+      // (مثلاً تعطيل المستخدم بينما هو متصل) — نسجّل خروجه فوراً.
+      if (profileData.is_active === false) {
+        console.warn('Session terminated: user account is deactivated');
+        await supabase.auth.signOut();
+        setProfile(null);
+        setActiveBranchState(null);
+        setActiveBranchAccess(null);
+        setAccessibleBranches([]);
+        setSession(null);
+        setUser(null);
         setLoading(false);
         return;
       }
@@ -110,20 +127,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (accessData && accessData.length > 0) {
         branches = accessData
-          .map((access: any) => (access.branch as unknown as Branch))
-          .filter((branch: Branch) => branch && branch.is_active);
+          .map(access => (access.branch as any))
+          .filter(branch => branch && branch.is_active);
         
-        accessRecords = accessData.map((record: any) => ({
-          id: record.id,
-          user_id: record.user_id,
-          branch_id: record.branch_id,
-          role: record.role,
-          is_active: record.is_active,
-          assigned_at: record.assigned_at,
-          expires_at: record.expires_at,
-          updated_at: record.updated_at,
-          created_at: record.created_at || new Date().toISOString(),
-        })) as UserBranchAccess[];
+        accessRecords = accessData as UserBranchAccess[];
       }
 
       // If no branches found, allow user to proceed to dashboard
@@ -142,26 +149,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const savedBranchId = localStorage.getItem(`activeBranch_${userId}`);
       let activeBranchData = null;
 
-      // Try to find saved branch first
       if (savedBranchId) {
         activeBranchData = branches.find(b => b.id === savedBranchId);
       }
 
-      // If no saved branch, try to find "طنطا 3" or "Tanta 3" branch
+      // Fallback to first branch if saved one not found
       if (!activeBranchData) {
-        activeBranchData = branches.find(b => 
-          b.name?.includes('طنطا') || 
-          b.name?.includes('Tanta') || 
-          b.name?.includes('tanta')
-        );
-      }
-
-      // Fallback to first branch if no special branch found
-      if (!activeBranchData && branches.length > 0) {
         activeBranchData = branches[0];
       }
 
-      // Only set if we have a valid branch
       if (activeBranchData) {
         setActiveBranchState(activeBranchData);
         
@@ -170,9 +166,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (access) {
           setActiveBranchAccess(access as UserBranchAccess);
         }
-      } else if (branches.length === 0) {
-        // If no branches available, show error
-        console.error('No branches available for user');
       }
     } catch (err) {
       console.error('Unexpected error fetching profile and branches:', err);
@@ -218,8 +211,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   async function signIn(email: string, password: string) {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    return { error: error?.message ?? null };
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) {
+      return { error: error.message };
+    }
+
+    // ✅ فحص is_active فوراً بعد نجاح المصادقة، قبل اعتبار الجلسة صالحة.
+    // بدون هذا الفحص، كان أي مستخدم مُعطّل (is_active = false) يستطيع
+    // تسجيل الدخول بنجاح عبر Supabase Auth — لأن التعطيل عمود في
+    // profiles فقط ولا علاقة له بحالة حساب auth.users.
+    if (data.user) {
+      const { data: profileData, error: profileError } = await supabase
+        .from('profiles')
+        .select('is_active')
+        .eq('id', data.user.id)
+        .maybeSingle();
+
+      if (!profileError && profileData && profileData.is_active === false) {
+        await supabase.auth.signOut();
+        return { error: 'هذا الحساب معطّل — يرجى التواصل مع مسؤول النظام' };
+      }
+    }
+
+    return { error: null };
   }
 
   async function signOut() {

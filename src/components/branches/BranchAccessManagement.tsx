@@ -4,13 +4,13 @@ import { useAuth } from '../../contexts/AuthContext';
 import { Profile, Branch, UserBranchAccess } from '../../types';
 import PageHeader from '../common/PageHeader';
 import LoadingSpinner from '../common/LoadingSpinner';
-import { Users, Plus, X, Search } from 'lucide-react';
+import { Users, Plus, X, Search, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const MAIN_BRANCH_CODE = 'MAIN';
 
 export default function BranchAccessManagement() {
-  const { profile: _profile } = useAuth(); // eslint-disable-line @typescript-eslint/no-unused-vars
+  const { profile } = useAuth();
   const [users, setUsers] = useState<Profile[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [userBranchAccess, setUserBranchAccess] = useState<UserBranchAccess[]>([]);

@@ -46,7 +46,7 @@ async function logAudit(supabaseUrl: string, serviceKey: string, payload: any) {
   }
 }
 
-// ✅ دالة للتحقق من الدور الهرمي
+// Helper: hierarchical role-based access check
 async function checkHierarchyAccess(
   supabaseUrl: string,
   serviceKey: string,
@@ -54,12 +54,12 @@ async function checkHierarchyAccess(
   targetUserId: string,
   callerRole: string
 ): Promise<boolean> {
-  // السوبر أدمن يمكنه الوصول لأي شخص
+  // Super admin can access anyone
   if (callerRole === "super_admin") {
     return true;
   }
 
-  // مدير التطوير يمكنه الوصول لأي شخص ما عدا السوبر أدمن
+  // Dev manager can access anyone except super_admin
   if (callerRole === "dev_manager") {
     const targetRes = await fetch(
       `${supabaseUrl}/rest/v1/profiles?id=eq.${targetUserId}&select=role`,
@@ -70,7 +70,7 @@ async function checkHierarchyAccess(
     return targetRole !== "super_admin";
   }
 
-  // بقية الأدوار يمكنهم الوصول لتابعيهم فقط (عبر manager_id)
+  // Other roles can only access their subordinates (via manager_id)
   const isSubordinateRes = await fetch(
     `${supabaseUrl}/rest/v1/rpc/is_subordinate`,
     {
@@ -100,7 +100,7 @@ serve(async (req) => {
 
   const authHeader = req.headers.get("authorization");
   if (!authHeader?.startsWith("Bearer ")) {
-    return jsonResponse({ error: "غير مصرح — يجب تسجيل الدخول أولاً" }, 401, origin);
+    return jsonResponse({ error: "Unauthorized - please sign in first" }, 401, origin);
   }
 
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -108,14 +108,14 @@ serve(async (req) => {
 
   if (!SERVICE_KEY || !SUPABASE_URL) {
     console.error("Missing environment variables: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
-    return jsonResponse({ error: "خطأ في إعداد السيرفر — تواصل مع المطور" }, 500, origin);
+    return jsonResponse({ error: "Server configuration error - contact the developer" }, 500, origin);
   }
 
   let body: Record<string, unknown>;
   try {
     body = await req.json();
   } catch {
-    return jsonResponse({ error: "طلب غير صالح — تحقق من البيانات المرسلة" }, 400, origin);
+    return jsonResponse({ error: "Invalid request - check the submitted data" }, 400, origin);
   }
 
   const token = authHeader.slice(7);
@@ -124,7 +124,7 @@ serve(async (req) => {
   });
 
   if (!verifyRes.ok) {
-    return jsonResponse({ error: "جلسة المستخدم غير صالحة — أعد تسجيل الدخول" }, 401, origin);
+    return jsonResponse({ error: "Invalid session - please sign in again" }, 401, origin);
   }
   const callerUser = await verifyRes.json();
   const callerId = callerUser?.id;
@@ -136,43 +136,15 @@ serve(async (req) => {
   const profiles = await profileRes.json();
   const callerProfile = Array.isArray(profiles) ? profiles[0] : null;
 
-  // ✅ وظيفة مؤقتة لإعادة تعيين جميع كلمات المرور (للمسؤول فقط)
-  if (body.reset_all_passwords === true) {
-    if (!callerProfile || callerProfile.role !== "super_admin") {
-      return jsonResponse({ error: "هذه العملية متاحة لـ super_admin فقط" }, 403, origin);
-    }
-
-    const usersRes = await fetch(`${SUPABASE_URL}/auth/v1/admin/users`, {
-      headers: { Authorization: `Bearer ${SERVICE_KEY}`, apikey: SERVICE_KEY },
-    });
-    const { users } = await usersRes.json();
-    
-    let successCount = 0;
-    for (const user of users) {
-      const res = await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${user.id}`, {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${SERVICE_KEY}`,
-          apikey: SERVICE_KEY,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ password: "123456" }),
-      });
-      if (res.ok) successCount++;
-    }
-
-    return jsonResponse({ success: true, message: `تمت إعادة تعيين ${successCount} كلمة مرور بنجاح` }, 200, origin);
-  }
-
-  // ✅ معالجة إعادة تعيين كلمة المرور
+  // Handle password reset (single specific user only)
   if (body.reset_password_for) {
     console.log(`Password reset attempt for user ${body.reset_password_for} by ${callerId}`);
 
     if (!callerProfile || !["super_admin", "dev_manager", "general_supervisor", "supervisor", "team_leader"].includes(callerProfile.role)) {
-      return jsonResponse({ error: "غير مصرح بتغيير كلمة المرور" }, 403, origin);
+      return jsonResponse({ error: "Not authorized to reset this password" }, 403, origin);
     }
 
-    // ✅ التحقق من الهيكل الهرمي
+    // Check hierarchical access
     const hasAccess = await checkHierarchyAccess(
       SUPABASE_URL,
       SERVICE_KEY,
@@ -182,12 +154,12 @@ serve(async (req) => {
     );
 
     if (!hasAccess) {
-      return jsonResponse({ error: "غير مصرح بتغيير كلمة المرور لهذا المستخدم" }, 403, origin);
+      return jsonResponse({ error: "Not authorized to reset this user account password" }, 403, origin);
     }
 
     const newPass = body.new_password as string;
     if (!newPass || newPass.length < 6) {
-      return jsonResponse({ error: "كلمة المرور يجب ألا تقل عن 6 أحرف" }, 400, origin);
+      return jsonResponse({ error: "Password must be at least 6 characters" }, 400, origin);
     }
 
     const res = await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${body.reset_password_for}`, {
@@ -203,7 +175,7 @@ serve(async (req) => {
     const data = await res.json();
     if (!res.ok) {
       console.error(`Supabase Auth Admin Error: ${JSON.stringify(data)}`);
-      return jsonResponse({ error: data.message || "فشل تغيير كلمة المرور في Supabase Auth" }, 400, origin);
+      return jsonResponse({ error: data.message || "Failed to reset password in Supabase Auth" }, 400, origin);
     }
 
     await logAudit(SUPABASE_URL, SERVICE_KEY, {
@@ -218,14 +190,27 @@ serve(async (req) => {
     return jsonResponse({ success: true }, 200, origin);
   }
 
-  // ✅ معالجة حذف المستخدم
+  // Handle user deletion - Super Admin and Dev Manager (Dev Manager cannot delete Super Admin)
   if (body.delete_user_id) {
-    if (!callerProfile || callerProfile.role !== "super_admin") {
-      return jsonResponse({ error: "حذف المستخدمين متاح لـ super_admin فقط" }, 403, origin);
+    if (!callerProfile || !["super_admin", "dev_manager"].includes(callerProfile.role)) {
+      return jsonResponse({ error: "Deleting users is restricted to Super Admin and Dev Manager" }, 403, origin);
     }
 
     if (body.delete_user_id === callerId) {
-      return jsonResponse({ error: "لا يمكنك حذف حسابك الخاص" }, 400, origin);
+      return jsonResponse({ error: "You cannot delete your own account" }, 400, origin);
+    }
+
+    // Dev manager cannot delete a Super Admin
+    if (callerProfile.role === "dev_manager") {
+      const targetRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/profiles?id=eq.${body.delete_user_id}&select=role`,
+        { headers: { Authorization: `Bearer ${SERVICE_KEY}`, apikey: SERVICE_KEY } }
+      );
+      const targets = await targetRes.json();
+      const targetRole = Array.isArray(targets) ? targets[0]?.role : null;
+      if (targetRole === "super_admin") {
+        return jsonResponse({ error: "Dev Manager cannot delete a Super Admin account" }, 403, origin);
+      }
     }
 
     const res = await fetch(
@@ -270,7 +255,7 @@ serve(async (req) => {
           return jsonResponse({ success: true, soft_deleted: true }, 200, origin);
         }
       }
-      return jsonResponse({ error: errorMessage || "فشل الحذف" }, 400, origin);
+      return jsonResponse({ error: errorMessage || "Delete failed" }, 400, origin);
     }
 
     await logAudit(SUPABASE_URL, SERVICE_KEY, {
@@ -283,33 +268,43 @@ serve(async (req) => {
     return jsonResponse({ success: true }, 200, origin);
   }
 
-  // ✅ معالجة إنشاء مستخدم جديد
+  // Handle new user creation
   if (!callerProfile || !["super_admin", "dev_manager", "general_supervisor", "supervisor", "team_leader"].includes(callerProfile.role)) {
-    return jsonResponse({ error: "غير مصرح — فقط المديرون يمكنهم إنشاء مستخدمين" }, 403, origin);
+    return jsonResponse({ error: "Unauthorized - only managers can create users" }, 403, origin);
   }
 
   const { email, password, full_name, phone, role, manager_id } = body as Record<string, string>;
 
   if (!email || !password || !full_name) {
-    return jsonResponse({ error: "البريد الإلكتروني وكلمة المرور والاسم مطلوبة" }, 400, origin);
+    return jsonResponse({ error: "Email, password and full name are required" }, 400, origin);
   }
 
-  // ✅ التحقق من أن المستخدم الذي سيتم إنشاؤه ليس أعلى رتبة من المنشئ
+  // Ensure the new user's role is strictly lower in rank than the creator
+  // (unless the creator is super_admin, who can create any role)
   const roleHierarchy: Record<string, number> = {
     super_admin: 0,
     dev_manager: 1,
     general_supervisor: 2,
     supervisor: 3,
     team_leader: 4,
-    branch_manager: 4,
     agent: 5,
   };
 
-  const callerLevel = roleHierarchy[callerProfile.role] || 999;
-  const newUserLevel = roleHierarchy[role] || 999;
+  if (!Object.prototype.hasOwnProperty.call(roleHierarchy, role)) {
+    return jsonResponse({ error: "Invalid role" }, 400, origin);
+  }
 
-  if (newUserLevel < callerLevel && callerProfile.role !== "super_admin") {
-    return jsonResponse({ error: "لا يمكنك إنشاء مستخدم برتبة أعلى من رتبتك" }, 403, origin);
+  const callerLevel = roleHierarchy[callerProfile.role] ?? 999;
+  const newUserLevel = roleHierarchy[role] ?? 999;
+
+  if (callerProfile.role !== "super_admin") {
+    if (newUserLevel <= callerLevel) {
+      return jsonResponse({ error: "You cannot create a user with a rank equal to or higher than your own" }, 403, origin);
+    }
+    // Dev manager can never create a Super Admin account
+    if (role === "super_admin") {
+      return jsonResponse({ error: "Only a Super Admin can create a Super Admin account" }, 403, origin);
+    }
   }
 
   const createRes = await fetch(`${SUPABASE_URL}/auth/v1/admin/users`, {
@@ -324,7 +319,7 @@ serve(async (req) => {
   const createData = await createRes.json();
 
   if (!createRes.ok || !createData.id) {
-    return jsonResponse({ error: createData.message || "فشل إنشاء الحساب" }, 400, origin);
+    return jsonResponse({ error: createData.message || "Failed to create account" }, 400, origin);
   }
 
   const profRes = await fetch(`${SUPABASE_URL}/rest/v1/profiles`, {
@@ -351,7 +346,7 @@ serve(async (req) => {
       method: "DELETE",
       headers: { Authorization: `Bearer ${SERVICE_KEY}`, apikey: SERVICE_KEY },
     });
-    return jsonResponse({ error: "فشل إنشاء الملف الشخصي" }, 400, origin);
+    return jsonResponse({ error: "Failed to create user profile" }, 400, origin);
   }
 
   await logAudit(SUPABASE_URL, SERVICE_KEY, {

@@ -65,9 +65,12 @@ export default function Reports() {
             .gte('collection_date', monthStart)
             .lt('collection_date', monthEnd);
 
-          if (activeBranchAccess?.role === 'agent') {
+          // ✅ يعتمد على profile.role (المصدر الموحد للدور) بدل activeBranchAccess.role
+          // الذي قد لا يطابق الدور الحقيقي للمستخدم في كل الفروع
+          const effectiveReportRole = profile?.role ?? activeBranchAccess?.role;
+          if (effectiveReportRole === 'agent') {
             query = query.eq('agent_id', profile?.id);
-          } else if (activeBranchAccess && ['team_leader', 'supervisor', 'general_supervisor'].includes(activeBranchAccess.role)) {
+          } else if (effectiveReportRole && ['team_leader', 'supervisor', 'general_supervisor'].includes(effectiveReportRole)) {
             const subordinateIds = [profile.id, ...getSubordinateIds(profile.id, allProfiles)];
             query = query.in('agent_id', subordinateIds);
           }
@@ -119,9 +122,12 @@ export default function Reports() {
             .gte('collection_date', monthStart)
             .lt('collection_date', monthEnd);
 
-          if (activeBranchAccess?.role === 'agent') {
+          // ✅ يعتمد على profile.role (المصدر الموحد للدور) بدل activeBranchAccess.role
+          // الذي قد لا يطابق الدور الحقيقي للمستخدم في كل الفروع
+          const effectiveReportRole = profile?.role ?? activeBranchAccess?.role;
+          if (effectiveReportRole === 'agent') {
             query = query.eq('agent_id', profile?.id);
-          } else if (activeBranchAccess && ['team_leader', 'supervisor', 'general_supervisor'].includes(activeBranchAccess.role)) {
+          } else if (effectiveReportRole && ['team_leader', 'supervisor', 'general_supervisor'].includes(effectiveReportRole)) {
             const subordinateIds = [profile.id, ...getSubordinateIds(profile.id, allProfiles)];
             query = query.in('agent_id', subordinateIds);
           }

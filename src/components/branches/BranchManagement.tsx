@@ -11,7 +11,7 @@ const EMPTY_FORM = { name: '', code: '' };
 const MAIN_BRANCH_CODE = 'MAIN';
 
 export default function BranchManagement() {
-  const { profile: _profile } = useAuth(); // eslint-disable-line @typescript-eslint/no-unused-vars
+  const { profile } = useAuth();
   const [branches, setBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);

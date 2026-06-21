@@ -2,13 +2,13 @@ import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { Profile, ROLE_LABELS, UserRole } from '../../types';
-import { assignableRoles, canManageRole, isManager } from '../../lib/rbac';
-import { createUser, deleteUser as deleteUserService, resetUserPassword } from '../../services/usersService';
+import { assignableRoles, canManageRole, canDeleteUsers } from '../../lib/rbac';
+import { createUser, deleteUser as deleteUserService, resetUserPassword, updateUserProfile, linkUserToBranches } from '../../services/usersService';
 import PageHeader from '../common/PageHeader';
 import LoadingSpinner from '../common/LoadingSpinner';
 import {
   Users, Plus, Edit2, Trash2, Ban, CheckCircle, X,
-  Search, Key, ChevronDown, Shield, Phone, Mail, Building2,
+  Search, Key, ChevronDown, Shield, Phone, Mail, Building2, AlertTriangle,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -34,8 +34,8 @@ export default function UserManagement() {
   const [resetPasswordId, setResetPasswordId] = useState<string | null>(null);
   const [resetPasswordName, setResetPasswordName] = useState<string>('');
   const [newPassword, setNewPassword] = useState('');
-  const [branches, setBranches] = useState<{ id: string; name: string; code: string | null; is_active: boolean }[]>([]);
-  const [userBranchAccess, setUserBranchAccess] = useState<{ id: string; user_id: string; branch_id: string; role: UserRole; is_active: boolean }[]>([]);
+  const [branches, setBranches] = useState<any[]>([]);
+  const [userBranchAccess, setUserBranchAccess] = useState<any[]>([]);
   const [showBranchModal, setShowBranchModal] = useState(false);
   const [selectedUserForBranch, setSelectedUserForBranch] = useState<Profile | null>(null);
   const [selectedBranches, setSelectedBranches] = useState<string[]>([]);
@@ -63,11 +63,11 @@ export default function UserManagement() {
     if (profile.id === targetUser.id) return true;
     
     // التحقق من التبعية الهرمية (إذا كان targetUser تابع لـ profile)
-    return checkIsSubordinate(profile.id, targetUser.id);
-  }, [profile, isSuperAdmin, isDevManager]); // eslint-disable-line react-hooks/exhaustive-deps
+    return isSubordinate(profile.id, targetUser.id);
+  }, [profile, isSuperAdmin, isDevManager]);
 
   // ✅ دالة للتحقق من التبعية الهرمية
-  const checkIsSubordinate = (managerId: string, subordinateId: string): boolean => {
+  const isSubordinate = (managerId: string, subordinateId: string): boolean => {
     // هذه دالة مساعدة بسيطة — يمكن تحسينها لاحقاً
     // للآن نستخدم البيانات المحملة محلياً
     const visited = new Set<string>();
@@ -150,7 +150,7 @@ export default function UserManagement() {
     if (isDevManager) return u.role !== 'super_admin';
     
     // بقية الأدوار ترى تابعيهم فقط
-    return checkIsSubordinate(profile?.id || '', u.id);
+    return isSubordinate(profile?.id || '', u.id);
   });
 
   // ✅ فلتر الأدوار مُفعَّل الآن
@@ -221,7 +221,7 @@ export default function UserManagement() {
     if (user.id === profile?.id) { toast.error('لا يمكنك تعطيل حسابك الخاص'); return; }
     
     // التحقق من الصلاحيات
-    if (!isSuperAdmin && !isDevManager && !checkIsSubordinate(profile?.id || '', user.id)) {
+    if (!isSuperAdmin && !isDevManager && !isSubordinate(profile?.id || '', user.id)) {
       toast.error('غير مصرح بتعديل حالة هذا المستخدم');
       return;
     }
@@ -240,10 +240,12 @@ export default function UserManagement() {
     }
   }
 
-  // ✅ منع حذف المستخدم المرتبط ببيانات مع رسالة واضحة
+  // ✅ حذف المستخدمين متاح لـ Super Admin ومدير التطوير (بما يطابق سياسة
+  // profiles_delete في قاعدة البيانات). مدير التطوير لا يمكنه حذف Super Admin.
   async function deleteUserHandler(user: Profile) {
     if (user.id === profile?.id) { toast.error('لا يمكنك حذف حسابك الخاص'); return; }
-    if (!isSuperAdmin) { toast.error('حذف المستخدمين متاح لـ مسؤول النظام فقط'); return; }
+    if (!canDeleteUsers(myRole)) { toast.error('حذف المستخدمين متاح لـ Super Admin ومدير التطوير فقط'); return; }
+    if (isDevManager && user.role === 'super_admin') { toast.error('لا يمكن لمدير التطوير حذف حساب Super Admin'); return; }
 
     // فحص مسبق للبيانات المرتبطة قبل الحذف
     setDeletingUserId(user.id);
@@ -368,9 +370,9 @@ export default function UserManagement() {
     fetchUserBranchAccess();
   }
 
-  // ✅ التحقق من صلاحية الوصول: super_admin و dev_manager لهم وصول كامل
-  // بقية الأدوار تتحقق من isManager
-  if (!profile || (!hasFullAccess && !isManager(profile.role))) {
+  // ✅ صفحة إدارة المستخدمين بكامل صلاحياتها محصورة بـ Super Admin
+  // ومدير التطوير فقط، تطبيقاً لما هو محدد في rbac.ts (canAccessPage('/users')).
+  if (!profile || !hasFullAccess) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-slate-400">
         <Shield className="w-12 h-12 mb-3 opacity-30" />
@@ -387,7 +389,6 @@ export default function UserManagement() {
     general_supervisor: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
     supervisor: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-300',
     team_leader: 'bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300',
-    branch_manager: 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300',
     agent: 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300',
   };
 
@@ -399,38 +400,6 @@ export default function UserManagement() {
         icon={Users}
         actions={
             <div className="flex items-center gap-2">
-            {isSuperAdmin && (
-              <button
-                onClick={async () => {
-                  if (!confirm('⚠️ هل أنت متأكد من إعادة تعيين كلمات مرور جميع المستخدمين في النظام إلى 123456؟ لا يمكن التراجع عن هذا الإجراء.')) return;
-                  setLoading(true);
-                  try {
-                    const { data: { session } } = await supabase.auth.getSession();
-                    const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-user`, {
-                      method: 'POST',
-                      headers: {
-                        'Authorization': `Bearer ${session?.access_token}`,
-                        'Content-Type': 'application/json',
-                      },
-                      body: JSON.stringify({ reset_all_passwords: true }),
-                    });
-                    const result = await response.json();
-                    if (result.success) {
-                      toast.success(result.message);
-                    } else {
-                      toast.error(result.error || 'فشلت العملية');
-                    }
-                  } catch (err) {
-                    toast.error('خطأ في الاتصال بالسيرفر');
-                  } finally {
-                    setLoading(false);
-                  }
-                }}
-                className="flex items-center gap-2 px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-sm font-medium transition-colors"
-              >
-                <Key className="w-4 h-4" /><span className="hidden sm:inline">إعادة تعيين الجميع لـ 123456</span>
-              </button>
-            )}
             <button
               onClick={() => { setEditingUser(null); setFormData(emptyForm); setShowForm(true); }}
               className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-medium transition-colors"
@@ -468,7 +437,7 @@ export default function UserManagement() {
       </div>
 
       {/* إحصائيات الأدوار */}
-      <div className="grid grid-cols-3 sm:grid-cols-7 gap-2 mb-4">
+      <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-4">
         {(Object.keys(ROLE_LABELS) as UserRole[]).map(r => (
           <button
             key={r}
@@ -570,8 +539,8 @@ export default function UserManagement() {
                     }
                   </button>
 
-                  {/* ✅ زر الحذف — للسوبر أدمن فقط */}
-                  {isSuperAdmin && user.id !== profile?.id && (
+                  {/* ✅ زر الحذف — Super Admin ومدير التطوير (مدير التطوير لا يحذف Super Admin) */}
+                  {canDeleteUsers(myRole) && user.id !== profile?.id && !(isDevManager && user.role === 'super_admin') && (
                     <button
                       onClick={() => deleteUserHandler(user)}
                       title="حذف أو تعطيل المستخدم"
