@@ -4,6 +4,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { canViewAdminReports } from '../../lib/rbac';
 import { Download, Filter, BarChart, PieChart, TrendingUp, DollarSign, Calendar, User, FileText, Loader2, Building2, Users, Wallet, CheckSquare } from 'lucide-react';
 import { formatCurrency } from '../../lib/utils';
+import { exportToExcel } from '../../lib/excel';
 import toast from 'react-hot-toast';
 
 type ReportType = 'production' | 'collection' | 'branch_performance' | 'agent_performance';
@@ -172,7 +173,13 @@ export default function Reports() {
 
   const handleExport = () => {
     if (reportData.length === 0) return;
-    toast.error('ميزة التصدير غير متوفرة حالياً');
+    try {
+      exportToExcel(reportData, `${reportType}_report_${year}_${month}`);
+      toast.success('تم تصدير التقرير بنجاح');
+    } catch (error) {
+      console.error('Export error:', error);
+      toast.error('حدث خطأ أثناء تصدير التقرير');
+    }
   };
 
   return (
@@ -313,5 +320,3 @@ export default function Reports() {
     </div>
   );
 }
-
-
