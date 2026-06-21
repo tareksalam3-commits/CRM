@@ -24,13 +24,13 @@ const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
 /**
- * 🔧 Create a Supabase client with a custom auth token for fallback auth mode
+ * 🔧 Create a Supabase client with x-user-id header for fallback auth mode
  */
-function createAuthClient(accessToken: string) {
+function createAuthClient(userId: string) {
   return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     global: {
       headers: {
-        Authorization: `Bearer ${accessToken}`,
+        'x-user-id': userId,
       },
     },
     auth: {
@@ -49,12 +49,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [activeBranchAccess, setActiveBranchAccess] = useState<UserBranchAccess | null>(null);
   const [accessibleBranches, setAccessibleBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(true);
-  // 🔧 Track fallback auth token for GoTrue schema issue
-  const [fallbackToken, setFallbackToken] = useState<string | null>(null);
+  // 🔧 Track fallback auth state for GoTrue schema issue
   const [fallbackUserId, setFallbackUserId] = useState<string | null>(null);
 
   useEffect(() => {
-    // Initial session check
+    // Check for fallback auth in localStorage
+    const savedFallbackUserId = localStorage.getItem('fallback_user_id');
+    if (savedFallbackUserId) {
+      setFallbackUserId(savedFallbackUserId);
+      // Create a minimal user object
+      const fallbackUser: User = {
+        id: savedFallbackUserId,
+        email: localStorage.getItem('fallback_user_email') || '',
+        role: 'authenticated',
+        aud: 'authenticated',
+        created_at: new Date().toISOString(),
+        app_metadata: {},
+        user_metadata: {},
+        identities: [],
+        factors: [],
+      } as User;
+      setUser(fallbackUser);
+      fetchProfileAndBranches(savedFallbackUserId);
+      return;
+    }
+
+    // Normal session check
     supabase.auth.getSession().then(({ data: { session: currentSession } }) => {
       setSession(currentSession);
       setUser(currentSession?.user ?? null);
@@ -90,8 +110,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
    * 🔧 Get the appropriate supabase client based on auth mode
    */
   function getClient() {
-    if (fallbackToken) {
-      return createAuthClient(fallbackToken);
+    if (fallbackUserId) {
+      return createAuthClient(fallbackUserId);
     }
     return supabase;
   }
@@ -129,8 +149,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setAccessibleBranches([]);
         setSession(null);
         setUser(null);
-        setFallbackToken(null);
         setFallbackUserId(null);
+        localStorage.removeItem('fallback_user_id');
+        localStorage.removeItem('fallback_user_email');
         setLoading(false);
         return;
       }
@@ -297,57 +318,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return { error: result.error || 'فشل تسجيل الدخول' };
       }
 
-      // Edge Function returned a session - set it manually
-      if (result.session?.access_token) {
-        // Try setSession first
+      // Edge Function returned userId
+      if (result.userId) {
+        // Try setSession first (in case GoTrue is working again)
         const { error: sessionError } = await supabase.auth.setSession({
-          access_token: result.session.access_token,
-          refresh_token: result.session.refresh_token || result.session.access_token,
+          access_token: 'fallback',
+          refresh_token: 'fallback',
         });
 
         if (!sessionError) {
-          // setSession worked
+          // setSession worked somehow
           return { error: null };
         }
 
-        console.log('[Auth] setSession failed, using fallback auth mode:', sessionError.message);
+        console.log('[Auth] Using fallback auth mode with x-user-id header');
         
-        // 🔧 Fallback: Use custom auth client with the token from Edge Function
-        setFallbackToken(result.session.access_token);
-        setFallbackUserId(result.user.id);
+        // 🔧 Fallback: Use x-user-id header auth
+        setFallbackUserId(result.userId);
+        localStorage.setItem('fallback_user_id', result.userId);
+        localStorage.setItem('fallback_user_email', result.email || email);
 
         // Create a compatible user object
         const fallbackUser: User = {
-          id: result.user.id,
-          email: result.user.email,
-          role: result.user.role || 'authenticated',
-          aud: result.user.aud || 'authenticated',
-          created_at: result.user.created_at,
+          id: result.userId,
+          email: result.email || email,
+          role: 'authenticated',
+          aud: 'authenticated',
+          created_at: new Date().toISOString(),
           app_metadata: {},
           user_metadata: {},
           identities: [],
           factors: [],
         } as User;
 
-        // Create a compatible session object
-        const expiresAt = result.session.expires_at || Math.floor(Date.now() / 1000) + 3600;
-        const fallbackSession: Session = {
-          access_token: result.session.access_token,
-          token_type: result.session.token_type || 'bearer',
-          expires_in: result.session.expires_in || 3600,
-          expires_at: expiresAt,
-          refresh_token: result.session.refresh_token || result.session.access_token,
-          user: fallbackUser,
-        };
-
-        setSession(fallbackSession);
         setUser(fallbackUser);
-        await fetchProfileAndBranches(result.user.id);
+        await fetchProfileAndBranches(result.userId);
         
         return { error: null };
       }
 
-      return { error: 'لم يتم إرجاع جلسة من خادم المصادقة' };
+      return { error: 'لم يتم إرجاع معرف المستخدم من خادم المصادقة' };
 
     } catch (fetchError) {
       console.error('[Auth] Edge Function fetch error:', fetchError);
@@ -361,8 +371,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setActiveBranchState(null);
     setActiveBranchAccess(null);
     setAccessibleBranches([]);
-    setFallbackToken(null);
     setFallbackUserId(null);
+    setSession(null);
+    setUser(null);
+    localStorage.removeItem('fallback_user_id');
+    localStorage.removeItem('fallback_user_email');
   }
 
   return (
