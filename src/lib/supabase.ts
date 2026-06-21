@@ -20,36 +20,27 @@ if (!supabaseUrl || !supabaseAnonKey) {
 }
 
 /**
- * 🔧 Get headers including x-user-id for fallback auth mode
+ * 🔧 Create the main Supabase client.
+ * For fallback auth mode (GoTrue schema issue), the x-user-id header
+ * is managed by AuthContext which creates a separate client.
  */
-function getSupabaseHeaders() {
-  const headers: Record<string, string> = {};
-  
-  // Check if we're in fallback auth mode
-  if (typeof window !== 'undefined') {
-    const fallbackUserId = localStorage.getItem('fallback_user_id');
-    if (fallbackUserId) {
-      headers['x-user-id'] = fallbackUserId;
-    }
-  }
-  
-  return headers;
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+/**
+ * 🔧 Create a supabase client with x-user-id header for fallback auth.
+ * Used by AuthContext when normal Supabase Auth fails with schema error.
+ */
+export function createAuthClient(userId: string) {
+  return createClient(supabaseUrl, supabaseAnonKey, {
+    global: {
+      headers: {
+        'x-user-id': userId,
+      },
+    },
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+  });
 }
-
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-  global: {
-    headers: getSupabaseHeaders(),
-  },
-});
-
-// 🔧 Force update headers before each request for fallback auth
-const originalFrom = supabase.from.bind(supabase);
-supabase.from = function(table: string) {
-  // Refresh headers from localStorage before each query
-  const fallbackUserId = typeof window !== 'undefined' ? localStorage.getItem('fallback_user_id') : null;
-  if (fallbackUserId) {
-    // @ts-ignore - internal method to set headers
-    supabase.rest.headers['x-user-id'] = fallbackUserId;
-  }
-  return originalFrom(table);
-} as typeof supabase.from;
