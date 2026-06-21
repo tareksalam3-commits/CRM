@@ -20,11 +20,31 @@ if (!supabaseUrl || !supabaseAnonKey) {
 }
 
 /**
- * 🔧 Create the main Supabase client.
- * For fallback auth mode (GoTrue schema issue), the x-user-id header
- * is managed by AuthContext which creates a separate client.
+ * 🔧 Custom fetch that injects x-user-id header for fallback auth mode.
+ * This ensures all supabase queries include the user-id when in fallback mode.
  */
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+const originalFetch = window.fetch;
+const customFetch: typeof fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+  // Only intercept Supabase REST API calls
+  const url = input.toString();
+  if (url.includes(supabaseUrl) && !url.includes('/auth/')) {
+    const fallbackUserId = localStorage.getItem('fallback_user_id');
+    if (fallbackUserId) {
+      init = init || {};
+      init.headers = {
+        ...(init.headers || {}),
+        'x-user-id': fallbackUserId,
+      };
+    }
+  }
+  return originalFetch(input, init);
+};
+
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  global: {
+    fetch: customFetch as any,
+  },
+});
 
 /**
  * 🔧 Create a supabase client with x-user-id header for fallback auth.
@@ -36,6 +56,7 @@ export function createAuthClient(userId: string) {
       headers: {
         'x-user-id': userId,
       },
+      fetch: customFetch as any,
     },
     auth: {
       persistSession: false,
