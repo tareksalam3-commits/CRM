@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import { Session, User } from '@supabase/supabase-js';
+import { Session, User, createClient } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import { Profile, Branch, UserBranchAccess } from '../types';
 
@@ -20,6 +20,26 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 // Edge Function URL for fallback authentication
 const EDGE_FUNCTION_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/auth-login`;
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+
+/**
+ * 🔧 Create a Supabase client with a custom auth token for fallback auth mode
+ */
+function createAuthClient(accessToken: string) {
+  return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    global: {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    },
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+  });
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
@@ -29,6 +49,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [activeBranchAccess, setActiveBranchAccess] = useState<UserBranchAccess | null>(null);
   const [accessibleBranches, setAccessibleBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(true);
+  // 🔧 Track fallback auth token for GoTrue schema issue
+  const [fallbackToken, setFallbackToken] = useState<string | null>(null);
+  const [fallbackUserId, setFallbackUserId] = useState<string | null>(null);
 
   useEffect(() => {
     // Initial session check
@@ -63,10 +86,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => subscription?.unsubscribe();
   }, []);
 
+  /**
+   * 🔧 Get the appropriate supabase client based on auth mode
+   */
+  function getClient() {
+    if (fallbackToken) {
+      return createAuthClient(fallbackToken);
+    }
+    return supabase;
+  }
+
   async function fetchProfileAndBranches(userId: string) {
     try {
+      const client = getClient();
+
       // Fetch user profile
-      const { data: profileData, error: profileError } = await supabase
+      const { data: profileData, error: profileError } = await client
         .from('profiles')
         .select('*')
         .eq('id', userId)
@@ -94,6 +129,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setAccessibleBranches([]);
         setSession(null);
         setUser(null);
+        setFallbackToken(null);
+        setFallbackUserId(null);
         setLoading(false);
         return;
       }
@@ -103,7 +140,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // ✅ جلب الفروع المتاحة دائماً ولكن بدون جعلها عائقاً
       // للمسؤولين، نصل لكل الفروع
       if (profileData.role === 'super_admin' || profileData.role === 'dev_manager') {
-        const { data: allBranches } = await supabase.from('branches').select('*').eq('is_active', true);
+        const { data: allBranches } = await client.from('branches').select('*').eq('is_active', true);
         if (allBranches) {
           setAccessibleBranches(allBranches);
           // الحالة الافتراضية هي "جميع الفروع"
@@ -112,7 +149,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       } else {
         // للمستخدمين العاديين، نجلب الفروع المخصصة لهم إن وجدت
-        const { data: accessData } = await supabase
+        const { data: accessData } = await client
           .from('user_branch_access')
           .select('id, user_id, branch_id, role, is_active, assigned_at, expires_at, updated_at, branch:branches(id, name, code, is_active, created_at, updated_at)')
           .eq('user_id', userId)
@@ -171,6 +208,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   async function setActiveBranch(branch: Branch | null) {
+    const client = getClient();
+
     if (branch && user) {
       setActiveBranchState(branch);
       localStorage.setItem(`activeBranch_${user.id}`, branch.id);
@@ -180,7 +219,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      const { data: accessData } = await supabase
+      const { data: accessData } = await client
         .from('user_branch_access')
         .select('*')
         .eq('user_id', user.id)
@@ -260,46 +299,51 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       // Edge Function returned a session - set it manually
       if (result.session?.access_token) {
-        const { data: sessionData, error: sessionError } = await supabase.auth.setSession({
+        // Try setSession first
+        const { error: sessionError } = await supabase.auth.setSession({
           access_token: result.session.access_token,
           refresh_token: result.session.refresh_token || result.session.access_token,
         });
 
-        if (sessionError) {
-          console.error('[Auth] Error setting session:', sessionError);
-          // Even if setSession fails, we can manually set the user/session state
-          // Create a compatible user object
-          const fallbackUser: User = {
-            id: result.user.id,
-            email: result.user.email,
-            role: result.user.role || 'authenticated',
-            aud: result.user.aud || 'authenticated',
-            created_at: result.user.created_at,
-            app_metadata: {},
-            user_metadata: {},
-            identities: [],
-            factors: [],
-          } as User;
-
-          // Create a compatible session object
-          const expiresAt = result.session.expires_at || Math.floor(Date.now() / 1000) + 3600;
-          const fallbackSession: Session = {
-            access_token: result.session.access_token,
-            token_type: result.session.token_type || 'bearer',
-            expires_in: result.session.expires_in || 3600,
-            expires_at: expiresAt,
-            refresh_token: result.session.refresh_token || result.session.access_token,
-            user: fallbackUser,
-          };
-
-          setSession(fallbackSession);
-          setUser(fallbackUser);
-          await fetchProfileAndBranches(result.user.id);
-          
+        if (!sessionError) {
+          // setSession worked
           return { error: null };
         }
 
-        // Session set successfully via setSession
+        console.log('[Auth] setSession failed, using fallback auth mode:', sessionError.message);
+        
+        // 🔧 Fallback: Use custom auth client with the token from Edge Function
+        setFallbackToken(result.session.access_token);
+        setFallbackUserId(result.user.id);
+
+        // Create a compatible user object
+        const fallbackUser: User = {
+          id: result.user.id,
+          email: result.user.email,
+          role: result.user.role || 'authenticated',
+          aud: result.user.aud || 'authenticated',
+          created_at: result.user.created_at,
+          app_metadata: {},
+          user_metadata: {},
+          identities: [],
+          factors: [],
+        } as User;
+
+        // Create a compatible session object
+        const expiresAt = result.session.expires_at || Math.floor(Date.now() / 1000) + 3600;
+        const fallbackSession: Session = {
+          access_token: result.session.access_token,
+          token_type: result.session.token_type || 'bearer',
+          expires_in: result.session.expires_in || 3600,
+          expires_at: expiresAt,
+          refresh_token: result.session.refresh_token || result.session.access_token,
+          user: fallbackUser,
+        };
+
+        setSession(fallbackSession);
+        setUser(fallbackUser);
+        await fetchProfileAndBranches(result.user.id);
+        
         return { error: null };
       }
 
@@ -317,6 +361,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setActiveBranchState(null);
     setActiveBranchAccess(null);
     setAccessibleBranches([]);
+    setFallbackToken(null);
+    setFallbackUserId(null);
   }
 
   return (
