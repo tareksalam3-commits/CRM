@@ -54,6 +54,14 @@ export function canManageSettings(role: UserRole): boolean {
   return role === 'super_admin';
 }
 
+/** 
+ * Returns the effective role for a user in a specific branch.
+ * Falls back to 'agent' if no access record is provided.
+ */
+export function getEffectiveRole(access: { role: UserRole } | null | undefined): UserRole {
+  return access?.role || 'agent';
+}
+
 // ============================================================
 // User Management Permissions
 // ============================================================

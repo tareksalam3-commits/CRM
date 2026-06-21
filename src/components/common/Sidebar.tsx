@@ -3,7 +3,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { ROLE_LABELS, UserRole } from '../../types';
-import { canAccessPage } from '../../lib/rbac';
+import { canAccessPage, getEffectiveRole } from '../../lib/rbac';
 import {
   LayoutDashboard, Users, UserCircle, FileText, Wallet, Target,
   CheckSquare, Bell, Calendar, BarChart3, ClipboardList, Settings,
@@ -36,16 +36,16 @@ const navItems: NavItem[] = [
 ];
 
 export default function Sidebar() {
-  const { profile, signOut, activeBranch, accessibleBranches, setActiveBranch } = useAuth();
+  const { profile, activeBranchAccess, signOut, activeBranch, accessibleBranches, setActiveBranch } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
   const [isOpen, setIsOpen] = useState(false);
   const [showBranchMenu, setShowBranchMenu] = useState(false);
 
-  // ✅ الدور الفعّال: استخدام profile.role مباشرة (يتم تحديثه بشكل صحيح من AuthContext)
-  const userRole = (profile?.role as UserRole) || null;
+  // ✅ الدور الفعّال: نعتمد دائماً على الدور في الملف الشخصي كمصدر أساسي للحقيقة
+  const userRole = profile?.role as UserRole | null;
 
-  // ✅ فلترة العناصر بناءً على الدور
+  // ✅ فلترة العناصر بناءً على الدور الفعال
   const filteredItems = navItems.filter(item => {
     if (!profile || !userRole) return false;
     return canAccessPage(userRole, item.path);
@@ -57,6 +57,11 @@ export default function Sidebar() {
   }
 
   async function handleBranchChange(branchId: string) {
+    if (branchId === 'all') {
+      await setActiveBranch({ id: 'all', name: 'جميع الفروع', code: 'ALL', is_active: true, created_at: '', updated_at: '' });
+      setShowBranchMenu(false);
+      return;
+    }
     const branch = accessibleBranches.find(b => b.id === branchId);
     if (branch) {
       await setActiveBranch(branch);
@@ -64,10 +69,13 @@ export default function Sidebar() {
     }
   }
 
-  // ✅ إذا كان المستخدم super_admin أو dev_manager، لا نعرض selector الفروع
+  // ✅ عرض selector الفروع للجميع إذا كان لديهم فروع متاحة
   const isSuperAdmin = userRole === 'super_admin';
   const isDevManager = userRole === 'dev_manager';
-  const showBranchSelector = accessibleBranches.length > 0 && !isSuperAdmin && !isDevManager;
+  const showBranchSelector = accessibleBranches.length > 0;
+
+  // ✅ القائمة الجانبية يجب أن تظهر دائماً طالما يوجد مستخدم مسجل
+  const showSidebar = !!profile;
 
   return (
     <>
@@ -138,6 +146,18 @@ export default function Sidebar() {
 
               {showBranchMenu && (
                 <div className="absolute top-full left-0 right-0 mt-2 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg shadow-xl z-10 max-h-48 overflow-y-auto">
+                  {(isSuperAdmin || isDevManager) && (
+                    <button
+                      onClick={() => handleBranchChange('all')}
+                      className={`w-full text-right px-3 py-2 text-sm transition-colors border-b border-slate-100 dark:border-slate-600 ${
+                        activeBranch?.id === 'all'
+                          ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 font-medium'
+                          : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-600'
+                      }`}
+                    >
+                      جميع الفروع
+                    </button>
+                  )}
                   {accessibleBranches.map(branch => (
                     <button
                       key={branch.id}

@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { calculateAgentPerformance, getAllAgentsPerformance } from '../../services/reportsService';
 import * as XLSX from 'xlsx';
+// @ts-ignore
 import html2pdf from 'html2pdf.js';
 
 interface ReportData {

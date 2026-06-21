@@ -2,7 +2,7 @@
 // The system uses admin-created accounts only (manager creates via UserManagement).
 import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { Shield, Mail, Lock, Eye, EyeOff } from 'lucide-react';
+import { Shield, Mail, Lock, Eye, EyeOff, AlertTriangle } from 'lucide-react';
 
 export default function LoginPage() {
   const { signIn } = useAuth();
@@ -16,19 +16,21 @@ export default function LoginPage() {
     e.preventDefault();
     setError('');
     setLoading(true);
-    const { error } = await signIn(email, password);
-    if (error) {
-      // Friendly Arabic error messages
-      if (error.includes('Invalid login credentials')) {
+
+    const { error: signInError } = await signIn(email, password);
+
+    if (signInError) {
+      if (signInError.includes('Invalid login credentials')) {
         setError('البريد الإلكتروني أو كلمة المرور غير صحيحة');
-      } else if (error.includes('Email not confirmed')) {
+      } else if (signInError.includes('Email not confirmed')) {
         setError('يرجى تأكيد البريد الإلكتروني أولاً');
-      } else if (error.includes('Too many requests')) {
+      } else if (signInError.includes('Too many requests')) {
         setError('محاولات كثيرة، يرجى الانتظار قليلاً');
       } else {
-        setError(error);
+        setError(signInError);
       }
     }
+
     setLoading(false);
   }
 
@@ -47,6 +49,13 @@ export default function LoginPage() {
           <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-6 text-center">
             تسجيل الدخول
           </h2>
+
+          {error && (
+            <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl text-red-700 dark:text-red-400 text-sm flex items-start gap-2">
+              <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+              <span>{error}</span>
+            </div>
+          )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>

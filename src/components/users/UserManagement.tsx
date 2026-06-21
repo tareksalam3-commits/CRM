@@ -2,17 +2,19 @@ import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { Profile, ROLE_LABELS, UserRole } from '../../types';
-import { assignableRoles, canManageRole, canDeleteUsers } from '../../lib/rbac';
-import { createUser, deleteUser as deleteUserService, resetUserPassword, updateUserProfile, linkUserToBranches } from '../../services/usersService';
+import { assignableRoles, canDeleteUsers } from '../../lib/rbac';
+import {
+  createUser, deleteUser as deleteUserService,
+  resetUserPassword, linkUserToBranches,
+} from '../../services/usersService';
 import PageHeader from '../common/PageHeader';
 import LoadingSpinner from '../common/LoadingSpinner';
 import {
   Users, Plus, Edit2, Trash2, Ban, CheckCircle, X,
-  Search, Key, ChevronDown, Shield, Phone, Mail, Building2, AlertTriangle,
+  Search, Key, ChevronDown, Shield, Phone, Mail, Building2,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
-// كود الفرع الرئيسي — يُستخدم لاستثنائه من قائمة الفروع القابلة للتخصيص
 const MAIN_BRANCH_CODE = 'MAIN';
 
 interface FormData {
@@ -20,6 +22,24 @@ interface FormData {
   phone: string; role: UserRole; manager_id: string;
 }
 const emptyForm: FormData = { email: '', password: '', full_name: '', phone: '', role: 'agent', manager_id: '' };
+
+const roleBadge: Record<UserRole, string> = {
+  super_admin: 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300',
+  dev_manager: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
+  general_supervisor: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-300',
+  supervisor: 'bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300',
+  team_leader: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
+  agent: 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300',
+};
+
+const roleAvatar: Record<UserRole, string> = {
+  super_admin: 'bg-rose-100 text-rose-600 dark:bg-rose-900/40 dark:text-rose-300',
+  dev_manager: 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300',
+  general_supervisor: 'bg-cyan-100 text-cyan-600 dark:bg-cyan-900/40 dark:text-cyan-300',
+  supervisor: 'bg-teal-100 text-teal-600 dark:bg-teal-900/40 dark:text-teal-300',
+  team_leader: 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/40 dark:text-emerald-300',
+  agent: 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300',
+};
 
 export default function UserManagement() {
   const { profile } = useAuth();
@@ -41,38 +61,14 @@ export default function UserManagement() {
   const [selectedBranches, setSelectedBranches] = useState<string[]>([]);
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
 
-  // ✅ استخدام profile.role مباشرة بدلاً من activeBranchAccess
-  // super_admin و dev_manager لديهم صلاحيات كاملة بغض النظر عن الفرع
   const myRole: UserRole = (profile?.role ?? 'agent') as UserRole;
-
   const isSuperAdmin = myRole === 'super_admin';
   const isDevManager = myRole === 'dev_manager';
   const hasFullAccess = isSuperAdmin || isDevManager;
 
-  // ✅ دالة للتحقق من إمكانية رؤية المستخدم بناءً على الهيكل الهرمي
-  const canViewUser = useCallback((targetUser: Profile): boolean => {
-    if (!profile) return false;
-    
-    // السوبر أدمن يرى الجميع
-    if (isSuperAdmin) return true;
-    
-    // مدير التطوير يرى الجميع
-    if (isDevManager) return true;
-    
-    // بقية الأدوار ترى تابعيهم فقط
-    if (profile.id === targetUser.id) return true;
-    
-    // التحقق من التبعية الهرمية (إذا كان targetUser تابع لـ profile)
-    return isSubordinate(profile.id, targetUser.id);
-  }, [profile, isSuperAdmin, isDevManager]);
-
-  // ✅ دالة للتحقق من التبعية الهرمية
-  const isSubordinate = (managerId: string, subordinateId: string): boolean => {
-    // هذه دالة مساعدة بسيطة — يمكن تحسينها لاحقاً
-    // للآن نستخدم البيانات المحملة محلياً
+  const isSubordinate = useCallback((managerId: string, subordinateId: string): boolean => {
     const visited = new Set<string>();
     let current = subordinateId;
-    
     while (current && !visited.has(current)) {
       visited.add(current);
       const user = users.find(u => u.id === current);
@@ -80,14 +76,19 @@ export default function UserManagement() {
       if (user.manager_id === managerId) return true;
       current = user.manager_id || '';
     }
-    
     return false;
-  };
+  }, [users]);
+
+  const canViewUser = useCallback((targetUser: Profile): boolean => {
+    if (!profile) return false;
+    if (isSuperAdmin || isDevManager) return true;
+    if (profile.id === targetUser.id) return true;
+    return isSubordinate(profile.id, targetUser.id);
+  }, [profile, isSuperAdmin, isDevManager, isSubordinate]);
 
   const fetchUsers = useCallback(async () => {
     setLoading(true);
     try {
-      // RLS على profiles تسمح لـ authenticated users برؤية المستخدمين المصرح لهم
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
@@ -96,7 +97,6 @@ export default function UserManagement() {
       if (error) {
         toast.error('خطأ في جلب المستخدمين: ' + error.message);
       } else if (data) {
-        // ✅ فلترة المستخدمين بناءً على الصلاحيات
         const visibleUsers = data.filter((user: Profile) => canViewUser(user));
         setUsers(visibleUsers as Profile[]);
       }
@@ -122,7 +122,6 @@ export default function UserManagement() {
 
   const fetchUserBranchAccess = useCallback(async () => {
     try {
-      // super_admin و dev_manager يجب أن يروا كل سجلات user_branch_access
       const { data, error } = await supabase
         .from('user_branch_access')
         .select('*');
@@ -138,22 +137,14 @@ export default function UserManagement() {
     fetchUserBranchAccess();
   }, [fetchUsers, fetchBranches, fetchUserBranchAccess]);
 
-  // ✅ فلترة المديرين المحتملين بناءً على الصلاحيات
   const potentialManagers = users.filter(u => {
     if (u.is_active === false) return false;
     if (u.id === editingUser?.id) return false;
-    
-    // السوبر أدمن يمكنه اختيار أي مدير
     if (isSuperAdmin) return true;
-    
-    // مدير التطوير يمكنه اختيار أي مدير ما عدا السوبر أدمن
     if (isDevManager) return u.role !== 'super_admin';
-    
-    // بقية الأدوار ترى تابعيهم فقط
     return isSubordinate(profile?.id || '', u.id);
   });
 
-  // ✅ فلتر الأدوار مُفعَّل الآن
   const filteredUsers = users.filter(u => {
     const matchSearch =
       u.full_name.toLowerCase().includes(search.toLowerCase()) ||
@@ -176,7 +167,6 @@ export default function UserManagement() {
     setSubmitting(true);
 
     if (editingUser) {
-      // ✅ تعديل الصلاحيات — يعتمد على سياسات RLS المحدثة
       const { error } = await supabase.from('profiles').update({
         full_name: formData.full_name.trim(),
         phone: formData.phone.trim() || null,
@@ -192,7 +182,7 @@ export default function UserManagement() {
           toast.error('خطأ في التحديث: ' + error.message);
         }
       } else {
-        toast.success('✅ تم تحديث بيانات المستخدم');
+        toast.success('تم تحديث بيانات المستخدم');
         resetForm();
         fetchUsers();
       }
@@ -208,7 +198,7 @@ export default function UserManagement() {
       if ((result as { error?: string }).error) {
         toast.error((result as { error?: string }).error ?? 'خطأ غير معروف');
       } else {
-        toast.success('✅ تم إنشاء المستخدم بنجاح');
+        toast.success('تم إنشاء المستخدم بنجاح');
         resetForm();
         fetchUsers();
       }
@@ -216,11 +206,9 @@ export default function UserManagement() {
     setSubmitting(false);
   }
 
-  // ✅ تفعيل/تعطيل المستخدم
   async function toggleActive(user: Profile) {
     if (user.id === profile?.id) { toast.error('لا يمكنك تعطيل حسابك الخاص'); return; }
-    
-    // التحقق من الصلاحيات
+
     if (!isSuperAdmin && !isDevManager && !isSubordinate(profile?.id || '', user.id)) {
       toast.error('غير مصرح بتعديل حالة هذا المستخدم');
       return;
@@ -231,7 +219,7 @@ export default function UserManagement() {
       .update({ is_active: !user.is_active, updated_at: new Date().toISOString() })
       .eq('id', user.id);
     if (!error) {
-      toast.success(user.is_active ? '🚫 تم تعطيل الحساب' : '✅ تم تفعيل الحساب');
+      toast.success(user.is_active ? 'تم تعطيل الحساب' : 'تم تفعيل الحساب');
       fetchUsers();
     } else if (error.code === '42501') {
       toast.error('غير مصرح بتعديل حالة هذا المستخدم');
@@ -240,14 +228,11 @@ export default function UserManagement() {
     }
   }
 
-  // ✅ حذف المستخدمين متاح لـ Super Admin ومدير التطوير (بما يطابق سياسة
-  // profiles_delete في قاعدة البيانات). مدير التطوير لا يمكنه حذف Super Admin.
   async function deleteUserHandler(user: Profile) {
     if (user.id === profile?.id) { toast.error('لا يمكنك حذف حسابك الخاص'); return; }
     if (!canDeleteUsers(myRole)) { toast.error('حذف المستخدمين متاح لـ Super Admin ومدير التطوير فقط'); return; }
     if (isDevManager && user.role === 'super_admin') { toast.error('لا يمكن لمدير التطوير حذف حساب Super Admin'); return; }
 
-    // فحص مسبق للبيانات المرتبطة قبل الحذف
     setDeletingUserId(user.id);
     try {
       const [clientsRes, policiesRes, collectionsRes] = await Promise.all([
@@ -268,7 +253,7 @@ export default function UserManagement() {
         if (collectionsCount > 0) details.push(`${collectionsCount} تحصيل`);
 
         const confirmed = confirm(
-          `⚠️ تحذير: لا يمكن حذف "${user.full_name}" نهائياً.\n\n` +
+          `تحذير: لا يمكن حذف "${user.full_name}" نهائياً.\n\n` +
           `يرتبط بـ: ${details.join('، ')}\n\n` +
           `هل تريد تعطيل الحساب فقط بدلاً من الحذف؟`
         );
@@ -278,7 +263,7 @@ export default function UserManagement() {
             .update({ is_active: false, updated_at: new Date().toISOString() })
             .eq('id', user.id);
           if (!error) {
-            toast.success('🚫 تم تعطيل الحساب (لا يمكن الحذف النهائي لوجود بيانات مرتبطة)');
+            toast.success('تم تعطيل الحساب (لا يمكن الحذف النهائي لوجود بيانات مرتبطة)');
             fetchUsers();
           } else {
             toast.error('خطأ في تعطيل الحساب: ' + error.message);
@@ -287,19 +272,17 @@ export default function UserManagement() {
         return;
       }
 
-      // لا توجد بيانات مرتبطة — تأكيد الحذف النهائي
       if (!confirm(`هل أنت متأكد من حذف "${user.full_name}" نهائياً؟ لا يمكن التراجع عن هذا الإجراء.`)) return;
 
       const result = await deleteUserService(user.id);
       if (result.error) {
-        // في حال فشل الحذف من Supabase Auth (foreign key غير متوقع)
         if ((result as any).soft_deleted) {
           toast.success('تم تعطيل الحساب لوجود بيانات مرتبطة');
         } else {
           toast.error(result.error);
         }
       } else {
-        toast.success('✅ تم حذف المستخدم بنجاح');
+        toast.success('تم حذف المستخدم بنجاح');
         fetchUsers();
       }
     } finally {
@@ -307,7 +290,6 @@ export default function UserManagement() {
     }
   }
 
-  // ✅ تغيير كلمة المرور
   async function handleResetPassword() {
     if (!newPassword || newPassword.length < 6) { toast.error('كلمة المرور يجب أن تكون 6 أحرف على الأقل'); return; }
     if (!resetPasswordId) { toast.error('خطأ: لم يتم تحديد المستخدم'); return; }
@@ -315,7 +297,7 @@ export default function UserManagement() {
     if (result.error) {
       toast.error(result.error);
     } else {
-      toast.success(`✅ تم تغيير كلمة مرور "${resetPasswordName}" بنجاح`);
+      toast.success(`تم تغيير كلمة مرور "${resetPasswordName}" بنجاح`);
       setResetPasswordId(null);
       setResetPasswordName('');
       setNewPassword('');
@@ -338,40 +320,16 @@ export default function UserManagement() {
 
   async function saveBranchAccess() {
     if (!selectedUserForBranch) return;
-
-    const currentAccess = userBranchAccess.filter(a => a.user_id === selectedUserForBranch.id);
-    const currentBranchIds = currentAccess.map(a => a.branch_id);
-
-    const toAdd = selectedBranches.filter(id => !currentBranchIds.includes(id));
-    const toRemove = currentAccess.filter(a => !selectedBranches.includes(a.branch_id));
-
-    if (toRemove.length > 0) {
-      const { error } = await supabase
-        .from('user_branch_access')
-        .delete()
-        .in('id', toRemove.map(a => a.id));
-      if (error) { toast.error('خطأ في إزالة الفروع: ' + error.message); return; }
+    const result = await linkUserToBranches(selectedUserForBranch.id, selectedBranches);
+    if (result.error) {
+      toast.error(result.error);
+    } else {
+      toast.success('تم تحديث الفروع');
+      setShowBranchModal(false);
+      fetchUserBranchAccess();
     }
-
-    if (toAdd.length > 0) {
-      const { error } = await supabase
-        .from('user_branch_access')
-        .insert(toAdd.map(branchId => ({
-          user_id: selectedUserForBranch.id,
-          branch_id: branchId,
-          role: selectedUserForBranch.role,
-          is_active: true,
-        })));
-      if (error) { toast.error('خطأ في إضافة الفروع: ' + error.message); return; }
-    }
-
-    toast.success('✅ تم تحديث الفروع');
-    setShowBranchModal(false);
-    fetchUserBranchAccess();
   }
 
-  // ✅ صفحة إدارة المستخدمين بكامل صلاحياتها محصورة بـ Super Admin
-  // ومدير التطوير فقط، تطبيقاً لما هو محدد في rbac.ts (canAccessPage('/users')).
   if (!profile || !hasFullAccess) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-slate-400">
@@ -383,14 +341,6 @@ export default function UserManagement() {
   if (loading) return <LoadingSpinner />;
 
   const allowedRoles = assignableRoles(myRole);
-  const roleBadge: Record<UserRole, string> = {
-    super_admin: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300',
-    dev_manager: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300',
-    general_supervisor: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
-    supervisor: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-300',
-    team_leader: 'bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300',
-    agent: 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300',
-  };
 
   return (
     <div>
@@ -399,18 +349,16 @@ export default function UserManagement() {
         description={`${filteredUsers.length} من ${users.length} مستخدم`}
         icon={Users}
         actions={
-            <div className="flex items-center gap-2">
-            <button
-              onClick={() => { setEditingUser(null); setFormData(emptyForm); setShowForm(true); }}
-              className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-medium transition-colors"
-            >
-              <Plus className="w-4 h-4" /><span className="hidden sm:inline">إضافة مستخدم</span>
-            </button>
-          </div>
+          <button
+            onClick={() => { setEditingUser(null); setFormData(emptyForm); setShowForm(true); }}
+            className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-medium transition-colors shadow-sm"
+          >
+            <Plus className="w-4 h-4" /><span className="hidden sm:inline">إضافة مستخدم</span>
+          </button>
         }
       />
 
-      {/* شريط البحث والفلتر */}
+      {/* Search & filter bar */}
       <div className="flex flex-col sm:flex-row gap-3 mb-4">
         <div className="relative flex-1">
           <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -419,15 +367,14 @@ export default function UserManagement() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="بحث بالاسم أو الإيميل أو الهاتف..."
-            className="w-full pr-9 pl-4 py-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white placeholder-slate-400 focus:ring-2 focus:ring-blue-500 text-sm"
+            className="w-full pr-9 pl-4 py-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white placeholder-slate-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
           />
         </div>
-        {/* ✅ فلتر الأدوار مُفعَّل */}
         <div className="relative">
           <select
             value={roleFilter}
             onChange={(e) => setRoleFilter(e.target.value as UserRole | '')}
-            className="appearance-none pr-4 pl-8 py-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 text-sm"
+            className="appearance-none pr-4 pl-8 py-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
           >
             <option value="">كل الأدوار</option>
             {(Object.keys(ROLE_LABELS) as UserRole[]).map(r => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
@@ -436,7 +383,7 @@ export default function UserManagement() {
         </div>
       </div>
 
-      {/* إحصائيات الأدوار */}
+      {/* Role stats cards */}
       <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-4">
         {(Object.keys(ROLE_LABELS) as UserRole[]).map(r => (
           <button
@@ -452,13 +399,13 @@ export default function UserManagement() {
         ))}
       </div>
 
-      {/* قائمة المستخدمين */}
+      {/* Users list */}
       <div className="space-y-2">
         {filteredUsers.map(user => {
           const managerProfile = user.manager_id ? users.find(u => u.id === user.manager_id) : null;
-          // ✅ super_admin يمكنه إدارة الجميع، dev_manager يمكنه إدارة الأدوار الأدنى
-          const canEdit = isSuperAdmin || (isDevManager && user.role !== 'super_admin') || canManageRole(myRole, user.role);
+          const canEdit = isSuperAdmin || (isDevManager && user.role !== 'super_admin');
           const badgeClass = roleBadge[user.role] ?? 'bg-slate-100 text-slate-700';
+          const avatarClass = roleAvatar[user.role] ?? 'bg-slate-100 text-slate-500';
           const isDeleting = deletingUserId === user.id;
 
           return (
@@ -467,8 +414,8 @@ export default function UserManagement() {
               className={`bg-white dark:bg-slate-800 rounded-xl p-4 border transition-all ${!user.is_active ? 'border-red-100 dark:border-red-900/20 opacity-70' : 'border-slate-100 dark:border-slate-700'} flex flex-col sm:flex-row sm:items-center justify-between gap-3`}
             >
               <div className="flex items-center gap-3 flex-1 min-w-0">
-                <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${user.is_active ? 'bg-blue-100 dark:bg-blue-900/40' : 'bg-slate-100 dark:bg-slate-700'}`}>
-                  <span className={`font-bold text-sm ${user.is_active ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400'}`}>
+                <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${avatarClass}`}>
+                  <span className="font-bold text-sm">
                     {user.full_name.charAt(0)}
                   </span>
                 </div>
@@ -499,7 +446,6 @@ export default function UserManagement() {
 
               {canEdit && (
                 <div className="flex items-center gap-1 flex-shrink-0">
-                  {/* ✅ زر التعديل */}
                   <button
                     onClick={() => startEdit(user)}
                     title="تعديل البيانات والصلاحيات"
@@ -508,7 +454,6 @@ export default function UserManagement() {
                     <Edit2 className="w-4 h-4 text-slate-500" />
                   </button>
 
-                  {/* ✅ زر تغيير كلمة المرور */}
                   <button
                     onClick={() => { setResetPasswordId(user.id); setResetPasswordName(user.full_name); setNewPassword(''); }}
                     title="تغيير كلمة المرور"
@@ -517,7 +462,6 @@ export default function UserManagement() {
                     <Key className="w-4 h-4 text-amber-500" />
                   </button>
 
-                  {/* ✅ زر إدارة الفروع */}
                   <button
                     onClick={() => openBranchModal(user)}
                     title="إدارة الفروع"
@@ -526,7 +470,6 @@ export default function UserManagement() {
                     <Building2 className="w-4 h-4 text-teal-500" />
                   </button>
 
-                  {/* ✅ زر التفعيل/التعطيل */}
                   <button
                     onClick={() => toggleActive(user)}
                     title={user.is_active ? 'تعطيل الحساب' : 'تفعيل الحساب'}
@@ -539,7 +482,6 @@ export default function UserManagement() {
                     }
                   </button>
 
-                  {/* ✅ زر الحذف — Super Admin ومدير التطوير (مدير التطوير لا يحذف Super Admin) */}
                   {canDeleteUsers(myRole) && user.id !== profile?.id && !(isDevManager && user.role === 'super_admin') && (
                     <button
                       onClick={() => deleteUserHandler(user)}
@@ -571,10 +513,10 @@ export default function UserManagement() {
         )}
       </div>
 
-      {/* ===================== مودال إضافة/تعديل مستخدم ===================== */}
+      {/* Add/Edit user modal */}
       {showForm && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-md max-h-[92vh] overflow-y-auto">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-md max-h-[92vh] overflow-y-auto shadow-2xl">
             <div className="flex items-center justify-between p-6 border-b border-slate-100 dark:border-slate-700">
               <h3 className="text-lg font-bold text-slate-900 dark:text-white">
                 {editingUser ? `تعديل: ${editingUser.full_name}` : 'إضافة مستخدم جديد'}
@@ -590,7 +532,7 @@ export default function UserManagement() {
                   type="text"
                   value={formData.full_name}
                   onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
-                  className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                  className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
                 />
               </div>
               {!editingUser && (<>
@@ -601,7 +543,7 @@ export default function UserManagement() {
                     value={formData.email}
                     onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                     dir="ltr"
-                    className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                    className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
                   />
                 </div>
                 <div>
@@ -612,7 +554,7 @@ export default function UserManagement() {
                     onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                     dir="ltr"
                     placeholder="6 أحرف على الأقل"
-                    className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                    className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
                   />
                 </div>
               </>)}
@@ -623,7 +565,7 @@ export default function UserManagement() {
                   value={formData.phone}
                   onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                   dir="ltr"
-                  className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                  className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
                 />
               </div>
               <div>
@@ -631,7 +573,7 @@ export default function UserManagement() {
                 <select
                   value={formData.role}
                   onChange={(e) => setFormData({ ...formData, role: e.target.value as UserRole, manager_id: '' })}
-                  className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                  className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
                 >
                   {allowedRoles.map(r => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
                 </select>
@@ -641,7 +583,7 @@ export default function UserManagement() {
                 <select
                   value={formData.manager_id}
                   onChange={(e) => setFormData({ ...formData, manager_id: e.target.value })}
-                  className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                  className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
                 >
                   <option value="">بدون مدير مباشر</option>
                   {potentialManagers.map(m => (
@@ -669,10 +611,10 @@ export default function UserManagement() {
         </div>
       )}
 
-      {/* ===================== مودال إدارة الفروع ===================== */}
+      {/* Branch management modal */}
       {showBranchModal && selectedUserForBranch && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-md p-6">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-md p-6 shadow-2xl">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-bold text-slate-900 dark:text-white">
                 إدارة فروع: {selectedUserForBranch.full_name}
@@ -713,10 +655,10 @@ export default function UserManagement() {
         </div>
       )}
 
-      {/* ===================== مودال تغيير كلمة المرور ===================== */}
+      {/* Reset password modal */}
       {resetPasswordId && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-sm p-6">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-sm p-6 shadow-2xl">
             <div className="flex items-center justify-between mb-1">
               <h3 className="text-lg font-bold text-slate-900 dark:text-white">تغيير كلمة المرور</h3>
               <button onClick={() => { setResetPasswordId(null); setResetPasswordName(''); }} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg">
@@ -731,7 +673,7 @@ export default function UserManagement() {
               onKeyDown={(e) => e.key === 'Enter' && handleResetPassword()}
               placeholder="كلمة المرور الجديدة (6 أحرف+)"
               dir="ltr"
-              className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none mb-4"
+              className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none mb-4"
             />
             <div className="flex gap-3">
               <button onClick={handleResetPassword} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium transition-colors">

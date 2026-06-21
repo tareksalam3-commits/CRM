@@ -96,7 +96,7 @@ export async function calculateAgentPerformance(
         new_business,
         collections: collections_total,
         total,
-        collection_count: collections?.length || 0,
+        collection_count: metrics?.length || 0,
         target,
         achievement_rate,
       },
@@ -138,7 +138,7 @@ export async function calculateBranchPerformance(
     const { data: agents, error: agentsError } = await supabase
       .from('profiles')
       .select('id')
-      .eq('branch_id', branch_id);
+      .eq('active_branch_id', branch_id);
 
     if (agentsError) {
       return { success: false, error: `خطأ في جلب المندوبين: ${agentsError.message}` };
@@ -190,7 +190,7 @@ export async function calculateBranchPerformance(
         collections: collections_total,
         total,
         agent_count: agentIds.length,
-        collection_count: collections?.length || 0,
+        collection_count: metrics?.length || 0,
         target,
         achievement_rate,
       },

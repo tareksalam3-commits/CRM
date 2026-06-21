@@ -1,31 +1,45 @@
 import { supabase } from '../lib/supabase';
 import { Profile, UserRole } from '../types';
 
-/**
- * Service for handling user management and permissions
- */
-
-const EDGE_FUNCTION_URL = 'https://pojmoiuzeckhxbnahcrk.supabase.co/functions/v1/create-user';
+const EDGE_FUNCTION_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-user`;
 
 /**
- * Call the create-user Edge Function
+ * Service for handling user management via the create-user Edge Function.
+ * The Edge Function uses the Supabase service-role key (server-side only) to:
+ *   - create users in auth.users + profiles
+ *   - reset passwords (auth.admin.updateUser)
+ *   - delete users (auth.admin.deleteUser, with soft-delete fallback)
+ *
+ * All authorization (hierarchy checks) happens in the Edge Function, NOT in the client.
  */
-async function callCreateUserFunction(body: Record<string, unknown>) {
+
+async function callEdgeFunction(body: Record<string, unknown>) {
   try {
     const { data: sessionData } = await supabase.auth.getSession();
-    const token = sessionData?.session?.access_token;
 
-    if (!token) {
-      return { error: 'انتهت الجلسة — يرجى إعادة تسجيل الدخول' };
+    // Build headers — prefer the real session token when available, fall back to
+    // x-user-id (fallback-auth mode) so management still works when GoTrue schema
+    // errors block normal signIn.
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY || '',
+    };
+
+    if (sessionData?.session?.access_token) {
+      headers['Authorization'] = `Bearer ${sessionData.session.access_token}`;
+    } else {
+      const fallbackUserId = localStorage.getItem('fallback_user_id');
+      if (fallbackUserId) {
+        headers['x-user-id'] = fallbackUserId;
+        headers['Authorization'] = `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY || ''}`;
+      } else {
+        return { error: 'انتهت الجلسة — يرجى إعادة تسجيل الدخول' };
+      }
     }
 
     const response = await fetch(EDGE_FUNCTION_URL, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-        'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBvam1vaXV6ZWNraHhibmFoY3JrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEyNjA5NzUsImV4cCI6MjA5NjgzNjk3NX0.SzzaDxI4tuszQoaFQYQAkwyUNUG-mUun-DnyYOInn4s',
-      },
+      headers,
       body: JSON.stringify(body),
     });
 
@@ -50,7 +64,7 @@ async function callCreateUserFunction(body: Record<string, unknown>) {
 }
 
 /**
- * Create a new user
+ * Create a new user — calls the Edge Function.
  */
 export async function createUser(userData: {
   email: string;
@@ -60,7 +74,7 @@ export async function createUser(userData: {
   role: UserRole;
   manager_id?: string;
 }) {
-  return callCreateUserFunction({
+  return callEdgeFunction({
     email: userData.email,
     password: userData.password,
     full_name: userData.full_name,
@@ -71,29 +85,29 @@ export async function createUser(userData: {
 }
 
 /**
- * Reset user password
+ * Reset a user's password — calls the Edge Function (auth.admin.updateUser).
  */
 export async function resetUserPassword(userId: string | null, newPassword: string) {
   if (!userId) {
     return { error: 'معرّف المستخدم مطلوب' };
   }
-  return callCreateUserFunction({
+  return callEdgeFunction({
     reset_password_for: userId,
     new_password: newPassword,
   });
 }
 
 /**
- * Delete a user
+ * Delete a user — calls the Edge Function (auth.admin.deleteUser with soft-delete fallback).
  */
 export async function deleteUser(userId: string) {
-  return callCreateUserFunction({
+  return callEdgeFunction({
     delete_user_id: userId,
   });
 }
 
 /**
- * Update user profile
+ * Update user profile — direct table update (RLS policy profiles_update enforces ownership/hierarchy).
  */
 export async function updateUserProfile(userId: string, updates: Partial<Profile>) {
   try {
@@ -106,6 +120,9 @@ export async function updateUserProfile(userId: string, updates: Partial<Profile
       .eq('id', userId);
 
     if (error) {
+      if (error.code === '42501') {
+        return { error: 'غير مصرح بتعديل هذا المستخدم — تأكد من صلاحياتك' };
+      }
       return { error: `خطأ في تحديث الملف الشخصي: ${error.message}` };
     }
 
@@ -116,7 +133,7 @@ export async function updateUserProfile(userId: string, updates: Partial<Profile
 }
 
 /**
- * Get user with their accessible branches
+ * Get a user with their accessible branches.
  */
 export async function getUserWithBranches(userId: string) {
   try {
@@ -152,7 +169,7 @@ export async function getUserWithBranches(userId: string) {
 }
 
 /**
- * Link user to branches
+ * Replace a user's branch access list.
  */
 export async function linkUserToBranches(userId: string, branchIds: string[]) {
   try {
@@ -167,6 +184,7 @@ export async function linkUserToBranches(userId: string, branchIds: string[]) {
           branchIds.map(branchId => ({
             user_id: userId,
             branch_id: branchId,
+            is_active: true,
           }))
         );
 

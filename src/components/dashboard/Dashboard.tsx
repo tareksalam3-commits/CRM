@@ -70,10 +70,6 @@ export default function Dashboard() {
       const isSuperAdmin = profile?.role === 'super_admin';
       const isDevManager = profile?.role === 'dev_manager';
       const branchId = activeBranch?.id;
-      
-      if (!branchId && !isSuperAdmin && !isDevManager) {
-        throw new Error('لم يتم تحديد فرع نشط');
-      }
 
       const now_date = new Date();
       const monthStart = new Date(now_date.getFullYear(), now_date.getMonth(), 1).toISOString().split('T')[0];
@@ -87,8 +83,8 @@ export default function Dashboard() {
       let usersQuery = supabase.from('profiles').select('id', { count: 'exact', head: true });
       let targetsQuery = supabase.from('targets').select('target_amount, branch_id, user_id').eq('period_type', 'monthly').eq('year', now_date.getFullYear()).eq('period_number', now_date.getMonth() + 1);
 
-      // ✅ تطبيق فلتر الفرع فقط إذا لم يكن مسؤول نظام أو مدير تطوير
-      if (branchId && !isSuperAdmin && !isDevManager) {
+      // ✅ تطبيق فلتر الفرع: إذا كان "جميع الفروع" (all) لا نفلتر، وإذا كان فرعاً محدداً نفلتر به
+      if (branchId && branchId !== 'all') {
         policiesQuery = policiesQuery.eq('branch_id', branchId);
         clientsQuery = clientsQuery.eq('branch_id', branchId);
         unifiedMetricsQuery = unifiedMetricsQuery.eq('branch_id', branchId);
@@ -163,9 +159,9 @@ export default function Dashboard() {
         .select('id, full_name, role')
         .eq('is_active', true);
 
-      // Filter by branch if not super admin
-      if (branchId) {
-        agentsQuery = agentsQuery.eq('branch_id', branchId);
+      // Filter by branch via active_branch_id (the actual profiles column)
+      if (branchId && branchId !== 'all') {
+        agentsQuery = agentsQuery.eq('active_branch_id', branchId);
       }
 
       const { data: agentsData } = await agentsQuery;
@@ -197,8 +193,8 @@ export default function Dashboard() {
         .eq('is_active', true)
         .eq('role', 'team_leader');
 
-      if (branchId) {
-        teamLeadersQuery = teamLeadersQuery.eq('branch_id', branchId);
+      if (branchId && branchId !== 'all') {
+        teamLeadersQuery = teamLeadersQuery.eq('active_branch_id', branchId);
       }
 
       const { data: teamLeadersData } = await teamLeadersQuery;

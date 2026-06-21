@@ -14,6 +14,7 @@ interface AuthContextType {
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
   setActiveBranch: (branch: Branch | null) => Promise<void>;
+  refreshProfile: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -28,7 +29,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Initial session check
     supabase.auth.getSession().then(({ data: { session: currentSession } }) => {
       setSession(currentSession);
       setUser(currentSession?.user ?? null);
@@ -42,7 +42,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLoading(false);
     });
 
-    // Listen for auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, newSession) => {
       setSession(newSession);
       setUser(newSession?.user ?? null);
@@ -62,7 +61,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function fetchProfileAndBranches(userId: string) {
     try {
-      // Fetch user profile
       const { data: profileData, error: profileError } = await supabase
         .from('profiles')
         .select('*')
@@ -81,90 +79,61 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      // ✅ منع المستخدم المعطّل (is_active = false) من الاستمرار بالجلسة.
-      // الفحص الأساسي يتم داخل signIn() قبل فتح الجلسة فعلياً، وهذا فحص
-      // إضافي للحالات التي تتغير فيها حالة الحساب أثناء وجود جلسة مفتوحة
-      // (مثلاً تعطيل المستخدم بينما هو متصل) — نسجّل خروجه فوراً.
       if (profileData.is_active === false) {
         console.warn('Session terminated: user account is deactivated');
-        await supabase.auth.signOut();
-        setProfile(null);
-        setActiveBranchState(null);
-        setActiveBranchAccess(null);
-        setAccessibleBranches([]);
-        setSession(null);
-        setUser(null);
-        setLoading(false);
+        await signOut();
         return;
       }
 
       setProfile(profileData);
 
-      // ✅ إذا كان المستخدم super_admin أو dev_manager، لا نحتاج لفروع
       if (profileData.role === 'super_admin' || profileData.role === 'dev_manager') {
-        console.log(`User is ${profileData.role}, skipping branch access fetch`);
-        setAccessibleBranches([]);
-        setActiveBranchState(null);
-        setActiveBranchAccess(null);
-        setLoading(false);
-        return;
-      }
+        const { data: allBranches } = await supabase.from('branches').select('*').eq('is_active', true);
+        if (allBranches) {
+          setAccessibleBranches(allBranches);
+          setActiveBranchState({ id: 'all', name: 'جميع الفروع', code: 'ALL', is_active: true, created_at: '', updated_at: '' });
+          setActiveBranchAccess(null);
+        }
+      } else {
+        const { data: accessData } = await supabase
+          .from('user_branch_access')
+          .select('id, user_id, branch_id, role, is_active, assigned_at, expires_at, updated_at, branch:branches(id, name, code, is_active, created_at, updated_at)')
+          .eq('user_id', userId)
+          .eq('is_active', true);
 
-      // Fetch user branch access with proper filtering
-      const { data: accessData, error: accessError } = await supabase
-        .from('user_branch_access')
-        .select('id, user_id, branch_id, role, is_active, assigned_at, expires_at, updated_at, branch:branches(id, name, code, is_active, created_at, updated_at)')
-        .eq('user_id', userId)
-        .eq('is_active', true);
+        let branches: Branch[] = [];
+        let accessRecords: UserBranchAccess[] = [];
 
-      if (accessError) {
-        console.error('Error fetching branch access:', accessError);
-      }
+        if (accessData && accessData.length > 0) {
+          branches = accessData
+            .map(access => (access as Record<string, unknown>).branch as Branch)
+            .filter(branch => branch && branch.is_active);
 
-      // Extract branches from access data
-      let branches: Branch[] = [];
-      let accessRecords: UserBranchAccess[] = [];
+          accessRecords = accessData as unknown as UserBranchAccess[];
+          setAccessibleBranches(branches);
 
-      if (accessData && accessData.length > 0) {
-        branches = accessData
-          .map(access => (access.branch as any))
-          .filter(branch => branch && branch.is_active);
-        
-        accessRecords = accessData as UserBranchAccess[];
-      }
+          const savedBranchId = localStorage.getItem(`activeBranch_${userId}`);
+          let activeBranchData: Branch | null = null;
 
-      // If no branches found, allow user to proceed to dashboard
-      if (branches.length === 0) {
-        console.warn('No active branches found for user, allowing temporary access');
-        setAccessibleBranches([]);
-        setActiveBranchState(null);
-        setActiveBranchAccess(null);
-        setLoading(false);
-        return;
-      }
+          if (savedBranchId && savedBranchId !== 'all') {
+            activeBranchData = branches.find(b => b.id === savedBranchId) || null;
+          }
 
-      setAccessibleBranches(branches);
+          if (!activeBranchData && branches.length > 0) {
+            activeBranchData = branches[0];
+          }
 
-      // Set active branch from localStorage or use the first one
-      const savedBranchId = localStorage.getItem(`activeBranch_${userId}`);
-      let activeBranchData = null;
-
-      if (savedBranchId) {
-        activeBranchData = branches.find(b => b.id === savedBranchId);
-      }
-
-      // Fallback to first branch if saved one not found
-      if (!activeBranchData) {
-        activeBranchData = branches[0];
-      }
-
-      if (activeBranchData) {
-        setActiveBranchState(activeBranchData);
-        
-        // Find the access record for the active branch
-        const access = accessRecords.find(a => a.branch_id === activeBranchData.id);
-        if (access) {
-          setActiveBranchAccess(access as UserBranchAccess);
+          if (activeBranchData) {
+            setActiveBranchState(activeBranchData);
+            const access = accessRecords.find(a => a.branch_id === activeBranchData!.id);
+            if (access) {
+              setActiveBranchAccess(access);
+            }
+          }
+        } else {
+          setAccessibleBranches([]);
+          setActiveBranchState(null);
+          setActiveBranchAccess(null);
         }
       }
     } catch (err) {
@@ -172,13 +141,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoading(false);
     }
+  }
 
-    // Auto-update overdue installments on login
-    try {
-      await supabase.rpc('mark_overdue_installments');
-    } catch (err) {
-      console.error('Error marking overdue installments:', err);
-      // Non-critical, silently ignore
+  async function refreshProfile() {
+    if (user) {
+      await fetchProfileAndBranches(user.id);
     }
   }
 
@@ -187,8 +154,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setActiveBranchState(branch);
       localStorage.setItem(`activeBranch_${user.id}`, branch.id);
 
-      // Fetch the access record for this branch
-      const { data: accessData, error } = await supabase
+      if (branch.id === 'all') {
+        setActiveBranchAccess(null);
+        return;
+      }
+
+      const { data: accessData } = await supabase
         .from('user_branch_access')
         .select('*')
         .eq('user_id', user.id)
@@ -196,9 +167,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .eq('is_active', true)
         .maybeSingle();
 
-      if (error) {
-        console.error('Error fetching branch access:', error);
-      } else if (accessData) {
+      if (accessData) {
         setActiveBranchAccess(accessData as UserBranchAccess);
       }
     } else {
@@ -212,25 +181,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function signIn(email: string, password: string) {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+
     if (error) {
-      return { error: error.message };
+      return { error: error.message || 'فشل تسجيل الدخول' };
     }
 
-    // ✅ فحص is_active فوراً بعد نجاح المصادقة، قبل اعتبار الجلسة صالحة.
-    // بدون هذا الفحص، كان أي مستخدم مُعطّل (is_active = false) يستطيع
-    // تسجيل الدخول بنجاح عبر Supabase Auth — لأن التعطيل عمود في
-    // profiles فقط ولا علاقة له بحالة حساب auth.users.
-    if (data.user) {
-      const { data: profileData, error: profileError } = await supabase
-        .from('profiles')
-        .select('is_active')
-        .eq('id', data.user.id)
-        .maybeSingle();
+    if (!data.session || !data.user) {
+      return { error: 'لم يتم إنشاء الجلسة بشكل صحيح' };
+    }
 
-      if (!profileError && profileData && profileData.is_active === false) {
-        await supabase.auth.signOut();
-        return { error: 'هذا الحساب معطّل — يرجى التواصل مع مسؤول النظام' };
-      }
+    // Verify the user's profile is active before allowing sign-in
+    const { data: profileData, error: profileError } = await supabase
+      .from('profiles')
+      .select('is_active')
+      .eq('id', data.user.id)
+      .maybeSingle();
+
+    if (profileError) {
+      console.error('Error checking profile status during sign-in:', profileError);
+    }
+
+    if (!profileError && profileData && profileData.is_active === false) {
+      await supabase.auth.signOut();
+      return { error: 'هذا الحساب معطّل — يرجى التواصل مع مسؤول النظام' };
     }
 
     return { error: null };
@@ -242,20 +215,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setActiveBranchState(null);
     setActiveBranchAccess(null);
     setAccessibleBranches([]);
+    setSession(null);
+    setUser(null);
   }
 
   return (
-    <AuthContext.Provider value={{ 
-      session, 
-      user, 
-      profile, 
-      activeBranch, 
+    <AuthContext.Provider value={{
+      session,
+      user,
+      profile,
+      activeBranch,
       activeBranchAccess,
       accessibleBranches,
-      loading, 
-      signIn, 
+      loading,
+      signIn,
       signOut,
-      setActiveBranch 
+      setActiveBranch,
+      refreshProfile,
     }}>
       {children}
     </AuthContext.Provider>
