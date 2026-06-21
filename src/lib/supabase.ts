@@ -25,16 +25,24 @@ if (!supabaseUrl || !supabaseAnonKey) {
  */
 const originalFetch = window.fetch;
 const customFetch: typeof fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-  // Only intercept Supabase REST API calls
+  // Only intercept Supabase REST API calls (not auth calls)
   const url = input.toString();
   if (url.includes(supabaseUrl) && !url.includes('/auth/')) {
     const fallbackUserId = localStorage.getItem('fallback_user_id');
     if (fallbackUserId) {
+      // Clone init to avoid mutating the original
       init = init || {};
-      init.headers = {
-        ...(init.headers || {}),
-        'x-user-id': fallbackUserId,
-      };
+      
+      // Properly handle all Headers types (Headers object, plain object, array)
+      const newHeaders = new Headers(init.headers);
+      newHeaders.set('x-user-id', fallbackUserId);
+      
+      // Ensure apikey is present
+      if (!newHeaders.has('apikey')) {
+        newHeaders.set('apikey', supabaseAnonKey);
+      }
+      
+      init.headers = newHeaders;
     }
   }
   return originalFetch(input, init);
