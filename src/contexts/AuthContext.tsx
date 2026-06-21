@@ -100,12 +100,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       setProfile(profileData);
 
-      // ✅ إذا كان المستخدم super_admin أو dev_manager، لا نحتاج لفروع
+      // ✅ إذا كان المستخدم super_admin أو dev_manager، نصل لكل الفروع
       if (profileData.role === 'super_admin' || profileData.role === 'dev_manager') {
-        console.log(`User is ${profileData.role}, skipping branch access fetch`);
-        setAccessibleBranches([]);
-        setActiveBranchState(null);
-        setActiveBranchAccess(null);
+        const { data: allBranches } = await supabase.from('branches').select('*').eq('is_active', true);
+        if (allBranches) {
+          setAccessibleBranches(allBranches);
+          // لا نضبط فرعاً نشطاً افتراضياً للآدمن، يرى كل البيانات
+          setActiveBranchState(null);
+          setActiveBranchAccess(null);
+        }
         setLoading(false);
         return;
       }
