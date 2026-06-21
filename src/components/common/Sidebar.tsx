@@ -3,7 +3,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { ROLE_LABELS, UserRole } from '../../types';
-import { canAccessPage } from '../../lib/rbac';
+import { canAccessPage, getEffectiveRole } from '../../lib/rbac';
 import {
   LayoutDashboard, Users, UserCircle, FileText, Wallet, Target,
   CheckSquare, Bell, Calendar, BarChart3, ClipboardList, Settings,
@@ -36,16 +36,24 @@ const navItems: NavItem[] = [
 ];
 
 export default function Sidebar() {
-  const { profile, signOut, activeBranch, accessibleBranches, setActiveBranch } = useAuth();
+  const { profile, activeBranchAccess, signOut, activeBranch, accessibleBranches, setActiveBranch } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
   const [isOpen, setIsOpen] = useState(false);
   const [showBranchMenu, setShowBranchMenu] = useState(false);
 
-  // ✅ الدور الفعّال: استخدام profile.role مباشرة (يتم تحديثه بشكل صحيح من AuthContext)
-  const userRole = (profile?.role as UserRole) || null;
+  // ✅ الدور الفعّال: للمسؤولين العامين استخدام profile.role، وللآخرين استخدام دور الفرع النشط
+  let userRole: UserRole | null = null;
+  
+  if (profile?.role === 'super_admin' || profile?.role === 'dev_manager') {
+    // المسؤولون العامون يستخدمون دورهم من الملف الشخصي
+    userRole = profile.role as UserRole;
+  } else {
+    // الأدوار الأخرى تستخدم الدور من صلاحيات الفرع النشط
+    userRole = getEffectiveRole(activeBranchAccess);
+  }
 
-  // ✅ فلترة العناصر بناءً على الدور
+  // ✅ فلترة العناصر بناءً على الدور الفعال
   const filteredItems = navItems.filter(item => {
     if (!profile || !userRole) return false;
     return canAccessPage(userRole, item.path);
