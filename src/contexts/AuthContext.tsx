@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import { Session, User, createClient } from '@supabase/supabase-js';
+import { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import { Profile, Branch, UserBranchAccess } from '../types';
 
@@ -20,26 +20,6 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 // Edge Function URL for fallback authentication
 const EDGE_FUNCTION_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/auth-login`;
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
-
-/**
- * 🔧 Create a Supabase client with x-user-id header for fallback auth mode
- */
-function createAuthClient(userId: string) {
-  return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    global: {
-      headers: {
-        'x-user-id': userId,
-      },
-    },
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-      detectSessionInUrl: false,
-    },
-  });
-}
 
 /**
  * 🔧 Create a fake session object for fallback auth mode
@@ -140,22 +120,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => subscription?.unsubscribe();
   }, []);
 
-  /**
-   * 🔧 Get the appropriate supabase client based on auth mode
-   */
-  function getClient() {
-    if (fallbackUserId) {
-      return createAuthClient(fallbackUserId);
-    }
-    return supabase;
-  }
-
   async function fetchProfileAndBranches(userId: string) {
     try {
-      const client = getClient();
-
       // Fetch user profile
-      const { data: profileData, error: profileError } = await client
+      const { data: profileData, error: profileError } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', userId)
@@ -184,14 +152,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       // ✅ جلب الفروع المتاحة دائماً ولكن بدون جعلها عائقاً
       if (profileData.role === 'super_admin' || profileData.role === 'dev_manager') {
-        const { data: allBranches } = await client.from('branches').select('*').eq('is_active', true);
+        const { data: allBranches } = await supabase.from('branches').select('*').eq('is_active', true);
         if (allBranches) {
           setAccessibleBranches(allBranches);
           setActiveBranchState({ id: 'all', name: 'جميع الفروع', code: 'ALL', is_active: true, created_at: '', updated_at: '' });
           setActiveBranchAccess(null);
         }
       } else {
-        const { data: accessData } = await client
+        const { data: accessData } = await supabase
           .from('user_branch_access')
           .select('id, user_id, branch_id, role, is_active, assigned_at, expires_at, updated_at, branch:branches(id, name, code, is_active, created_at, updated_at)')
           .eq('user_id', userId)
@@ -247,8 +215,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   async function setActiveBranch(branch: Branch | null) {
-    const client = getClient();
-
     if (branch && user) {
       setActiveBranchState(branch);
       localStorage.setItem(`activeBranch_${user.id}`, branch.id);
@@ -258,7 +224,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      const { data: accessData } = await client
+      const { data: accessData } = await supabase
         .from('user_branch_access')
         .select('*')
         .eq('user_id', user.id)
