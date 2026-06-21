@@ -70,10 +70,6 @@ export default function Dashboard() {
       const isSuperAdmin = profile?.role === 'super_admin';
       const isDevManager = profile?.role === 'dev_manager';
       const branchId = activeBranch?.id;
-      
-      if (!branchId && !isSuperAdmin && !isDevManager) {
-        throw new Error('لم يتم تحديد فرع نشط');
-      }
 
       const now_date = new Date();
       const monthStart = new Date(now_date.getFullYear(), now_date.getMonth(), 1).toISOString().split('T')[0];

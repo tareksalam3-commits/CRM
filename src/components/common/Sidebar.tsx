@@ -74,6 +74,9 @@ export default function Sidebar() {
   const isDevManager = userRole === 'dev_manager';
   const showBranchSelector = accessibleBranches.length > 0;
 
+  // ✅ القائمة الجانبية يجب أن تظهر دائماً طالما يوجد مستخدم مسجل
+  const showSidebar = !!profile;
+
   return (
     <>
       {/* Mobile Toggle */}
