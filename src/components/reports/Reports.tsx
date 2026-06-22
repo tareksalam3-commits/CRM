@@ -57,21 +57,12 @@ export default function Reports() {
       const newKpis: KPICard[] = [];
 
       switch (reportType) {
-        // ── Personal / team production ──────────────────────────────
         case 'production': {
           let query = supabase
             .from('unified_performance_metrics')
             .select('agent_id, amount, is_new_business, is_first_year_collection, collection_date')
             .gte('collection_date', monthStart)
             .lt('collection_date', monthEnd);
-
-          const effectiveReportRole = profile?.role;
-          if (effectiveReportRole === 'agent') {
-            query = query.eq('agent_id', profile?.id);
-          } else if (effectiveReportRole && ['team_leader', 'supervisor', 'general_supervisor'].includes(effectiveReportRole)) {
-            const subordinateIds = [profile.id, ...getSubordinateIds(profile.id, profiles)];
-            query = query.in('agent_id', subordinateIds);
-          }
 
           const { data: metrics, error: metricsError } = await query;
           if (metricsError) {
@@ -91,21 +82,12 @@ export default function Reports() {
           break;
         }
 
-        // ── Personal / team collection ──────────────────────────────
         case 'collection': {
           let query = supabase
             .from('installments')
             .select('amount, status, due_date, policy:policies!inner(agent_id, branch_id)')
             .gte('due_date', monthStart)
             .lt('due_date', monthEnd);
-
-          const effectiveReportRole = profile?.role;
-          if (effectiveReportRole === 'agent') {
-            query = query.eq('policies.agent_id', profile?.id);
-          } else if (effectiveReportRole && ['team_leader', 'supervisor', 'general_supervisor'].includes(effectiveReportRole)) {
-            const subordinateIds = [profile.id, ...getSubordinateIds(profile.id, profiles)];
-            query = query.in('policies.agent_id', subordinateIds);
-          }
 
           const { data: installments, error: instError } = await query;
           if (instError) {
@@ -125,8 +107,8 @@ export default function Reports() {
           break;
         }
 
-        // ── Branch performance ──────────────────────────────────────
         case 'branch_performance': {
+          if (!canViewAdmin) break;
           const { data: branchData, error: bError } = await supabase.rpc('get_branch_performance_report', {
             p_month: month,
             p_year: year
@@ -141,8 +123,8 @@ export default function Reports() {
           break;
         }
 
-        // ── Agent performance ───────────────────────────────────────
         case 'agent_performance': {
+          if (!canViewAdmin) break;
           const { data: agentData, error: aError } = await supabase.rpc('get_agent_performance_report', {
             p_month: month,
             p_year: year
@@ -165,7 +147,7 @@ export default function Reports() {
     } finally {
       setLoading(false);
     }
-  }, [profile, reportType, month, year]);
+  }, [profile, reportType, month, year, canViewAdmin]);
 
   useEffect(() => {
     generateReport();
@@ -268,7 +250,7 @@ export default function Reports() {
         {kpis.map((kpi, index) => (
           <div key={index} className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm">
             <div className="flex items-center justify-between mb-4">
-              <div className={`p-3 rounded-xl bg-${kpi.color}-50 dark:bg-${kpi.color}-900/20 text-${kpi.color}-600 dark:text-${kpi.color}-400`}>
+              <div className={`p-3 rounded-xl bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400`}>
                 <kpi.icon className="w-6 h-6" />
               </div>
             </div>
@@ -302,7 +284,7 @@ export default function Reports() {
                   <tr key={i} className="hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
                     {Object.keys(row).filter(k => typeof row[k] !== 'object').map(key => (
                       <td key={key} className="px-6 py-4 text-sm text-slate-600 dark:text-slate-300">
-                        {typeof row[key] === 'number' && key.includes('amount') ? formatCurrency(row[key]) : String(row[key])}
+                        {typeof row[key] === 'number' && (key.includes('amount') || key.includes('production') || key.includes('collection')) ? formatCurrency(row[key]) : String(row[key])}
                       </td>
                     ))}
                   </tr>
@@ -310,9 +292,9 @@ export default function Reports() {
               </tbody>
             </table>
           ) : (
-            <div className="text-center py-20">
-              <BarChart className="w-12 h-12 text-slate-300 mx-auto mb-4" />
-              <p className="text-slate-500">لا توجد بيانات لهذا الشهر</p>
+            <div className="flex flex-col items-center justify-center py-20">
+              <BarChart className="w-12 h-12 text-slate-300 mb-4" />
+              <p className="text-slate-500 text-sm">لا توجد بيانات لهذا التقرير في الفترة المختارة</p>
             </div>
           )}
         </div>

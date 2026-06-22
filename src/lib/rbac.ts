@@ -4,8 +4,7 @@
 // مصدر الحقيقة الوحيد لدور المستخدم هو profiles.role (الأدوار الستة).
 // جدول user_branch_access يُستخدم فقط لتحديد أي الفروع يمكن للمستخدم
 // رؤية بياناتها — وليس لتحديد دوره الوظيفي. لا تتم قراءة role من
-// user_branch_access في أي مكان لتحديد الصلاحيات (كان هذا مصدر تعارض
-// رئيسي قبل الإصلاح: نفس المستخدم كان يظهر بدور مختلف في كل فرع).
+// user_branch_access في أي مكان لتحديد الصلاحيات.
 // ============================================================
 import { UserRole, ROLE_LEVELS, MANAGER_ROLES } from '../types';
 
@@ -26,6 +25,7 @@ export function isManager(role: UserRole): boolean {
 
 /** Returns true if user can view admin reports */
 export function canViewAdminReports(role: UserRole): boolean {
+  // Agent لا يرى التقارير الإدارية
   return ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'team_leader'].includes(role);
 }
 
@@ -68,13 +68,12 @@ export function getEffectiveRole(access: { role: UserRole } | null | undefined):
 
 /** Returns true if the role is allowed to manage users (CRUD) at all */
 export function canManageUsers(role: UserRole): boolean {
+  // Dev Manager يدير المستخدمين والفروع
   return role === 'super_admin' || role === 'dev_manager';
 }
 
 /** Returns true if the role is allowed to delete users (full delete, not just deactivate) */
 export function canDeleteUsers(role: UserRole): boolean {
-  // ✅ Super Admin و مدير التطوير فقط يمكنهم حذف المستخدمين نهائياً،
-  // بما يطابق سياسة profiles_delete في قاعدة البيانات.
   return role === 'super_admin' || role === 'dev_manager';
 }
 
@@ -87,16 +86,16 @@ export function canResetPasswords(role: UserRole): boolean {
 export function assignableRoles(myRole: UserRole): UserRole[] {
   const all: UserRole[] = ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'team_leader', 'agent'];
   if (myRole === 'super_admin') return all;
-  if (myRole === 'dev_manager') return all.filter(r => r !== 'super_admin');
+  if (myRole === 'dev_manager') {
+    // Dev Manager لا يستطيع إنشاء أو حذف Super Admin
+    return all.filter(r => r !== 'super_admin');
+  }
   return all.filter(r => ROLE_LEVELS[r] > ROLE_LEVELS[myRole]);
 }
 
 // ============================================================
 // Navigation Permissions - Role-Based Navigation
 // ============================================================
-// ✅ تعتمد فقط على profiles.role — هذا هو نفس المنطق الذي يُستخدم في
-// PermissionGuard (App.tsx) و Sidebar.tsx، بعد إصلاح التعارض الذي كان
-// يجعل PermissionGuard يعتمد على activeBranchAccess.role بدل profile.role.
 
 /** Returns true if user can access a specific page */
 export function canAccessPage(role: UserRole | null, pagePath: string): boolean {
@@ -109,8 +108,8 @@ export function canAccessPage(role: UserRole | null, pagePath: string): boolean 
 
   const pagePermissions: Record<string, UserRole[]> = {
     '/': ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'team_leader', 'agent'],
-    '/users': ['super_admin', 'dev_manager'],
-    '/branches': ['super_admin', 'dev_manager'],
+    '/users': ['super_admin', 'dev_manager'], // Agent, TL, Supervisor, GS لا يرون المستخدمين
+    '/branches': ['super_admin', 'dev_manager'], // Agent, TL, Supervisor, GS لا يرون الفروع
     '/branch-access': ['super_admin', 'dev_manager'],
     '/org': ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'team_leader'],
     '/clients': ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'team_leader', 'agent'],
@@ -120,7 +119,7 @@ export function canAccessPage(role: UserRole | null, pagePath: string): boolean 
     '/tasks': ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'team_leader', 'agent'],
     '/notifications': ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'team_leader', 'agent'],
     '/closing': ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor'],
-    '/reports': ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'team_leader'],
+    '/reports': ['super_admin', 'dev_manager', 'general_supervisor', 'supervisor', 'team_leader'], // Agent لا يرى التقارير
     '/audit': ['super_admin', 'dev_manager', 'general_supervisor'],
     '/settings': ['super_admin', 'dev_manager'],
   };
