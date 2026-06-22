@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { Installment, Policy, INSTALLMENT_STATUS_LABELS } from '../../types';
@@ -11,7 +11,7 @@ import toast from 'react-hot-toast';
 type FilterType = 'all' | 'current_month' | 'pending' | 'overdue' | 'paid';
 
 export default function CollectionManagement() {
-  const { profile } = useAuth();
+  const { profile, activeBranch } = useAuth();
   const [installments, setInstallments] = useState<(Installment & { policy?: Policy })[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -31,10 +31,32 @@ export default function CollectionManagement() {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const { data, error } = await supabase
+      const userRole = profile?.role;
+      const userId = profile?.id;
+      const branchId = activeBranch?.id;
+
+      let query = supabase
         .from('installments')
-        .select('*, policy:policies(policy_number, client_id, agent_id, annual_premium, first_year_end, client:clients(name))')
+        .select('*, policy:policies(policy_number, client_id, agent_id, annual_premium, first_year_end, team_leader_id, supervisor_id, branch_id, branch_manager_id, client:clients(name))')
         .order('due_date', { ascending: true });
+
+      // تطبيق الفلاتر حسب الدور الوظيفي والهيكل الهرمي
+      if (userRole === 'agent') {
+        // الوكيل يرى أقساط عملائه فقط
+        query = query.eq('policy.agent_id', userId);
+      } else if (userRole === 'team_leader') {
+        // رئيس المجموعة يرى أقساط نفسه وأعضاء فريقه
+        query = query.or(`policy.agent_id.eq.${userId},policy.team_leader_id.eq.${userId}`);
+      } else if (userRole === 'supervisor') {
+        // المشرف يرى أقساط رؤساء المجموعات والوكلاء التابعين له
+        query = query.eq('policy.supervisor_id', userId);
+      } else if (userRole === 'general_supervisor') {
+        // المشرف العام يرى أقساط فرعه بالكامل
+        query = query.eq('policy.branch_id', branchId);
+      }
+      // Super Admin و Dev Manager يرون الكل بدون فلاتر
+
+      const { data, error } = await query;
 
       if (error) {
         toast.error('خطأ في تحميل الأقساط: ' + error.message);
@@ -46,7 +68,7 @@ export default function CollectionManagement() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [profile, activeBranch]);
 
   useEffect(() => {
     loadData();
@@ -94,6 +116,11 @@ export default function CollectionManagement() {
       resetForm();
       setShowForm(false);
       await loadData();
+      
+      // تحديث الداشبورد
+      window.dispatchEvent(new CustomEvent('collectionUpdated', { 
+        detail: { policyId: selectedInstallment.policy_id }
+      }));
     } catch (err: any) {
       setFormError('خطأ: ' + err.message);
     } finally {
@@ -126,6 +153,11 @@ export default function CollectionManagement() {
       
       toast.success('تم التراجع عن التحصيل بنجاح');
       loadData();
+      
+      // تحديث الداشبورد
+      window.dispatchEvent(new CustomEvent('collectionUpdated', { 
+        detail: { policyId: installment.policy_id }
+      }));
     } catch (err: any) {
       toast.error('خطأ: ' + err.message);
     }

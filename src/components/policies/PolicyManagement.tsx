@@ -52,6 +52,7 @@ export default function PolicyManagement() {
     try {
       const userRole = profile?.role;
       const userId = profile?.id;
+      const branchId = profile?.active_branch_id;
 
       // Queries
       let policiesQuery = supabase
@@ -64,11 +65,22 @@ export default function PolicyManagement() {
       let branchesQuery = supabase.from('branches').select('id, name').eq('is_active', true).order('name');
       let settingsQuery = supabase.from('system_settings').select('key, value');
 
-      // تطبيق الفلاتر اليدوية لضمان دقة العرض في الواجهة
+      // تطبيق الفلاتر حسب الدور الوظيفي والهيكل الهرمي
       if (userRole === 'agent') {
+        // الوكيل يرى وثائقه فقط
         policiesQuery = policiesQuery.eq('agent_id', userId);
         clientsQuery = clientsQuery.eq('agent_id', userId);
+      } else if (userRole === 'team_leader') {
+        // رئيس المجموعة يرى نفسه وأعضاء فريقه
+        policiesQuery = policiesQuery.or(`agent_id.eq.${userId},team_leader_id.eq.${userId}`);
+      } else if (userRole === 'supervisor') {
+        // المشرف يرى رؤساء المجموعات والوكلاء التابعين له
+        policiesQuery = policiesQuery.eq('supervisor_id', userId);
+      } else if (userRole === 'general_supervisor') {
+        // المشرف العام يرى وثائق فرعه بالكامل
+        policiesQuery = policiesQuery.eq('branch_id', branchId);
       }
+      // Super Admin و Dev Manager يرون الكل بدون فلاتر
 
       const [policiesRes, clientsRes, agentsRes, branchesRes, settingsRes] = await Promise.all([
         policiesQuery,
