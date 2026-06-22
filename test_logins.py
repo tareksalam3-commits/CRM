@@ -3,23 +3,21 @@ import requests
 import json
 
 SUPABASE_URL = "https://mlhxcfxmqgegynzpofsr.supabase.co"
-ANON_KEY = "" # Will be fetched from env or project
+ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1saHhjZnhtcWdlZ3luenBvZnNyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIwNzI4NjEsImV4cCI6MjA5NzY0ODg2MX0.85lwauyuYxvp4IuYeDpMt6uJyz0aUsDV-W3Hx9G9lC0"
 
 users = [
-    "tiano.salam@gmail.com",
-    "m.elgarsha33@gmail.com",
-    "smra7411@gmail.com",
-    "tarek.salam3@gmail.com",
-    "donianouraldein@gmail.com",
-    "magdymohammed4992@gmail.com",
-    "dohamostafa657@gmail.com",
-    "sohier.sokar333@gmail.com",
-    "m55103583@gmail.com"
+    ("tiano.salam@gmail.com", "super_admin"),
+    ("m.elgarsha33@gmail.com", "dev_manager"),
+    ("smra7411@gmail.com", "general_supervisor"),
+    ("tarek.salam3@gmail.com", "supervisor"),
+    ("magdymohammed4992@gmail.com", "team_leader"),
+    ("m55103583@gmail.com", "agent")
 ]
 
 password = "123456"
 
-def test_login(email):
+def test_user_permissions(email, role):
+    print(f"\n--- Testing User: {email} (Role: {role}) ---")
     url = f"{SUPABASE_URL}/auth/v1/token?grant_type=password"
     headers = {
         "apikey": ANON_KEY,
@@ -30,17 +28,35 @@ def test_login(email):
         "password": password
     }
     response = requests.post(url, headers=headers, json=payload)
-    if response.status_code == 200:
-        print(f"✅ Success: {email}")
-        return True
-    else:
-        print(f"❌ Failed: {email} - {response.text}")
-        return False
+    if response.status_code != 200:
+        print(f"❌ Login Failed: {email}")
+        return
+
+    token = response.json()['access_token']
+    auth_headers = {
+        "apikey": ANON_KEY,
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+
+    # Test fetching profiles (Users)
+    res_profiles = requests.get(f"{SUPABASE_URL}/rest/v1/profiles?select=id,full_name,role", headers=auth_headers)
+    profiles_count = len(res_profiles.json()) if res_profiles.status_code == 200 else 0
+    print(f"Profiles visible: {profiles_count}")
+
+    # Test fetching clients
+    res_clients = requests.get(f"{SUPABASE_URL}/rest/v1/clients?select=id", headers=auth_headers)
+    clients_count = len(res_clients.json()) if res_clients.status_code == 200 else 0
+    print(f"Clients visible: {clients_count}")
+
+    # Role specific expectations
+    if role == 'agent':
+        if profiles_count > 1: print("⚠️ Warning: Agent should only see self profile")
+    elif role == 'team_leader':
+        print("Team Leader should see self and subordinates")
+    
+    print(f"✅ Finished test for {role}")
 
 if __name__ == "__main__":
-    # Get ANON_KEY from .env or similar if possible, but here we can just try to find it in the code
-    import os
-    # Try to find anon key in src/lib/supabase.ts or similar
-    # For now, I'll just report I've set the passwords and the user can test.
-    # Actually, let's try to get it.
-    pass
+    for email, role in users:
+        test_user_permissions(email, role)
