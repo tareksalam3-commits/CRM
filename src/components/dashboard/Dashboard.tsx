@@ -18,6 +18,8 @@ import {
 
 interface DashboardStats {
   totalNewBusiness: number;
+  totalFirstYearCollections: number;
+  totalRenewalCollections: number;
   totalCollections: number;
   totalProduction: number;
   totalDue: number;
@@ -35,17 +37,18 @@ interface DashboardStats {
   policyStatusDist: { name: string; value: number; color: string }[];
   targetAchievement: number;
   monthlyNewBusiness: number;
-  monthlyCollections: number;
+  monthlyFirstYearCollections: number;
+  monthlyRenewalCollections: number;
   monthlyTotal: number;
   monthlyTarget: number;
   error?: string;
 }
 
 const INITIAL_STATS: DashboardStats = {
-  totalNewBusiness: 0, totalCollections: 0, totalProduction: 0, totalDue: 0, totalOverdue: 0,
+  totalNewBusiness: 0, totalFirstYearCollections: 0, totalRenewalCollections: 0, totalCollections: 0, totalProduction: 0, totalDue: 0, totalOverdue: 0,
   clientCount: 0, policyCount: 0, activePolicyCount: 0, expiringPoliciesCount: 0,
   userCount: 0, collectionRate: 0, topAgents: [], bottomAgents: [], topTeamLeaders: [], topGroups: [],
-  policyStatusDist: [], targetAchievement: 0, monthlyNewBusiness: 0, monthlyCollections: 0, monthlyTotal: 0,
+  policyStatusDist: [], targetAchievement: 0, monthlyNewBusiness: 0, monthlyFirstYearCollections: 0, monthlyRenewalCollections: 0, monthlyTotal: 0,
   monthlyTarget: 0,
 };
 
@@ -66,9 +69,6 @@ export default function Dashboard() {
   const fetchStats = useCallback(async () => {
     setLoading(true);
     try {
-      // ✅ للمسؤولين: جلب البيانات الكاملة بدون تصفية حسب الفرع
-      const isSuperAdmin = profile?.role === 'super_admin';
-      const isDevManager = profile?.role === 'dev_manager';
       const branchId = activeBranch?.id;
 
       const now_date = new Date();
@@ -83,7 +83,6 @@ export default function Dashboard() {
       let usersQuery = supabase.from('profiles').select('id', { count: 'exact', head: true });
       let targetsQuery = supabase.from('targets').select('target_amount, branch_id, user_id').eq('period_type', 'monthly').eq('year', now_date.getFullYear()).eq('period_number', now_date.getMonth() + 1);
 
-      // ✅ تطبيق فلتر الفرع: إذا كان "جميع الفروع" (all) لا نفلتر، وإذا كان فرعاً محدداً نفلتر به
       if (branchId && branchId !== 'all') {
         policiesQuery = policiesQuery.eq('branch_id', branchId);
         clientsQuery = clientsQuery.eq('branch_id', branchId);
@@ -113,60 +112,69 @@ export default function Dashboard() {
       // Calculate Metrics from Unified Performance Metrics
       // ================================================================
 
-      // 1. Total New Business (all time, first installments only)
+      // 1. Total New Business (all time)
       const totalNewBusiness = unifiedMetrics
-        .filter((m: any) => m.is_new_business)
+        .filter((m: any) => m.collection_category === 'new')
         .reduce((s, m: any) => s + Number(m.amount), 0);
 
-      // 2. Total Collections (all time, subsequent installments in first year only)
-      const totalCollections = unifiedMetrics
-        .filter((m: any) => !m.is_new_business && m.is_first_year_collection)
+      // 2. Total First Year Collections (all time)
+      const totalFirstYearCollections = unifiedMetrics
+        .filter((m: any) => m.collection_category === 'first_year')
         .reduce((s, m: any) => s + Number(m.amount), 0);
 
-      // 3. Total Production = New Business + Collections
+      // 3. Total Renewal Collections (all time)
+      const totalRenewalCollections = unifiedMetrics
+        .filter((m: any) => m.collection_category === 'renewal')
+        .reduce((s, m: any) => s + Number(m.amount), 0);
+
+      // 4. Total Collections = All except 'new'
+      const totalCollections = totalFirstYearCollections + totalRenewalCollections;
+
+      // 5. Total Production = All payments
       const totalProduction = totalNewBusiness + totalCollections;
 
-      // 4. Monthly New Business (this month)
+      // 6. Monthly New Business (this month)
       const monthlyNewBusiness = unifiedMetrics
-        .filter((m: any) => m.is_new_business && m.collection_date >= monthStart && m.collection_date <= monthEnd)
+        .filter((m: any) => m.collection_category === 'new' && m.collection_date >= monthStart && m.collection_date <= monthEnd)
         .reduce((s, m: any) => s + Number(m.amount), 0);
 
-      // 5. Monthly Collections (this month, first year only)
-      const monthlyCollections = unifiedMetrics
-        .filter((m: any) => !m.is_new_business && m.is_first_year_collection && m.collection_date >= monthStart && m.collection_date <= monthEnd)
+      // 7. Monthly First Year Collections
+      const monthlyFirstYearCollections = unifiedMetrics
+        .filter((m: any) => m.collection_category === 'first_year' && m.collection_date >= monthStart && m.collection_date <= monthEnd)
         .reduce((s, m: any) => s + Number(m.amount), 0);
 
-      const monthlyTotal = monthlyNewBusiness + monthlyCollections;
+      // 8. Monthly Renewal Collections
+      const monthlyRenewalCollections = unifiedMetrics
+        .filter((m: any) => m.collection_category === 'renewal' && m.collection_date >= monthStart && m.collection_date <= monthEnd)
+        .reduce((s, m: any) => s + Number(m.amount), 0);
 
-      // 6. Collection Rate Calculation
-      // المحصل فعلياً خلال الشهر ÷ المستحق خلال نفس الشهر × 100
-      const monthlyDue = installments.filter((i: any) => {
+      const monthlyTotal = monthlyNewBusiness + monthlyFirstYearCollections + monthlyRenewalCollections;
+
+      // 9. Collection Rate Calculation (First Year only as per original logic)
+      const monthlyFirstYearDue = installments.filter((i: any) => {
         const policy = i.policy as any;
         return policy?.first_year_end && i.due_date >= monthStart && i.due_date <= monthEnd && i.due_date <= policy.first_year_end;
       }).reduce((s, i: any) => s + Number(i.amount), 0);
 
-      const collectionRate = monthlyDue > 0 ? (monthlyCollections / monthlyDue) * 100 : 0;
+      const collectionRate = monthlyFirstYearDue > 0 ? (monthlyFirstYearCollections / monthlyFirstYearDue) * 100 : 0;
 
-      // 7. Monthly Target Achievement
+      // 10. Monthly Target Achievement (Based on New Business only as per requirement 4)
       const totalTarget = targets?.reduce((s: number, t: any) => s + Number(t.target_amount), 0) || 0;
-      const targetAchievement = totalTarget > 0 ? (monthlyTotal / totalTarget) * 100 : 0;
+      const targetAchievement = totalTarget > 0 ? (monthlyNewBusiness / totalTarget) * 100 : 0;
 
       // ================================================================
-      // Calculate Top/Bottom Performers (Agents only, excluding managers)
+      // Calculate Top/Bottom Performers (Based on New Business only)
       // ================================================================
       let agentsQuery = supabase
         .from('profiles')
         .select('id, full_name, role')
         .eq('is_active', true);
 
-      // Filter by branch via active_branch_id (the actual profiles column)
       if (branchId && branchId !== 'all') {
         agentsQuery = agentsQuery.eq('active_branch_id', branchId);
       }
 
       const { data: agentsData } = await agentsQuery;
-
-      // Filter to only agents (not managers, supervisors, etc.)
       const agents = (agentsData || []).filter((a: any) => a.role === 'agent');
 
       const agentStats = agents.map((agent: any) => {
@@ -174,7 +182,7 @@ export default function Dashboard() {
           m.agent_id === agent.id &&
           m.collection_date >= monthStart &&
           m.collection_date <= monthEnd &&
-          (m.is_new_business || m.is_first_year_collection)
+          m.collection_category === 'new'
         );
         const production = agentMetrics.reduce((s, m: any) => s + Number(m.amount), 0);
         return { name: agent.full_name, production };
@@ -185,7 +193,7 @@ export default function Dashboard() {
       const bottomAgents = sortedAgents.slice(-5).reverse();
 
       // ================================================================
-      // Top Team Leaders
+      // Top Team Leaders (Based on New Business)
       // ================================================================
       let teamLeadersQuery = supabase
         .from('profiles')
@@ -204,7 +212,7 @@ export default function Dashboard() {
           m.team_leader_id === tl.id &&
           m.collection_date >= monthStart &&
           m.collection_date <= monthEnd &&
-          (m.is_new_business || m.is_first_year_collection)
+          m.collection_category === 'new'
         );
         const production = tlMetrics.reduce((s, m: any) => s + Number(m.amount), 0);
         return { name: tl.full_name, production };
@@ -213,11 +221,11 @@ export default function Dashboard() {
       const topTeamLeaders = teamLeaderStats.sort((a, b) => b.production - a.production).slice(0, 5);
 
       // ================================================================
-      // Top Groups (by team leader)
+      // Top Groups (Based on New Business)
       // ================================================================
       const groupStats: Record<string, number> = {};
       unifiedMetrics.forEach((m: any) => {
-        if (m.collection_date >= monthStart && m.collection_date <= monthEnd && (m.is_new_business || m.is_first_year_collection)) {
+        if (m.collection_date >= monthStart && m.collection_date <= monthEnd && m.collection_category === 'new') {
           const tlId = m.team_leader_id || 'unknown';
           groupStats[tlId] = (groupStats[tlId] || 0) + Number(m.amount);
         }
@@ -231,18 +239,12 @@ export default function Dashboard() {
         .sort((a, b) => b.production - a.production)
         .slice(0, 5);
 
-      // ================================================================
-      // Policy Status Distribution
-      // ================================================================
       const policyStatusDist = Object.entries(POLICY_COLORS).map(([status, color]) => ({
         name: POLICY_STATUS_LABELS[status as keyof typeof POLICY_STATUS_LABELS] || status,
         value: (policies || []).filter((p: any) => p.status === status).length,
         color,
       }));
 
-      // ================================================================
-      // Other Metrics
-      // ================================================================
       const now = new Date().toISOString().split('T')[0];
       const activePolicies = (policies || []).filter((p: any) => p.status === 'active');
       const expiringPolicies = (policies || []).filter((p: any) => {
@@ -259,6 +261,8 @@ export default function Dashboard() {
 
       setStats({
         totalNewBusiness,
+        totalFirstYearCollections,
+        totalRenewalCollections,
         totalCollections,
         totalProduction,
         totalDue,
@@ -276,7 +280,8 @@ export default function Dashboard() {
         policyStatusDist,
         targetAchievement,
         monthlyNewBusiness,
-        monthlyCollections,
+        monthlyFirstYearCollections,
+        monthlyRenewalCollections,
         monthlyTotal,
         monthlyTarget: totalTarget,
       });
@@ -335,7 +340,7 @@ export default function Dashboard() {
   }
 
   return (
-    <div>
+    <div className="space-y-6 pb-8">
       <PageHeader
         title="لوحة التحكم"
         icon={LayoutDashboard}
@@ -351,183 +356,237 @@ export default function Dashboard() {
         }
       />
 
-      {lastUpdated && (
-        <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">
-          آخر تحديث: {lastUpdated.toLocaleTimeString('ar-EG')}
-        </p>
-      )}
-
-      {/* Main KPI Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <KPICard
-          label="إجمالي الإنتاج"
-          value={formatCurrency(stats.totalProduction)}
-          icon={TrendingUp}
-          color="blue"
-        />
-        <KPICard
-          label="إجمالي الجديد"
-          value={formatCurrency(stats.totalNewBusiness)}
-          icon={FileText}
-          color="emerald"
-        />
-        <KPICard
-          label="إجمالي التحصيل"
-          value={formatCurrency(stats.totalCollections)}
-          icon={Wallet}
-          color="purple"
-        />
-        <KPICard
-          label="نسبة تحقيق الهدف"
-          value={formatPercent(stats.targetAchievement)}
-          icon={Target}
-          color="amber"
-        />
-      </div>
-
-      {/* Additional Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
-        <StatBox label="المستهدف الشهري" value={formatCurrency(stats.monthlyTarget)} icon={Target} />
-        <StatBox label="المحقق الشهري" value={formatCurrency(stats.monthlyTotal)} icon={TrendingUp} />
-        <StatBox label="عدد الوثائق الجديدة" value={formatNumber(stats.policyCount)} icon={FileText} />
-        <StatBox label="عدد العملاء الجدد" value={formatNumber(stats.clientCount)} icon={Users} />
-        <StatBox label="عدد التحصيلات" value={formatNumber(stats.activePolicyCount)} icon={Wallet} />
-        <StatBox label="معدل التحصيل" value={formatPercent(stats.collectionRate)} icon={Target} />
-      </div>
-
-      {/* Monthly Performance Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-        <div className="bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-900/20 dark:to-blue-800/20 rounded-xl shadow-sm border border-blue-200 dark:border-blue-700 p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-blue-600 dark:text-blue-400 font-medium">الأعمال الجديدة (هذا الشهر)</p>
-              <p className="text-2xl font-bold text-blue-900 dark:text-blue-100 mt-2">{formatCurrency(stats.monthlyNewBusiness)}</p>
+      {/* KPI Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-white dark:bg-slate-800 p-5 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700">
+          <div className="flex items-center justify-between mb-3">
+            <div className="p-2 bg-emerald-50 dark:bg-emerald-900/20 rounded-xl">
+              <TrendingUp className="w-6 h-6 text-emerald-600 dark:text-emerald-400" />
             </div>
-            <TrendingUp className="w-12 h-12 text-blue-300 dark:text-blue-600" />
+            <span className="text-xs font-medium text-slate-400 uppercase tracking-wider">إجمالي الجديد</span>
+          </div>
+          <div className="flex flex-col">
+            <span className="text-2xl font-bold text-slate-900 dark:text-white">{formatCurrency(stats.totalNewBusiness)}</span>
+            <span className="text-sm text-slate-500 mt-1">هذا الشهر: {formatCurrency(stats.monthlyNewBusiness)}</span>
           </div>
         </div>
-        <div className="bg-gradient-to-br from-green-50 to-green-100 dark:from-green-900/20 dark:to-green-800/20 rounded-xl shadow-sm border border-green-200 dark:border-green-700 p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-green-600 dark:text-green-400 font-medium">التحصيل (هذا الشهر)</p>
-              <p className="text-2xl font-bold text-green-900 dark:text-green-100 mt-2">{formatCurrency(stats.monthlyCollections)}</p>
+
+        <div className="bg-white dark:bg-slate-800 p-5 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700">
+          <div className="flex items-center justify-between mb-3">
+            <div className="p-2 bg-blue-50 dark:bg-blue-900/20 rounded-xl">
+              <Wallet className="w-6 h-6 text-blue-600 dark:text-blue-400" />
             </div>
-            <Wallet className="w-12 h-12 text-green-300 dark:text-green-600" />
+            <span className="text-xs font-medium text-slate-400 uppercase tracking-wider">تحصيل أول سنة</span>
+          </div>
+          <div className="flex flex-col">
+            <span className="text-2xl font-bold text-slate-900 dark:text-white">{formatCurrency(stats.totalFirstYearCollections)}</span>
+            <span className="text-sm text-slate-500 mt-1">هذا الشهر: {formatCurrency(stats.monthlyFirstYearCollections)}</span>
           </div>
         </div>
-        <div className="bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-900/20 dark:to-purple-800/20 rounded-xl shadow-sm border border-purple-200 dark:border-purple-700 p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-purple-600 dark:text-purple-400 font-medium">نسبة تحقيق الهدف</p>
-              <p className="text-2xl font-bold text-purple-900 dark:text-purple-100 mt-2">{formatPercent(stats.targetAchievement)}</p>
+
+        <div className="bg-white dark:bg-slate-800 p-5 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700">
+          <div className="flex items-center justify-between mb-3">
+            <div className="p-2 bg-purple-50 dark:bg-purple-900/20 rounded-xl">
+              <Clock className="w-6 h-6 text-purple-600 dark:text-purple-400" />
             </div>
-            <Target className="w-12 h-12 text-purple-300 dark:text-purple-600" />
+            <span className="text-xs font-medium text-slate-400 uppercase tracking-wider">تحصيل سنوات تالية</span>
+          </div>
+          <div className="flex flex-col">
+            <span className="text-2xl font-bold text-slate-900 dark:text-white">{formatCurrency(stats.totalRenewalCollections)}</span>
+            <span className="text-sm text-slate-500 mt-1">هذا الشهر: {formatCurrency(stats.monthlyRenewalCollections)}</span>
+          </div>
+        </div>
+
+        <div className="bg-white dark:bg-slate-800 p-5 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700">
+          <div className="flex items-center justify-between mb-3">
+            <div className="p-2 bg-amber-50 dark:bg-amber-900/20 rounded-xl">
+              <Target className="w-6 h-6 text-amber-600 dark:text-amber-400" />
+            </div>
+            <span className="text-xs font-medium text-slate-400 uppercase tracking-wider">إجمالي التحصيل الكلي</span>
+          </div>
+          <div className="flex flex-col">
+            <span className="text-2xl font-bold text-slate-900 dark:text-white">{formatCurrency(stats.totalProduction)}</span>
+            <span className="text-sm text-slate-500 mt-1">هذا الشهر: {formatCurrency(stats.monthlyTotal)}</span>
           </div>
         </div>
       </div>
 
-      {/* Charts and Performance Tables */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        {/* Policy Status Distribution */}
-        <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6">
-          <h3 className="font-semibold text-slate-900 dark:text-white mb-4">توزيع حالات الوثائق</h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <PieChart>
-              <Pie
-                data={stats.policyStatusDist.filter(item => item.value > 0)}
-                cx="50%"
-                cy="50%"
-                labelLine={false}
-                label={renderCustomLabel}
-                outerRadius={100}
-                fill="#8884d8"
-                dataKey="value"
-              >
-                {stats.policyStatusDist.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={entry.color} />
-                ))}
-              </Pie>
-              <Tooltip formatter={(value: any) => formatNumber(Number(value || 0))} />
-            </PieChart>
-          </ResponsiveContainer>
+      {/* Target & Achievement Row */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700">
+          <div className="flex items-center justify-between mb-6">
+            <h3 className="font-bold text-lg text-slate-900 dark:text-white">هدف الجديد (هذا الشهر)</h3>
+            <div className="text-right">
+              <span className="text-sm text-slate-500 block">الهدف المطلوب</span>
+              <span className="font-bold text-slate-900 dark:text-white">{formatCurrency(stats.monthlyTarget)}</span>
+            </div>
+          </div>
+          
+          <div className="space-y-6">
+            <div>
+              <div className="flex justify-between mb-2">
+                <span className="text-sm font-medium text-slate-600 dark:text-slate-400">نسبة الإنجاز من الجديد</span>
+                <span className="text-sm font-bold text-emerald-600 dark:text-emerald-400">{formatPercent(stats.targetAchievement)}</span>
+              </div>
+              <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-3">
+                <div 
+                  className="bg-emerald-500 h-3 rounded-full transition-all duration-500" 
+                  style={{ width: `${Math.min(stats.targetAchievement, 100)}%` }}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-3 gap-4">
+              <div className="p-4 bg-slate-50 dark:bg-slate-900/50 rounded-xl">
+                <span className="text-xs text-slate-500 block mb-1">المحقق (جديد)</span>
+                <span className="font-bold text-slate-900 dark:text-white">{formatCurrency(stats.monthlyNewBusiness)}</span>
+              </div>
+              <div className="p-4 bg-slate-50 dark:bg-slate-900/50 rounded-xl">
+                <span className="text-xs text-slate-500 block mb-1">المتبقي للهدف</span>
+                <span className="font-bold text-slate-900 dark:text-white">{formatCurrency(Math.max(0, stats.monthlyTarget - stats.monthlyNewBusiness))}</span>
+              </div>
+              <div className="p-4 bg-slate-50 dark:bg-slate-900/50 rounded-xl">
+                <span className="text-xs text-slate-500 block mb-1">نسبة التحصيل</span>
+                <span className="font-bold text-blue-600 dark:text-blue-400">{formatPercent(stats.collectionRate)}</span>
+              </div>
+            </div>
+          </div>
         </div>
 
+        <div className="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700">
+          <h3 className="font-bold text-lg text-slate-900 dark:text-white mb-6">توزيع حالات الوثائق</h3>
+          <div className="h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={stats.policyStatusDist}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={60}
+                  outerRadius={80}
+                  paddingAngle={5}
+                  dataKey="value"
+                >
+                  {stats.policyStatusDist.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  ))}
+                </Pie>
+                <Tooltip 
+                  contentStyle={{ backgroundColor: '#1e293b', border: 'none', borderRadius: '8px', color: '#fff' }}
+                  itemStyle={{ color: '#fff' }}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="grid grid-cols-2 gap-2 mt-4">
+            {stats.policyStatusDist.map((item) => (
+              <div key={item.name} className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }} />
+                <span className="text-xs text-slate-600 dark:text-slate-400">{item.name}: {item.value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Performers Tables */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         {/* Top Agents */}
-        <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6">
-          <h3 className="font-semibold text-slate-900 dark:text-white mb-4">أعلى 5 وكلاء</h3>
-          <div className="space-y-3">
-            {stats.topAgents.map((agent, idx) => (
-              <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-700/50 rounded-lg">
-                <span className="text-sm font-medium text-slate-900 dark:text-white">{agent.name}</span>
-                <span className="text-sm font-bold text-emerald-600 dark:text-emerald-400">{formatCurrency(agent.production)}</span>
-              </div>
-            ))}
+        <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700 overflow-hidden">
+          <div className="p-6 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
+            <h3 className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
+              <Award className="w-5 h-5 text-amber-500" />
+              أفضل المندوبين (جديد - هذا الشهر)
+            </h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-right">
+              <thead>
+                <tr className="bg-slate-50 dark:bg-slate-900/50">
+                  <th className="px-6 py-3 text-xs font-medium text-slate-500 uppercase">المندوب</th>
+                  <th className="px-6 py-3 text-xs font-medium text-slate-500 uppercase text-left">إنتاج الجديد</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+                {stats.topAgents.map((agent, index) => (
+                  <tr key={index} className="hover:bg-slate-50 dark:hover:bg-slate-900/30 transition-colors">
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-xs font-bold text-slate-600 dark:text-slate-400">
+                          {index + 1}
+                        </div>
+                        <span className="text-sm font-medium text-slate-900 dark:text-white">{agent.name}</span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 text-left font-bold text-emerald-600 dark:text-emerald-400">
+                      {formatCurrency(agent.production)}
+                    </td>
+                  </tr>
+                ))}
+                {stats.topAgents.length === 0 && (
+                  <tr>
+                    <td colSpan={2} className="px-6 py-8 text-center text-slate-500 italic">لا توجد بيانات لهذا الشهر</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
-      </div>
 
-      {/* Team Leaders and Groups */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Top Team Leaders */}
-        <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6">
-          <h3 className="font-semibold text-slate-900 dark:text-white mb-4">أعلى رؤساء مجموعات</h3>
-          <div className="space-y-3">
-            {stats.topTeamLeaders.map((tl, idx) => (
-              <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-700/50 rounded-lg">
-                <span className="text-sm font-medium text-slate-900 dark:text-white">{tl.name}</span>
-                <span className="text-sm font-bold text-blue-600 dark:text-blue-400">{formatCurrency(tl.production)}</span>
-              </div>
-            ))}
+        <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700 overflow-hidden">
+          <div className="p-6 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
+            <h3 className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
+              <Users className="w-5 h-5 text-blue-500" />
+              أفضل رؤساء المجموعات (جديد - هذا الشهر)
+            </h3>
           </div>
-        </div>
-
-        {/* Best Groups */}
-        <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6">
-          <h3 className="font-semibold text-slate-900 dark:text-white mb-4">أفضل مجموعات إنتاجية</h3>
-          <div className="space-y-3">
-            {stats.topGroups.map((group, idx) => (
-              <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-700/50 rounded-lg">
-                <span className="text-sm font-medium text-slate-900 dark:text-white">{group.name}</span>
-                <span className="text-sm font-bold text-purple-600 dark:text-purple-400">{formatCurrency(group.production)}</span>
-              </div>
-            ))}
+          <div className="overflow-x-auto">
+            <table className="w-full text-right">
+              <thead>
+                <tr className="bg-slate-50 dark:bg-slate-900/50">
+                  <th className="px-6 py-3 text-xs font-medium text-slate-500 uppercase">رئيس المجموعة</th>
+                  <th className="px-6 py-3 text-xs font-medium text-slate-500 uppercase text-left">إنتاج المجموعة (جديد)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+                {stats.topTeamLeaders.map((tl, index) => (
+                  <tr key={index} className="hover:bg-slate-50 dark:hover:bg-slate-900/30 transition-colors">
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-xs font-bold text-slate-600 dark:text-slate-400">
+                          {index + 1}
+                        </div>
+                        <span className="text-sm font-medium text-slate-900 dark:text-white">{tl.name}</span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 text-left font-bold text-blue-600 dark:text-blue-400">
+                      {formatCurrency(tl.production)}
+                    </td>
+                  </tr>
+                ))}
+                {stats.topTeamLeaders.length === 0 && (
+                  <tr>
+                    <td colSpan={2} className="px-6 py-8 text-center text-slate-500 italic">لا توجد بيانات لهذا الشهر</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
-    </div>
-  );
-}
 
-function KPICard({ label, value, icon: Icon, color }: any) {
-  const colorClasses: Record<string, string> = {
-    blue: 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-700',
-    emerald: 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-700',
-    purple: 'bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400 border-purple-200 dark:border-purple-700',
-    amber: 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 border-amber-200 dark:border-amber-700',
-  };
-
-  return (
-    <div className={`${colorClasses[color]} border rounded-xl shadow-sm p-6`}>
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm font-medium">{label}</p>
-          <p className="text-2xl font-bold mt-2">{value}</p>
+      {/* Footer Info */}
+      <div className="flex flex-col md:flex-row items-center justify-between text-xs text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-900/50 p-4 rounded-xl">
+        <div className="flex items-center gap-4 mb-2 md:mb-0">
+          <span>إجمالي العملاء: {formatNumber(stats.clientCount)}</span>
+          <span>إجمالي الوثائق: {formatNumber(stats.policyCount)}</span>
+          <span>الوثائق السارية: {formatNumber(stats.activePolicyCount)}</span>
         </div>
-        <Icon className="w-12 h-12 opacity-20" />
+        {lastUpdated && (
+          <span>آخر تحديث: {lastUpdated.toLocaleTimeString('ar-SA')}</span>
+        )}
       </div>
     </div>
   );
-}
-
-function StatBox({ label, value, icon: Icon }: any) {
-  return (
-    <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-4">
-      <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">{label}</p>
-      <p className="text-lg font-bold text-slate-900 dark:text-white mt-2">{value}</p>
-    </div>
-  );
-}
-
-function renderCustomLabel(entry: any) {
-  return `${entry.name} (${entry.value})`;
 }

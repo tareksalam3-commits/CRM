@@ -207,12 +207,16 @@ export interface Installment {
   policy?: Policy;
 }
 
+export type CollectionCategory = 'new' | 'first_year' | 'renewal';
+
 export interface Collection {
   id: string;
   installment_id: string;
   policy_id: string;
   amount: number;
   collection_date: string;
+  collection_category: CollectionCategory;
+  is_new_business: boolean;
   receipt_number: string | null;
   collected_by: string;
   branch_id: string | null;
