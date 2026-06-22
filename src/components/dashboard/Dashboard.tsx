@@ -4,7 +4,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import {
   formatCurrency, formatPercent, formatNumber,
 } from '../../lib/utils';
-import { POLICY_STATUS_LABELS, UserRole } from '../../types';
+import { POLICY_STATUS_LABELS } from '../../types';
 import PageHeader from '../common/PageHeader';
 import LoadingSpinner from '../common/LoadingSpinner';
 import {
@@ -54,8 +54,6 @@ const INITIAL_STATS: DashboardStats = {
   monthlyTarget: 0,
 };
 
-const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#6366f1', '#8b5cf6', '#ec4899'];
-
 const POLICY_COLORS: Record<string, string> = {
   active: '#10b981',
   under_issuance: '#3b82f6',
@@ -68,11 +66,12 @@ export default function Dashboard() {
   const { profile, activeBranch } = useAuth();
   const [stats, setStats] = useState<DashboardStats>(INITIAL_STATS);
   const [loading, setLoading] = useState(true);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [partialError, setPartialError] = useState<string | null>(null);
 
   const fetchStats = useCallback(async () => {
     if (!profile) return;
     setLoading(true);
+    setPartialError(null);
     try {
       const branchId = activeBranch?.id;
       const userRole = profile?.role;
@@ -105,7 +104,6 @@ export default function Dashboard() {
         unifiedMetricsQuery = unifiedMetricsQuery.eq('agent_id', userId);
         targetsQuery = targetsQuery.eq('user_id', userId);
       } else if (userRole === 'team_leader') {
-        // Team Leader sees themselves and their team
         unifiedMetricsQuery = unifiedMetricsQuery.or(`agent_id.eq.${userId},team_leader_id.eq.${userId}`);
       }
 
@@ -118,12 +116,17 @@ export default function Dashboard() {
         targetsQuery
       ]);
 
-      if (policiesRes.error) throw policiesRes.error;
-      if (unifiedMetricsRes.error) throw unifiedMetricsRes.error;
+      // Handle errors gracefully without breaking the whole dashboard
+      let unifiedMetrics: any[] = [];
+      if (unifiedMetricsRes.error) {
+        console.error("View error:", unifiedMetricsRes.error);
+        setPartialError("تعذر تحميل بعض مؤشرات الأداء (قد تكون الصلاحيات قيد التحديث).");
+      } else {
+        unifiedMetrics = unifiedMetricsRes.data || [];
+      }
 
       const policies = policiesRes.data || [];
       const installments = installmentsRes.data || [];
-      const unifiedMetrics = unifiedMetricsRes.data || [];
       const targets = targetsRes.data || [];
 
       // Calculate core metrics
@@ -150,7 +153,7 @@ export default function Dashboard() {
       // Ranking logic
       let topAgents: any[] = [];
       let topTeamLeaders: any[] = [];
-      if (userRole !== 'agent') {
+      if (userRole !== 'agent' && unifiedMetrics.length > 0) {
         const agentStats: Record<string, { name: string, production: number }> = {};
         const tlStats: Record<string, { name: string, production: number }> = {};
 
@@ -187,13 +190,12 @@ export default function Dashboard() {
         totalNewBusiness, totalFirstYearCollections, totalRenewalCollections, totalCollections, totalProduction,
         totalDue, totalOverdue, clientCount: clientsRes.count || 0, policyCount: policies.length,
         activePolicyCount: policies.filter((p: any) => p.status === 'active').length,
-        expiringPoliciesCount: 0, // Placeholder
+        expiringPoliciesCount: 0,
         userCount: usersRes.count || 0, collectionRate, topAgents, bottomAgents: [], topTeamLeaders, topGroups: [],
         policyStatusDist, targetAchievement, monthlyNewBusiness, monthlyFirstYearCollections,
         monthlyRenewalCollections, monthlyTotal, monthlyTarget: totalTarget,
       });
 
-      setLastUpdated(new Date());
     } catch (err: any) {
       setStats(prev => ({ ...prev, error: err.message }));
       console.error('Dashboard error:', err);
@@ -206,7 +208,7 @@ export default function Dashboard() {
 
   if (loading) return <LoadingSpinner />;
 
-  if (stats.error) {
+  if (stats.error && !partialError) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] p-6 text-center">
         <div className="w-16 h-16 bg-red-100 dark:bg-red-900/20 text-red-600 rounded-full flex items-center justify-center mb-4">
@@ -234,6 +236,13 @@ export default function Dashboard() {
           </button>
         }
       />
+
+      {partialError && (
+        <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl p-4 flex items-center gap-3 text-amber-700 dark:text-amber-400">
+          <AlertCircle className="w-5 h-5 flex-shrink-0" />
+          <p className="text-sm font-medium">{partialError}</p>
+        </div>
+      )}
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
