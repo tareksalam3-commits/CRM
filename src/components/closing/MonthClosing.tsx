@@ -27,10 +27,8 @@ interface AgentCollection {
 }
 
 interface ExecutiveSummary {
-  supervisor?: string;
-  monitors?: string[];
-  teamLeaders?: string[];
-  agents?: string[];
+  supervisors?: Array<{ id: string; name: string; newBusiness: number; collections: number }>;
+  teamLeaders?: Array<{ id: string; name: string; newBusiness: number; collections: number }>;
   target: number;
   achieved: number;
   achievementRate: number;
@@ -72,11 +70,26 @@ export default function MonthClosing() {
       const nextYear = selectedMonth === 12 ? selectedYear + 1 : selectedYear;
       const monthEnd = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
 
-      // Fetch unified metrics (first year only)
+      // Fetch unified metrics with full hierarchy (first year only)
       const [metricsRes, targetsRes, closingsRes] = await Promise.all([
         supabase
           .from('unified_performance_metrics')
-          .select('*, collector:profiles!collections_collected_by_fkey(full_name)')
+          .select(`
+            *,
+            policy:policies(
+              policy_number,
+              client_id,
+              agent_id,
+              branch_id,
+              team_leader_id,
+              supervisor_id,
+              client:clients(name),
+              agent:profiles(full_name),
+              team_leader:profiles!policies_team_leader_id_fkey(full_name),
+              supervisor:profiles!policies_supervisor_id_fkey(full_name),
+              branch:branches(name)
+            )
+          `)
           .gte('collection_date', monthStart)
           .lt('collection_date', monthEnd)
           .eq('is_first_year_collection', true),
@@ -111,35 +124,77 @@ export default function MonthClosing() {
         collectionRate: totalTarget > 0 ? (totalProduction / totalTarget) * 100 : 0,
       });
 
-      // Build agent collections map (first year only)
+      // Build hierarchical collections map (first year only)
       const agentMap = new Map<string, AgentCollection>();
+      const supervisorMap = new Map<string, any>();
+      const teamLeaderMap = new Map<string, any>();
+
       for (const m of metrics) {
-        const agentId = m.agent_id;
-        const existing = agentMap.get(agentId) || {
-          agentId,
-          agentName: m.collector?.full_name || 'غير معروف',
-          newBusiness: 0,
-          collections: 0,
-          totalProduction: 0,
-          count: 0,
-        };
+        const policy = m.policy as any;
+        if (!policy) continue;
 
         const amount = Number(m.amount);
-        if (m.is_new_business) {
-          existing.newBusiness += amount;
-        } else {
-          existing.collections += amount;
-        }
-        existing.totalProduction += amount;
-        existing.count += 1;
+        const isNew = m.is_new_business;
 
-        agentMap.set(agentId, existing);
+        // Agent level
+        const agentId = policy.agent_id;
+        if (agentId) {
+          if (!agentMap.has(agentId)) {
+            agentMap.set(agentId, {
+              agentId,
+              agentName: policy.agent?.full_name || 'غير معروف',
+              newBusiness: 0,
+              collections: 0,
+              totalProduction: 0,
+              count: 0,
+            });
+          }
+          const agent = agentMap.get(agentId)!;
+          if (isNew) agent.newBusiness += amount;
+          else agent.collections += amount;
+          agent.totalProduction += amount;
+          agent.count += 1;
+        }
+
+        // Team Leader level
+        const tlId = policy.team_leader_id;
+        if (tlId) {
+          if (!teamLeaderMap.has(tlId)) {
+            teamLeaderMap.set(tlId, {
+              id: tlId,
+              name: policy.team_leader?.full_name || 'غير معروف',
+              newBusiness: 0,
+              collections: 0,
+            });
+          }
+          const tl = teamLeaderMap.get(tlId)!;
+          if (isNew) tl.newBusiness += amount;
+          else tl.collections += amount;
+        }
+
+        // Supervisor level
+        const supId = policy.supervisor_id;
+        if (supId) {
+          if (!supervisorMap.has(supId)) {
+            supervisorMap.set(supId, {
+              id: supId,
+              name: policy.supervisor?.full_name || 'غير معروف',
+              newBusiness: 0,
+              collections: 0,
+            });
+          }
+          const sup = supervisorMap.get(supId)!;
+          if (isNew) sup.newBusiness += amount;
+          else sup.collections += amount;
+        }
       }
 
-      setAgentCollections(Array.from(agentMap.values()));
+      setAgentCollections(Array.from(agentMap.values()).sort((a, b) => b.totalProduction - a.totalProduction));
 
-      // Build executive summary
+      // Build executive summary with hierarchy
       setExecutiveSummary({
+        supervisors: Array.from(supervisorMap.values()).sort((a, b) => (b.newBusiness + b.collections) - (a.newBusiness + a.collections)),
+        teamLeaders: Array.from(teamLeaderMap.values()).sort((a, b) => (b.newBusiness + b.collections) - (a.newBusiness + a.collections)),
         target: totalTarget,
         achieved: totalProduction,
         achievementRate: totalTarget > 0 ? (totalProduction / totalTarget) * 100 : 0,
