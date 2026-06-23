@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
+import { canCloseMonth } from '../../lib/rbac';
 import { formatCurrency, formatPercent, getMonthName, formatDate } from '../../lib/utils';
 import PageHeader from '../common/PageHeader';
 import LoadingSpinner from '../common/LoadingSpinner';
@@ -230,6 +231,11 @@ export default function MonthClosing() {
 
   async function closeMonth() {
     if (!profile) return;
+    // SECURITY FIX: Use canCloseMonth from rbac.ts
+    if (!canCloseMonth(profile.role as any)) {
+      toast.error('ليس لديك صلاحية تقفيل الشهر');
+      return;
+    }
     // BUG FIX #12: Prevent closing future months
     const now = new Date();
     const isCurrentOrPast = (selectedYear < now.getFullYear()) ||
@@ -426,7 +432,8 @@ export default function MonthClosing() {
     }
   }
 
-  const canClose = profile?.role === 'super_admin' || profile?.role === 'dev_manager';
+  // FIX: Use canCloseMonth from rbac instead of hardcoded role check
+  const canClose = profile?.role ? canCloseMonth(profile.role as any) : false;
 
   if (loading) return <LoadingSpinner />;
 
@@ -576,6 +583,7 @@ export default function MonthClosing() {
           <FileText className="w-5 h-5" />
           {exporting ? 'جاري التصدير...' : 'تصدير PDF'}
         </button>
+        {/* FIX: Use canClose from rbac instead of hardcoded check */}
         {canClose && !isCurrentClosed && (
           <button
             onClick={closeMonth}
