@@ -5,7 +5,7 @@
 @tailwind utilities;
 
 :root {
-  font-family: 'IBM Plex Sans Arabic', sans-serif;
+  font-family: 'IBM Plex Sans Arabic', 'Inter', sans-serif;
 }
 
 * {
@@ -16,30 +16,60 @@
 
 html {
   direction: rtl;
+  scroll-behavior: smooth;
 }
 
 body {
-  @apply bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white antialiased;
+  @apply bg-background dark:bg-slate-950 text-text dark:text-white antialiased;
   min-height: 100vh;
 }
 
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+/* Custom Scrollbar */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
 }
 
-::-webkit-scrollbar-track {
+.custom-scrollbar::-webkit-scrollbar-track {
   @apply bg-transparent;
 }
 
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  @apply bg-slate-200 dark:bg-slate-800 rounded-full;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  @apply bg-primary/30;
+}
+
+/* Standard Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-slate-50 dark:bg-slate-900;
+}
+
 ::-webkit-scrollbar-thumb {
-  @apply bg-slate-300 dark:bg-slate-600 rounded-full;
+  @apply bg-slate-200 dark:bg-slate-700 rounded-full border-4 border-solid border-slate-50 dark:border-slate-900;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  @apply bg-slate-400 dark:bg-slate-500;
+  @apply bg-slate-300 dark:bg-slate-600;
 }
 
+/* Utility Classes */
+.shadow-crm {
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.05), 0 1px 2px -1px rgb(0 0 0 / 0.05);
+}
+
+.shadow-crm-lg {
+  box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.05), 0 4px 6px -4px rgb(0 0 0 / 0.05);
+}
+
+/* Input Styles */
 input[type="number"]::-webkit-outer-spin-button,
 input[type="number"]::-webkit-inner-spin-button {
   -webkit-appearance: none;
@@ -50,6 +80,16 @@ input[type="number"] {
   -moz-appearance: textfield;
 }
 
+/* Animations */
+@keyframes slideInUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-slide-up {
+  animation: slideInUp 0.4s ease-out forwards;
+}
+
 @media print {
   .no-print {
     display: none !important;
@@ -58,13 +98,7 @@ input[type="number"] {
     background: white !important;
     color: black !important;
   }
-}
-
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-.animate-fade-in {
-  animation: fadeIn 0.3s ease-out;
+  .shadow-crm, .shadow-crm-lg {
+    box-shadow: none !important;
+  }
 }

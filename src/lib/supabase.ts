@@ -19,4 +19,57 @@ if (!supabaseUrl || !supabaseAnonKey) {
   }
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+/**
+ * 🔧 Custom fetch that injects x-user-id header for fallback auth mode.
+ * This ensures all supabase queries include the user-id when in fallback mode.
+ */
+const originalFetch = window.fetch;
+const customFetch: typeof fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+  // Only intercept Supabase REST API calls (not auth calls)
+  const url = input.toString();
+  if (url.includes(supabaseUrl) && !url.includes('/auth/')) {
+    const fallbackUserId = localStorage.getItem('fallback_user_id');
+    if (fallbackUserId) {
+      // Clone init to avoid mutating the original
+      init = init || {};
+      
+      // Properly handle all Headers types (Headers object, plain object, array)
+      const newHeaders = new Headers(init.headers);
+      newHeaders.set('x-user-id', fallbackUserId);
+      
+      // Ensure apikey is present
+      if (!newHeaders.has('apikey')) {
+        newHeaders.set('apikey', supabaseAnonKey);
+      }
+      
+      init.headers = newHeaders;
+    }
+  }
+  return originalFetch(input, init);
+};
+
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  global: {
+    fetch: customFetch as any,
+  },
+});
+
+/**
+ * 🔧 Create a supabase client with x-user-id header for fallback auth.
+ * Used by AuthContext when normal Supabase Auth fails with schema error.
+ */
+export function createAuthClient(userId: string) {
+  return createClient(supabaseUrl, supabaseAnonKey, {
+    global: {
+      headers: {
+        'x-user-id': userId,
+      },
+      fetch: customFetch as any,
+    },
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+  });
+}

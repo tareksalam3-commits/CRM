@@ -3,11 +3,10 @@ import { ar } from 'date-fns/locale';
 
 export function formatCurrency(amount: number): string {
   return new Intl.NumberFormat('ar-EG', {
-    style: 'currency',
-    currency: 'EGP',
+    style: 'decimal',
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
-  }).format(amount);
+  }).format(amount) + ' ج.م';
 }
 
 export function formatNumber(num: number): string {

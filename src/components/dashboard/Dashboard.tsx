@@ -1,280 +1,421 @@
-import { useEffect, useState, useCallback } from 'react';
-import { useAuth } from '../../contexts/AuthContext';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
-import { formatCurrency, formatPercent, formatNumber } from '../../lib/utils';
-import { POLICY_STATUS_LABELS } from '../../types';
+import { useAuth } from '../../contexts/AuthContext';
+import {
+  formatCurrency, formatPercent,
+} from '../../lib/utils';
+
 import PageHeader from '../common/PageHeader';
 import LoadingSpinner from '../common/LoadingSpinner';
 import {
-  LayoutDashboard, Users, FileText, Wallet, TrendingUp,
-  UserCircle, Target, AlertCircle, Award, RefreshCw, Clock,
+  LayoutDashboard, TrendingUp, Award, RefreshCw, Wallet, 
+  Users, Building2, BarChart3, PieChart, ArrowUpRight, ArrowDownRight,
+  ChevronLeft, Target, ShieldCheck, FileText
 } from 'lucide-react';
-import {
-  Tooltip,
-  ResponsiveContainer, PieChart, Pie, Cell,
-} from 'recharts';
 
 interface DashboardStats {
-  totalPremiums: number;
-  totalCollected: number;
-  totalDue: number;
-  totalOverdue: number;
+  totalNewBusiness: number;
+  totalFirstYearCollections: number;
+  totalProduction: number;
   clientCount: number;
   policyCount: number;
   activePolicyCount: number;
-  expiringPoliciesCount: number;
-  userCount: number;
   collectionRate: number;
-  topAgents: { name: string; production: number }[];
-  policyStatusDist: { name: string; value: number; color: string }[];
+  targetAchievement: number;
+  monthlyNewBusiness: number;
+  monthlyFirstYearCollections: number;
+  monthlyTotal: number;
+  monthlyTarget: number;
   error?: string;
 }
 
 const INITIAL_STATS: DashboardStats = {
-  totalPremiums: 0, totalCollected: 0, totalDue: 0, totalOverdue: 0,
-  clientCount: 0, policyCount: 0, activePolicyCount: 0, expiringPoliciesCount: 0,
-  userCount: 0, collectionRate: 0, topAgents: [], policyStatusDist: [],
-};
-
-const POLICY_COLORS: Record<string, string> = {
-  active: '#10b981',
-  under_issuance: '#3b82f6',
-  suspended: '#f59e0b',
-  cancelled: '#ef4444',
-  rejected: '#6b7280',
+  totalNewBusiness: 0, totalFirstYearCollections: 0, totalProduction: 0,
+  clientCount: 0, policyCount: 0, activePolicyCount: 0,
+  collectionRate: 0, targetAchievement: 0, monthlyNewBusiness: 0, 
+  monthlyFirstYearCollections: 0, monthlyTotal: 0, monthlyTarget: 0,
 };
 
 export default function Dashboard() {
-  const { profile } = useAuth();
+  const { profile, activeBranch } = useAuth();
   const [stats, setStats] = useState<DashboardStats>(INITIAL_STATS);
   const [loading, setLoading] = useState(true);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [subordinateStats, setSubordinateStats] = useState<any[]>([]);
+  const [extraStats, setExtraStats] = useState<any>({});
 
   const fetchStats = useCallback(async () => {
+    if (!profile) return;
     setLoading(true);
     try {
-      const [policiesRes, clientsRes, collectionsRes, usersRes, installmentsRes] = await Promise.all([
-        supabase.from('policies').select('annual_premium, status, created_at'),
-        supabase.from('clients').select('id', { count: 'exact', head: true }),
-        supabase.from('collections').select('amount'),
-        supabase.from('profiles').select('id', { count: 'exact', head: true }),
-        supabase.from('installments').select('amount, status, due_date'),
+      const branchId = activeBranch?.id;
+      const userRole = profile?.role;
+      const userId = profile?.id;
+
+      const now_date = new Date();
+      const monthStart = new Date(now_date.getFullYear(), now_date.getMonth(), 1).toISOString().split('T')[0];
+      const monthEnd = new Date(now_date.getFullYear(), now_date.getMonth() + 1, 0).toISOString().split('T')[0];
+
+      let policiesQuery = supabase.from('policies').select('id, status', { count: 'exact' });
+      let clientsQuery = supabase.from('clients').select('id', { count: 'exact' });
+      let unifiedMetricsQuery = supabase.from('unified_performance_metrics').select('*').eq('is_first_year_collection', true);
+      let targetsQuery = supabase.from('targets').select('target_amount').eq('period_type', 'monthly').eq('year', now_date.getFullYear()).eq('period_number', now_date.getMonth() + 1);
+
+      if (branchId && branchId !== 'all' && userRole !== 'super_admin' && userRole !== 'dev_manager') {
+        policiesQuery = policiesQuery.eq('branch_id', branchId);
+        clientsQuery = clientsQuery.eq('branch_id', branchId);
+        unifiedMetricsQuery = unifiedMetricsQuery.eq('branch_id', branchId);
+        targetsQuery = targetsQuery.eq('branch_id', branchId);
+      }
+
+      if (userRole === 'agent') {
+        policiesQuery = policiesQuery.eq('agent_id', userId);
+        clientsQuery = clientsQuery.eq('agent_id', userId);
+        unifiedMetricsQuery = unifiedMetricsQuery.eq('agent_id', userId);
+        targetsQuery = targetsQuery.eq('user_id', userId);
+      }
+
+      const [policiesRes, clientsRes, metricsRes, targetsRes] = await Promise.all([
+        policiesQuery, clientsQuery, unifiedMetricsQuery, targetsQuery
       ]);
 
-      if (policiesRes.error) throw new Error(policiesRes.error.message);
-      if (collectionsRes.error) throw new Error(collectionsRes.error.message);
-      if (installmentsRes.error) throw new Error(installmentsRes.error.message);
-
-      const policies = policiesRes.data || [];
-      const collections = collectionsRes.data || [];
-      const installments = installmentsRes.data || [];
-
-      const totalPremiums = policies.reduce((s, p: { annual_premium: number }) => s + Number(p.annual_premium), 0);
-      const totalCollected = collections.reduce((s, c: { amount: number }) => s + Number(c.amount), 0);
-
-      const now = new Date().toISOString().split('T')[0];
-      const thirtyDaysLater = new Date();
-      thirtyDaysLater.setDate(thirtyDaysLater.getDate() + 30);
-      const thirtyDaysStr = thirtyDaysLater.toISOString().split('T')[0];
-
-      const dueInstallments = (installments || []).filter((i: { status: string; due_date: string; amount: number }) => i.status === 'pending' && i.due_date <= now);
-      const overdueInstallments = (installments || []).filter((i: { status: string; amount: number }) => i.status === 'overdue');
-      const totalDue = dueInstallments.reduce((s, i: { amount: number }) => s + Number(i.amount), 0);
-      const totalOverdue = overdueInstallments.reduce((s, i: { amount: number }) => s + Number(i.amount), 0);
-
-      const activePolicies = (policies || []).filter((p: { status: string }) => p.status === 'active');
-      const expiringPolicies = (policies || []).filter((p: { status: string; created_at: string }) => {
-        const startDate = new Date(p.created_at);
-        const oneYearLater = new Date(startDate);
-        oneYearLater.setFullYear(oneYearLater.getFullYear() + 1);
-        return oneYearLater.toISOString().split('T')[0] <= thirtyDaysStr;
-      });
-
-      const policyStatusDist = Object.entries(POLICY_COLORS).map(([status, color]) => ({
-        name: POLICY_STATUS_LABELS[status as keyof typeof POLICY_STATUS_LABELS] || status,
-        value: (policies || []).filter((p: { status: string }) => p.status === status).length,
-        color,
-      }));
+      const metrics = metricsRes.data || [];
+      const targets = targetsRes.data || [];
+      
+      const totalNewBusiness = metrics.filter(m => m.is_new_business).reduce((s, m) => s + Number(m.amount), 0);
+      const totalFirstYearCollections = metrics.filter(m => !m.is_new_business).reduce((s, m) => s + Number(m.amount), 0);
+      
+      const monthlyMetrics = metrics.filter(m => m.collection_date >= monthStart && m.collection_date <= monthEnd);
+      const monthlyNewBusiness = monthlyMetrics.filter(m => m.is_new_business).reduce((s, m) => s + Number(m.amount), 0);
+      const monthlyFirstYearCollections = monthlyMetrics.filter(m => !m.is_new_business).reduce((s, m) => s + Number(m.amount), 0);
+      
+      const monthlyTarget = targets.reduce((s, t) => s + Number(t.target_amount), 0) || 0;
 
       setStats({
-        totalPremiums,
-        totalCollected,
-        totalDue,
-        totalOverdue,
+        totalNewBusiness,
+        totalFirstYearCollections,
+        totalProduction: totalNewBusiness + totalFirstYearCollections,
         clientCount: clientsRes.count || 0,
-        policyCount: policies.length,
-        activePolicyCount: activePolicies.length,
-        expiringPoliciesCount: expiringPolicies.length,
-        userCount: usersRes.count || 0,
-        collectionRate: totalPremiums > 0 ? (totalCollected / totalPremiums) * 100 : 0,
-        topAgents: [],
-        policyStatusDist,
+        policyCount: policiesRes.count || 0,
+        activePolicyCount: 0,
+        collectionRate: 0,
+        targetAchievement: monthlyTarget > 0 ? (monthlyNewBusiness / monthlyTarget) * 100 : 0,
+        monthlyNewBusiness,
+        monthlyFirstYearCollections,
+        monthlyTotal: monthlyNewBusiness + monthlyFirstYearCollections,
+        monthlyTarget
       });
 
-      setLastUpdated(new Date());
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'حدث خطأ غير معروف';
-      setStats(prev => ({ ...prev, error: message }));
-      console.error('Dashboard fetch error:', err);
+      if (['supervisor', 'team_leader', 'general_supervisor', 'dev_manager', 'super_admin'].includes(userRole)) {
+        await fetchManagerData(userId, userRole, monthStart, monthEnd, branchId);
+      }
+
+    } catch (err: any) {
+      console.error('Dashboard error:', err);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeBranch, profile]);
 
-  useEffect(() => {
-    fetchStats();
-  }, [fetchStats]);
+  const fetchManagerData = async (userId: string, role: string, monthStart: string, monthEnd: string, branchId?: string) => {
+    try {
+      const { data: subordinates } = await supabase
+        .from('profiles')
+        .select('id, full_name, role, manager_id, branch_id');
 
-  if (loading) {
-    return (
-      <>
-        <PageHeader
-          title="لوحة التحكم"
-          icon={LayoutDashboard}
-          description={profile ? `مرحباً ${profile.full_name}` : 'جاري التحميل...'}
-        />
-        <LoadingSpinner />
-      </>
-    );
-  }
+      if (!subordinates) return;
 
-  if (stats.error) {
-    return (
-      <>
-        <PageHeader
-          title="لوحة التحكم"
-          icon={LayoutDashboard}
-        />
-        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-6">
-          <div className="flex items-center gap-3">
-            <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400 flex-shrink-0" />
-            <div>
-              <h3 className="font-semibold text-red-900 dark:text-red-200">خطأ في تحميل البيانات</h3>
-              <p className="text-sm text-red-700 dark:text-red-300 mt-1">{stats.error}</p>
-            </div>
-          </div>
-          <button
-            onClick={() => fetchStats()}
-            className="mt-4 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium transition-colors"
-          >
-            إعادة المحاولة
-          </button>
-        </div>
-      </>
-    );
-  }
+      let mySubordinates = [];
+      if (role === 'team_leader') {
+        mySubordinates = subordinates.filter(s => s.manager_id === userId);
+      } else if (role === 'supervisor') {
+        const teamLeaders = subordinates.filter(s => s.manager_id === userId);
+        const agents = subordinates.filter(s => teamLeaders.some(tl => tl.id === s.manager_id));
+        mySubordinates = [...teamLeaders, ...agents];
+      } else if (role === 'general_supervisor') {
+        mySubordinates = subordinates.filter(s => s.branch_id === branchId);
+      } else {
+        mySubordinates = subordinates;
+      }
+
+      const { data: allMetrics } = await supabase
+        .from('unified_performance_metrics')
+        .select('*')
+        .eq('is_first_year_collection', true)
+        .gte('collection_date', monthStart)
+        .lte('collection_date', monthEnd);
+
+      const metrics = allMetrics || [];
+
+      const userStats = subordinates.map(user => {
+        const userMetrics = metrics.filter(m => m.agent_id === user.id);
+        const newBiz = userMetrics.filter(m => m.is_new_business).reduce((s, m) => s + Number(m.amount), 0);
+        const colls = userMetrics.filter(m => !m.is_new_business).reduce((s, m) => s + Number(m.amount), 0);
+        return { ...user, newBusiness: newBiz, collections: colls, total: newBiz + colls };
+      });
+
+      if (role === 'supervisor') {
+        const agents = userStats.filter(u => u.role === 'agent' && mySubordinates.some(s => s.id === u.id));
+        const leaders = userStats.filter(u => u.role === 'team_leader' && mySubordinates.some(s => s.id === u.id));
+        
+        setExtraStats({
+          topAgents: [...agents].sort((a, b) => b.newBusiness - a.newBusiness).slice(0, 5),
+          bottomAgents: [...agents].sort((a, b) => a.newBusiness - b.newBusiness).slice(0, 5),
+          topGroups: [...leaders].sort((a, b) => b.total - a.total).slice(0, 5),
+          bottomGroups: [...leaders].sort((a, b) => a.total - b.total).slice(0, 5),
+        });
+        setSubordinateStats(leaders);
+      } else if (role === 'general_supervisor') {
+        const agents = userStats.filter(u => u.role === 'agent' && u.branch_id === branchId);
+        const leaders = userStats.filter(u => u.role === 'team_leader' && u.branch_id === branchId);
+        const supervisors = userStats.filter(u => u.role === 'supervisor' && u.branch_id === branchId);
+
+        setExtraStats({
+          topAgents: [...agents].sort((a, b) => b.newBusiness - a.newBusiness).slice(0, 5),
+          bottomAgents: [...agents].sort((a, b) => a.newBusiness - b.newBusiness).slice(0, 5),
+          topLeaders: [...leaders].sort((a, b) => b.total - a.total).slice(0, 5),
+          topSupervisors: [...supervisors].sort((a, b) => b.total - a.total).slice(0, 5),
+        });
+        setSubordinateStats(supervisors);
+      } else if (role === 'dev_manager' || role === 'super_admin') {
+        const agents = userStats.filter(u => u.role === 'agent');
+        const leaders = userStats.filter(u => u.role === 'team_leader');
+        const supervisors = userStats.filter(u => u.role === 'supervisor');
+        const genSupervisors = userStats.filter(u => u.role === 'general_supervisor');
+
+        const { data: branches } = await supabase.from('branches').select('id, name');
+        const branchComparison = (branches || []).map(b => {
+          const bMetrics = metrics.filter(m => m.branch_id === b.id);
+          const newBiz = bMetrics.filter(m => m.is_new_business).reduce((s, m) => s + Number(m.amount), 0);
+          const colls = bMetrics.filter(m => !m.is_new_business).reduce((s, m) => s + Number(m.amount), 0);
+          return { name: b.name, newBusiness: newBiz, collections: colls, total: newBiz + colls };
+        });
+
+        setExtraStats({
+          topAgents: [...agents].sort((a, b) => b.newBusiness - a.newBusiness).slice(0, 5),
+          topLeaders: [...leaders].sort((a, b) => b.total - a.total).slice(0, 5),
+          topSupervisors: [...supervisors].sort((a, b) => b.total - a.total).slice(0, 5),
+          topGenSupervisors: [...genSupervisors].sort((a, b) => b.total - a.total).slice(0, 5),
+          branchComparison: branchComparison.sort((a, b) => b.total - a.total),
+        });
+      } else if (role === 'team_leader') {
+        const agents = userStats.filter(u => u.manager_id === userId);
+        setSubordinateStats(agents);
+      }
+
+    } catch (err) {
+      console.error('Error fetching manager data:', err);
+    }
+  };
+
+  useEffect(() => { fetchStats(); }, [fetchStats]);
+
+  if (loading) return <LoadingSpinner />;
 
   return (
-    <div>
+    <div className="space-y-8 pb-12 animate-in fade-in duration-500">
       <PageHeader
-        title="لوحة التحكم"
+        title="لوحة التحكم الرئيسية"
+        subtitle="Sales & Collection Management System"
         icon={LayoutDashboard}
-        description={profile ? `مرحباً ${profile.full_name}` : ''}
         actions={
-          <button
-            onClick={() => fetchStats()}
-            className="p-2 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors"
-            title="تحديث البيانات"
+          <button 
+            onClick={() => fetchStats()} 
+            className="flex items-center gap-2 px-4 py-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-700 transition-all shadow-sm font-bold text-sm text-slate-700 dark:text-slate-300 group"
           >
-            <RefreshCw className="w-5 h-5 text-slate-600 dark:text-slate-400" />
+            <RefreshCw className="w-4 h-4 group-hover:rotate-180 transition-transform duration-500" />
+            تحديث البيانات
           </button>
         }
       />
 
-      {lastUpdated && (
-        <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">
-          آخر تحديث: {lastUpdated.toLocaleTimeString('ar-EG')}
-        </p>
-      )}
-
-      {/* KPI Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <KPICard
-          label="إجمالي الأقساط"
-          value={formatCurrency(stats.totalPremiums)}
-          icon={TrendingUp}
-          color="blue"
+      {/* Main KPI Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <StatCard 
+          title="الهدف الشهري" 
+          value={formatCurrency(stats.monthlyTarget)} 
+          icon={Target} 
+          color="primary"
+          subtitle="المستهدف لهذا الشهر"
         />
-        <KPICard
-          label="إجمالي التحصيل"
-          value={formatCurrency(stats.totalCollected)}
-          icon={Wallet}
-          color="emerald"
+        <StatCard 
+          title="المحقق الفعلي" 
+          value={formatCurrency(stats.monthlyTotal)} 
+          icon={TrendingUp} 
+          color="success"
+          trend={stats.targetAchievement}
+          trendLabel="نسبة الإنجاز"
         />
-        <KPICard
-          label="المستحق الحالي"
-          value={formatCurrency(stats.totalDue)}
-          icon={Clock}
-          color="amber"
+        <StatCard 
+          title="إجمالي الجديد" 
+          value={formatCurrency(stats.monthlyNewBusiness)} 
+          icon={Award} 
+          color="warning"
+          subtitle="إنتاج الشهر الحالي"
         />
-        <KPICard
-          label="المتأخر"
-          value={formatCurrency(stats.totalOverdue)}
-          icon={AlertCircle}
-          color="red"
+        <StatCard 
+          title="إجمالي التحصيل" 
+          value={formatCurrency(stats.monthlyFirstYearCollections)} 
+          icon={Wallet} 
+          color="secondary"
+          subtitle="تحصيل السنة الأولى"
         />
       </div>
 
-      {/* Summary Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
-        <StatBox label="العملاء" value={formatNumber(stats.clientCount)} icon={UserCircle} />
-        <StatBox label="الوثائق" value={formatNumber(stats.policyCount)} icon={FileText} />
-        <StatBox label="الوثائق السارية" value={formatNumber(stats.activePolicyCount)} icon={Award} />
-        <StatBox label="ينتهي قريباً" value={formatNumber(stats.expiringPoliciesCount)} icon={Clock} />
-        <StatBox label="المستخدمين" value={formatNumber(stats.userCount)} icon={Users} />
-        <StatBox label="معدل التحصيل" value={formatPercent(stats.collectionRate)} icon={Target} />
+      {/* Role-specific content */}
+      <div className="space-y-8">
+        {profile?.role === 'agent' && <AgentDashboard stats={stats} />}
+        {profile?.role === 'team_leader' && <TeamLeaderDashboard stats={stats} subordinateStats={subordinateStats} />}
+        {profile?.role === 'supervisor' && <SupervisorDashboard stats={stats} subordinateStats={subordinateStats} extraStats={extraStats} />}
+        {profile?.role === 'general_supervisor' && <GeneralSupervisorDashboard stats={stats} subordinateStats={subordinateStats} extraStats={extraStats} />}
+        {profile?.role === 'dev_manager' && <DevManagerDashboard stats={stats} extraStats={extraStats} />}
+        {profile?.role === 'super_admin' && <SuperAdminDashboard stats={stats} extraStats={extraStats} />}
       </div>
+    </div>
+  );
+}
 
-      {/* Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6">
-          <h3 className="font-semibold text-slate-900 dark:text-white mb-4">توزيع حالات الوثائق</h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <PieChart>
-              <Pie
-                data={stats.policyStatusDist.filter(item => item.value > 0)}
-                cx="50%"
-                cy="50%"
-                labelLine={false}
-                label={renderCustomLabel}
-                outerRadius={100}
-                fill="#8884d8"
-                dataKey="value"
-              >
-                {stats.policyStatusDist.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={entry.color} />
-                ))}
-              </Pie>
-              <Tooltip formatter={(value: any) => formatNumber(Number(value || 0))} />
-            </PieChart>
-          </ResponsiveContainer>
+// Visual Components
+function StatCard({ title, value, icon: Icon, color, trend, trendLabel, subtitle }: any) {
+  const colorStyles: any = {
+    primary: 'bg-primary/10 text-primary border-primary/20',
+    success: 'bg-success/10 text-success border-success/20',
+    warning: 'bg-warning/10 text-warning border-warning/20',
+    secondary: 'bg-secondary/10 text-secondary border-secondary/20',
+    danger: 'bg-danger/10 text-danger border-danger/20',
+  };
+
+  return (
+    <div className="bg-white dark:bg-slate-900 p-6 rounded-[2rem] border border-slate-100 dark:border-slate-800 shadow-crm hover:shadow-crm-lg transition-all duration-300 group">
+      <div className="flex justify-between items-start mb-4">
+        <div className={`p-3.5 rounded-2xl border ${colorStyles[color] || colorStyles.primary} group-hover:scale-110 transition-transform duration-300`}>
+          <Icon className="w-6 h-6" />
         </div>
+        {trend !== undefined && (
+          <div className="flex flex-col items-end">
+            <div className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-black ${trend >= 100 ? 'bg-success/10 text-success' : 'bg-primary/10 text-primary'}`}>
+              {trend >= 100 ? <ArrowUpRight className="w-3 h-3" /> : <TrendingUp className="w-3 h-3" />}
+              {formatPercent(trend)}
+            </div>
+            <span className="text-[10px] font-bold text-slate-400 mt-1 uppercase tracking-wider">{trendLabel}</span>
+          </div>
+        )}
+      </div>
+      <div>
+        <p className="text-sm font-bold text-slate-500 dark:text-slate-400 mb-1">{title}</p>
+        <p className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">{value}</p>
+        {subtitle && <p className="text-[11px] font-medium text-slate-400 mt-2">{subtitle}</p>}
+      </div>
+    </div>
+  );
+}
 
-        <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6">
-          <h3 className="font-semibold text-slate-900 dark:text-white mb-4">ملخص التحصيل</h3>
-          <div className="space-y-4">
+function RankingTable({ title, data, columns, icon: Icon = Award }: { title: string, data: any[], columns: { key: string, label: string, format?: any }[], icon?: any }) {
+  return (
+    <div className="bg-white dark:bg-slate-900 rounded-[2.5rem] border border-slate-100 dark:border-slate-800 shadow-crm overflow-hidden">
+      <div className="px-8 py-6 border-b border-slate-50 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/50">
+        <h3 className="text-base font-black text-slate-900 dark:text-white flex items-center gap-3">
+          <div className="p-2 bg-white dark:bg-slate-900 rounded-lg shadow-sm border border-slate-100 dark:border-slate-800">
+            <Icon className="w-5 h-5 text-primary" />
+          </div>
+          {title}
+        </h3>
+        <button className="text-xs font-bold text-primary hover:underline">عرض الكل</button>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-right">
+          <thead>
+            <tr className="bg-white dark:bg-slate-900">
+              <th className="px-8 py-4 text-[11px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-50 dark:border-slate-800">#</th>
+              {columns.map(col => (
+                <th key={col.key} className="px-6 py-4 text-[11px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-50 dark:border-slate-800">{col.label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-50 dark:divide-slate-800">
+            {data.map((item, idx) => (
+              <tr key={item.id || idx} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors group">
+                <td className="px-8 py-4">
+                  <span className={`flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-black ${idx === 0 ? 'bg-warning/20 text-warning' : idx === 1 ? 'bg-slate-200 text-slate-600' : idx === 2 ? 'bg-orange-100 text-orange-600' : 'bg-slate-50 text-slate-400'}`}>
+                    {idx + 1}
+                  </span>
+                </td>
+                {columns.map(col => (
+                  <td key={col.key} className="px-6 py-4">
+                    <span className={`text-sm ${col.key === 'total' || col.key === 'newBusiness' ? 'font-black text-slate-900 dark:text-white' : 'font-bold text-slate-600 dark:text-slate-400'}`}>
+                      {col.format ? col.format(item[col.key]) : item[col.key]}
+                    </span>
+                  </td>
+                ))}
+              </tr>
+            ))}
+            {data.length === 0 && (
+              <tr>
+                <td colSpan={columns.length + 1} className="px-8 py-12 text-center">
+                  <div className="flex flex-col items-center gap-2 opacity-30">
+                    <BarChart3 className="w-12 h-12" />
+                    <p className="text-sm font-bold">لا توجد بيانات متاحة حالياً</p>
+                  </div>
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// Role Specific Dashboards
+function AgentDashboard({ stats }: { stats: DashboardStats }) {
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+      <div className="bg-primary/5 rounded-[2.5rem] p-8 border border-primary/10 relative overflow-hidden group">
+        <div className="absolute -top-12 -left-12 w-48 h-48 bg-primary/10 rounded-full blur-3xl group-hover:bg-primary/20 transition-all duration-500"></div>
+        <div className="relative z-10">
+          <div className="flex items-center gap-4 mb-6">
+            <div className="p-3 bg-primary text-white rounded-2xl shadow-lg">
+              <ShieldCheck className="w-6 h-6" />
+            </div>
             <div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm text-slate-600 dark:text-slate-400">معدل التحصيل</span>
-                <span className="font-semibold text-slate-900 dark:text-white">{formatPercent(stats.collectionRate)}</span>
-              </div>
-              <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2">
-                <div
-                  className="bg-emerald-500 h-2 rounded-full transition-all duration-500"
-                  style={{ width: `${Math.min(stats.collectionRate, 100)}%` }}
-                />
-              </div>
+              <h4 className="text-lg font-black text-primary">نظرة عامة على أدائك</h4>
+              <p className="text-xs font-bold text-primary/60">تحليلات السنة التأمينية الأولى فقط</p>
             </div>
-            <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-200 dark:border-slate-700">
-              <div>
-                <p className="text-xs text-slate-500 dark:text-slate-400">المستحق الحالي</p>
-                <p className="font-bold text-slate-900 dark:text-white text-lg">{formatCurrency(stats.totalDue)}</p>
-              </div>
-              <div>
-                <p className="text-xs text-slate-500 dark:text-slate-400">المتأخر</p>
-                <p className="font-bold text-red-600 dark:text-red-400 text-lg">{formatCurrency(stats.totalOverdue)}</p>
-              </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur p-5 rounded-2xl border border-primary/5 shadow-sm">
+              <p className="text-[11px] font-bold text-slate-400 mb-1">إجمالي الإنتاج</p>
+              <p className="text-xl font-black text-slate-900 dark:text-white">{formatCurrency(stats.totalProduction)}</p>
             </div>
+            <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur p-5 rounded-2xl border border-primary/5 shadow-sm">
+              <p className="text-[11px] font-bold text-slate-400 mb-1">عدد الوثائق</p>
+              <p className="text-xl font-black text-slate-900 dark:text-white">{stats.policyCount}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="bg-white dark:bg-slate-900 rounded-[2.5rem] p-8 border border-slate-100 dark:border-slate-800 shadow-crm">
+        <h4 className="text-base font-black text-slate-900 dark:text-white mb-6 flex items-center gap-3">
+          <div className="w-2 h-6 bg-primary rounded-full"></div>
+          إحصائيات العملاء
+        </h4>
+        <div className="space-y-6">
+          <div className="flex items-center justify-between p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-white dark:bg-slate-900 rounded-lg shadow-sm">
+                <Users className="w-5 h-5 text-primary" />
+              </div>
+              <span className="text-sm font-bold text-slate-600 dark:text-slate-400">إجمالي العملاء</span>
+            </div>
+            <span className="text-lg font-black text-slate-900 dark:text-white">{stats.clientCount}</span>
+          </div>
+          <div className="flex items-center justify-between p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-white dark:bg-slate-900 rounded-lg shadow-sm">
+                <FileText className="w-5 h-5 text-secondary" />
+              </div>
+              <span className="text-sm font-bold text-slate-600 dark:text-slate-400">الوثائق النشطة</span>
+            </div>
+            <span className="text-lg font-black text-slate-900 dark:text-white">{stats.policyCount}</span>
           </div>
         </div>
       </div>
@@ -282,59 +423,58 @@ export default function Dashboard() {
   );
 }
 
-function KPICard({
-  label,
-  value,
-  icon: Icon,
-  color,
-}: {
-  label: string;
-  value: string;
-  icon: React.ElementType;
-  color: 'blue' | 'emerald' | 'amber' | 'red';
-}) {
-  const colors = {
-    blue: 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400',
-    emerald: 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400',
-    amber: 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400',
-    red: 'bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400',
-  };
-
+function TeamLeaderDashboard({ subordinateStats }: { stats: DashboardStats, subordinateStats: any[] }) {
   return (
-    <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-sm text-slate-600 dark:text-slate-400 mb-1">{label}</p>
-          <p className="text-2xl font-bold text-slate-900 dark:text-white">{value}</p>
-        </div>
-        <div className={`p-3 rounded-lg ${colors[color]}`}>
-          <Icon className="w-6 h-6" />
-        </div>
+    <RankingTable 
+      title="ترتيب أداء الوكلاء (مجموعتك)" 
+      data={subordinateStats} 
+      columns={[
+        { key: 'full_name', label: 'الوكيل' },
+        { key: 'newBusiness', label: 'الجديد', format: formatCurrency },
+        { key: 'collections', label: 'التحصيل', format: formatCurrency },
+        { key: 'total', label: 'الإجمالي', format: formatCurrency }
+      ]}
+    />
+  );
+}
+
+function SupervisorDashboard({ extraStats }: { stats: DashboardStats, subordinateStats: any[], extraStats: any }) {
+  return (
+    <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
+      <RankingTable title="أعلى الوكلاء إنتاجاً" data={extraStats.topAgents || []} columns={[{ key: 'full_name', label: 'الوكيل' }, { key: 'newBusiness', label: 'الجديد', format: formatCurrency }]} />
+      <RankingTable title="أعلى المجموعات أداءً" data={extraStats.topGroups || []} columns={[{ key: 'full_name', label: 'رئيس المجموعة' }, { key: 'total', label: 'الإجمالي', format: formatCurrency }]} />
+      <RankingTable title="أقل الوكلاء إنتاجاً" data={extraStats.bottomAgents || []} columns={[{ key: 'full_name', label: 'الوكيل' }, { key: 'newBusiness', label: 'الجديد', format: formatCurrency }]} />
+      <RankingTable title="أقل المجموعات أداءً" data={extraStats.bottomGroups || []} columns={[{ key: 'full_name', label: 'رئيس المجموعة' }, { key: 'total', label: 'الإجمالي', format: formatCurrency }]} />
+    </div>
+  );
+}
+
+function GeneralSupervisorDashboard({ extraStats }: { stats: DashboardStats, subordinateStats: any[], extraStats: any }) {
+  return (
+    <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
+      <RankingTable title="أعلى وكلاء الفرع" data={extraStats.topAgents || []} columns={[{ key: 'full_name', label: 'الوكيل' }, { key: 'newBusiness', label: 'الجديد', format: formatCurrency }]} />
+      <RankingTable title="أداء المراقبين" data={extraStats.topSupervisors || []} columns={[{ key: 'full_name', label: 'المراقب' }, { key: 'total', label: 'الإجمالي', format: formatCurrency }]} />
+      <RankingTable title="أداء رؤساء المجموعات" data={extraStats.topLeaders || []} columns={[{ key: 'full_name', label: 'رئيس المجموعة' }, { key: 'total', label: 'الإجمالي', format: formatCurrency }]} />
+      <div className="bg-primary/5 rounded-[2.5rem] p-8 border border-primary/10 flex flex-col justify-center items-center text-center">
+        <PieChart className="w-16 h-16 text-primary mb-4 opacity-20" />
+        <h4 className="text-xl font-black text-primary mb-2">توزيع الإنتاج والتحصيل</h4>
+        <p className="text-sm font-bold text-primary/60">سيتم إضافة الرسوم البيانية التفصيلية هنا قريباً</p>
       </div>
     </div>
   );
 }
 
-function StatBox({
-  label,
-  value,
-  icon: Icon,
-}: {
-  label: string;
-  value: string;
-  icon: React.ElementType;
-}) {
+function DevManagerDashboard({ extraStats }: { stats: DashboardStats, extraStats: any }) {
   return (
-    <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 p-4 text-center hover:shadow-md transition-shadow">
-      <Icon className="w-5 h-5 text-slate-400 dark:text-slate-500 mx-auto mb-2" />
-      <p className="text-xs text-slate-600 dark:text-slate-400 mb-1">{label}</p>
-      <p className="font-bold text-slate-900 dark:text-white">{value}</p>
+    <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
+      <RankingTable title="مقارنة أداء الفروع" data={extraStats.branchComparison || []} columns={[{ key: 'name', label: 'الفرع' }, { key: 'newBusiness', label: 'الجديد', format: formatCurrency }, { key: 'total', label: 'الإجمالي', format: formatCurrency }]} icon={Building2} />
+      <RankingTable title="أعلى المشرفين العامين" data={extraStats.topGenSupervisors || []} columns={[{ key: 'full_name', label: 'المشرف العام' }, { key: 'total', label: 'الإجمالي', format: formatCurrency }]} />
+      <RankingTable title="أعلى المراقبين" data={extraStats.topSupervisors || []} columns={[{ key: 'full_name', label: 'المراقب' }, { key: 'total', label: 'الإجمالي', format: formatCurrency }]} />
+      <RankingTable title="أعلى الوكلاء" data={extraStats.topAgents || []} columns={[{ key: 'full_name', label: 'الوكيل' }, { key: 'total', label: 'الإجمالي', format: formatCurrency }]} />
     </div>
   );
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function renderCustomLabel(props: any) {
-  const { name, value } = props;
-  return value > 0 ? name : '';
+function SuperAdminDashboard({ extraStats }: { stats: DashboardStats, extraStats: any }) {
+  return <DevManagerDashboard stats={extraStats} extraStats={extraStats} />;
 }

@@ -1,7 +1,12 @@
 // ============================================================
 // Insurance CRM Pro - Types & Constants
-// Roles aligned: super_admin > dev_manager > general_supervisor
-//                > supervisor > team_leader > agent
+// الأدوار الرسمية الستة المعتمدة في النظام (مصدر الحقيقة الوحيد):
+// super_admin > dev_manager > general_supervisor > supervisor
+//   > team_leader (رئيس مجموعة) > agent
+// ملاحظة: تم حذف 'branch_manager' كدور مستخدم مستقل لأنه لم يكن من
+// ضمن الأدوار الستة المطلوبة، ولم يكن مستخدَماً فعلياً في قاعدة البيانات.
+// أعمدة policies.branch_manager_id / team_leader_id / supervisor_id
+// (مراجع بيانات داخل جدول الوثائق) لم تُلمس لأنها خارج نطاق نظام المستخدمين.
 // ============================================================
 
 export type UserRole =
@@ -21,12 +26,12 @@ export type MaritalStatus = 'single' | 'married' | 'divorced' | 'widowed';
 export type TargetPeriod = 'monthly' | 'quarterly' | 'semi_annual' | 'annual';
 
 export const ROLE_LABELS: Record<UserRole, string> = {
-  super_admin: 'مسؤول النظام',
-  dev_manager: 'مدير التطوير',
-  general_supervisor: 'مشرف عام',
-  supervisor: 'مشرف',
-  team_leader: 'قائد فريق',
-  agent: 'وكيل',
+  super_admin: 'Super Admin',
+  dev_manager: 'مدير تطوير',
+  general_supervisor: 'مراقب عام',
+  supervisor: 'مراقب',
+  team_leader: 'رئيس مجموعة',
+  agent: 'Agent',
 };
 
 export const ROLE_LEVELS: Record<UserRole, number> = {
@@ -89,6 +94,38 @@ export const TARGET_PERIOD_LABELS: Record<TargetPeriod, string> = {
   annual: 'سنوي',
 };
 
+export interface Branch {
+  id: string;
+  name: string;
+  code: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InsuranceGroup {
+  id: string;
+  name: string;
+  manager_id: string | null;
+  branch_id: string | null;
+  created_at: string;
+  manager?: Profile;
+  branch?: Branch;
+}
+
+export interface UserBranchAccess {
+  id: string;
+  user_id: string;
+  branch_id: string;
+  role: UserRole;
+  is_active: boolean;
+  assigned_at: string | null;
+  expires_at: string | null;
+  updated_at: string | null;
+  created_at: string;
+  branch?: Branch;
+}
+
 export interface Profile {
   id: string;
   full_name: string;
@@ -96,9 +133,13 @@ export interface Profile {
   phone: string | null;
   role: UserRole;
   manager_id: string | null;
+  /** العمود الفعلي في قاعدة البيانات هو active_branch_id (لا يوجد عمود branch_id على profiles) */
+  active_branch_id: string | null;
   is_active: boolean;
   created_at: string;
   updated_at: string;
+  branch?: Branch;
+  accessible_branches?: Branch[];
 }
 
 export interface Client {
@@ -113,9 +154,11 @@ export interface Client {
   marital_status: MaritalStatus | null;
   notes: string | null;
   agent_id: string;
+  branch_id: string | null;
   created_at: string;
   updated_at: string;
   agent?: Profile;
+  branch?: Branch;
 }
 
 export interface Policy {
@@ -123,19 +166,32 @@ export interface Policy {
   policy_number: string;
   client_id: string;
   agent_id: string;
+  branch_id: string | null;
+  group_id: string | null;
+  product_id: string | null;
   product: string;
-  insurance_company: string;
   coverage_amount: number;
   annual_premium: number;
   issue_date: string;
-  start_date: string;
   status: PolicyStatus;
   payment_frequency: PaymentFrequency;
+  payment_method: string | null;
+  team_leader_id: string | null;
+  supervisor_id: string | null;
+  branch_manager_id: string | null;
   created_at: string;
   updated_at: string;
   client?: Client;
   agent?: Profile;
+  branch?: Branch;
+  group?: InsuranceGroup;
   installments?: Installment[];
+  first_year_start?: string;
+  first_year_end?: string;
+  has_new_business_counted?: boolean;
+  team_leader?: Profile;
+  supervisor?: Profile;
+  branch_manager?: Profile;
 }
 
 export interface Installment {
@@ -151,23 +207,30 @@ export interface Installment {
   policy?: Policy;
 }
 
+export type CollectionCategory = 'new' | 'first_year' | 'renewal';
+
 export interface Collection {
   id: string;
   installment_id: string;
   policy_id: string;
   amount: number;
   collection_date: string;
+  collection_category: CollectionCategory;
+  is_new_business: boolean;
   receipt_number: string | null;
   collected_by: string;
+  branch_id: string | null;
   notes: string | null;
   created_at: string;
   policy?: Policy;
   collector?: Profile;
+  branch?: Branch;
 }
 
 export interface Target {
   id: string;
   user_id: string;
+  branch_id: string | null;
   period_type: TargetPeriod;
   year: number;
   period_number: number;
@@ -175,6 +238,7 @@ export interface Target {
   created_at: string;
   updated_at: string;
   user?: Profile;
+  branch?: Branch;
 }
 
 export interface Task {
@@ -185,6 +249,7 @@ export interface Task {
   created_by: string;
   client_id: string | null;
   policy_id: string | null;
+  branch_id: string | null;
   due_date: string;
   status: TaskStatus;
   priority: TaskPriority;
@@ -192,6 +257,7 @@ export interface Task {
   updated_at: string;
   assignee?: Profile;
   creator?: Profile;
+  branch?: Branch;
 }
 
 export interface Notification {
@@ -203,7 +269,9 @@ export interface Notification {
   is_read: boolean;
   related_entity_type: string | null;
   related_entity_id: string | null;
+  branch_id: string | null;
   created_at: string;
+  branch?: Branch;
 }
 
 export interface AuditLog {
@@ -221,11 +289,13 @@ export interface MonthClosing {
   id: string;
   month: number;
   year: number;
+  branch_id: string | null;
   closed_by: string;
   closed_at: string;
   total_premiums: number;
   total_collections: number;
   collection_rate: number;
+  branch?: Branch;
 }
 
 export interface SystemSettings {

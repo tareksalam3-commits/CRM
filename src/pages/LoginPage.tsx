@@ -1,8 +1,6 @@
-// BUG FIX #5: Removed public self-registration form.
-// The system uses admin-created accounts only (manager creates via UserManagement).
 import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { Shield, Mail, Lock, Eye, EyeOff } from 'lucide-react';
+import { Shield, Mail, Lock, Eye, EyeOff, AlertTriangle, ArrowLeft } from 'lucide-react';
 
 export default function LoginPage() {
   const { signIn } = useAuth();
@@ -16,100 +14,151 @@ export default function LoginPage() {
     e.preventDefault();
     setError('');
     setLoading(true);
-    const { error } = await signIn(email, password);
-    if (error) {
-      // Friendly Arabic error messages
-      if (error.includes('Invalid login credentials')) {
+
+    const { error: signInError } = await signIn(email, password);
+
+    if (signInError) {
+      if (signInError.includes('Invalid login credentials')) {
         setError('البريد الإلكتروني أو كلمة المرور غير صحيحة');
-      } else if (error.includes('Email not confirmed')) {
+      } else if (signInError.includes('Email not confirmed')) {
         setError('يرجى تأكيد البريد الإلكتروني أولاً');
-      } else if (error.includes('Too many requests')) {
+      } else if (signInError.includes('Too many requests')) {
         setError('محاولات كثيرة، يرجى الانتظار قليلاً');
       } else {
-        setError(error);
+        setError(signInError);
       }
     }
+
     setLoading(false);
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-blue-50 dark:from-slate-900 dark:to-slate-800 p-4">
-      <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-blue-600 text-white mb-4 shadow-lg shadow-blue-600/30">
-            <Shield className="w-8 h-8" />
+    <div className="min-h-screen flex items-center justify-center bg-background dark:bg-slate-950 p-4 relative overflow-hidden">
+      {/* Decorative Background Elements */}
+      <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-primary/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
+      <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-secondary/5 rounded-full blur-3xl translate-y-1/2 -translate-x-1/2"></div>
+
+      <div className="w-full max-w-lg relative z-10 animate-in fade-in slide-in-from-bottom-8 duration-700">
+        <div className="text-center mb-10">
+          <div className="inline-flex items-center justify-center w-20 h-20 rounded-[2rem] bg-primary text-white mb-6 shadow-crm-lg transform hover:rotate-12 transition-transform duration-500">
+            <Shield className="w-10 h-10" />
           </div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Insurance CRM Pro</h1>
-          <p className="text-slate-500 dark:text-slate-400 mt-2">نظام إدارة الإنتاج والتحصيل</p>
+          <h1 className="text-3xl md:text-4xl font-black text-slate-900 dark:text-white tracking-tight mb-2">
+            Insurance CRM
+          </h1>
+          <p className="text-sm font-bold text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em]">
+            Sales & Collection Management
+          </p>
         </div>
 
-        <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl shadow-slate-200/50 dark:shadow-slate-900/50 p-8 border border-slate-100 dark:border-slate-700">
-          <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-6 text-center">
-            تسجيل الدخول
-          </h2>
+        <div className="bg-white dark:bg-slate-900 rounded-[3rem] shadow-crm-lg p-10 md:p-12 border border-slate-100 dark:border-slate-800">
+          <div className="mb-10">
+            <h2 className="text-2xl font-black text-slate-900 dark:text-white mb-2">
+              تسجيل الدخول
+            </h2>
+            <p className="text-sm font-bold text-slate-400">يرجى إدخال بيانات الاعتماد الخاصة بك للوصول للنظام</p>
+          </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">البريد الإلكتروني</label>
-              <div className="relative">
-                <Mail className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+          {error && (
+            <div className="mb-8 p-4 bg-danger/10 border border-danger/20 rounded-2xl text-danger text-sm font-bold flex items-start gap-3 animate-in shake duration-500">
+              <AlertTriangle className="w-5 h-5 flex-shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit} className="space-y-6">
+            <div className="space-y-2">
+              <label className="text-xs font-black text-slate-500 uppercase tracking-widest mr-1">البريد الإلكتروني</label>
+              <div className="relative group">
+                <Mail className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 group-focus-within:text-primary transition-colors" />
                 <input
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full pr-10 pl-4 py-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                  placeholder="admin@example.com"
+                  className="w-full pr-12 pl-4 py-4 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary transition-all font-bold"
+                  placeholder="name@company.com"
                   required
                   dir="ltr"
-                  autoComplete="email"
                 />
               </div>
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">كلمة المرور</label>
-              <div className="relative">
-                <Lock className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+            <div className="space-y-2">
+              <label className="text-xs font-black text-slate-500 uppercase tracking-widest mr-1">كلمة المرور</label>
+              <div className="relative group">
+                <Lock className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 group-focus-within:text-primary transition-colors" />
                 <input
                   type={showPassword ? 'text' : 'password'}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pr-10 pl-10 py-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                  className="w-full pr-12 pl-12 py-4 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary transition-all font-bold"
                   placeholder="••••••••"
                   required
                   dir="ltr"
-                  autoComplete="current-password"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-primary transition-colors"
                 >
                   {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                 </button>
               </div>
             </div>
 
-            {error && (
-              <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl text-red-700 dark:text-red-400 text-sm">
-                {error}
-              </div>
-            )}
-
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium rounded-xl shadow-lg shadow-blue-600/30 hover:shadow-blue-600/40 transition-all duration-200 transform hover:scale-[1.02] active:scale-[0.98]"
+              className="w-full py-4 bg-primary hover:bg-primary-dark disabled:opacity-50 text-white font-black rounded-2xl shadow-crm-lg hover:shadow-crm transition-all duration-300 flex items-center justify-center gap-3 group"
             >
-              {loading ? 'جاري التحميل...' : 'تسجيل الدخول'}
+              {loading ? (
+                <Loader2 className="w-5 h-5 animate-spin" />
+              ) : (
+                <>
+                  <span>تسجيل الدخول</span>
+                  <ArrowLeft className="w-5 h-5 group-hover:-translate-x-2 transition-transform" />
+                </>
+              )}
             </button>
           </form>
 
-          <p className="mt-6 text-center text-xs text-slate-400 dark:text-slate-500">
-            للحصول على حساب، تواصل مع مدير النظام
-          </p>
+          <div className="mt-10 pt-10 border-t border-slate-50 dark:border-slate-800 text-center">
+            <p className="text-xs font-bold text-slate-400">
+              للحصول على حساب أو استعادة كلمة المرور، يرجى التواصل مع <span className="text-primary">مدير النظام</span>
+            </p>
+          </div>
         </div>
+        
+        <p className="mt-8 text-center text-[10px] font-black text-slate-400 uppercase tracking-[0.3em]">
+          &copy; 2026 Insurance CRM System
+        </p>
       </div>
     </div>
+  );
+}
+
+function Loader2(props: any) {
+  return (
+    <svg
+      {...props}
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M12 2v4" />
+      <path d="m16.2 7.8 2.9-2.9" />
+      <path d="M18 12h4" />
+      <path d="m16.2 16.2 2.9 2.9" />
+      <path d="M12 18v4" />
+      <path d="m4.9 19.1 2.9-2.9" />
+      <path d="M2 12h4" />
+      <path d="m4.9 4.9 2.9 2.9" />
+    </svg>
   );
 }

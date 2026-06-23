@@ -3,18 +3,25 @@
 -- Migration Date: 2026-06-18
 -- ================================================================
 
--- Create audit_logs table
-CREATE TABLE IF NOT EXISTS audit_logs (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id uuid NOT NULL REFERENCES profiles(id) ON DELETE RESTRICT,
-  action varchar(50) NOT NULL,
-  entity_type varchar(50) NOT NULL,
-  entity_id uuid NOT NULL,
-  changes jsonb,
-  created_at timestamp with time zone DEFAULT now()
-);
+-- Ensure audit_logs table has all required columns and proper constraints
+DO $$ 
+BEGIN
+  -- Check if entity_type exists, if not the table might be empty or in old state
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='audit_logs' AND column_name='entity_type') THEN
+    -- This shouldn't happen if 20260612050353 ran, but let's be safe
+    ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS entity_type text NOT NULL DEFAULT 'unknown';
+  END IF;
 
--- Create indexes for audit_logs
+  -- Add changes column if it doesn't exist (it was old_data/new_data before)
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='audit_logs' AND column_name='changes') THEN
+    ALTER TABLE audit_logs ADD COLUMN changes jsonb;
+  END IF;
+
+  -- Ensure entity_id is NOT NULL if that's the new requirement
+  ALTER TABLE audit_logs ALTER COLUMN entity_id SET NOT NULL;
+END $$;
+
+-- Create indexes for audit_logs (using existing or new column names)
 CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON audit_logs(entity_type, entity_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at);
@@ -41,7 +48,7 @@ CREATE INDEX IF NOT EXISTS idx_month_closings_closed_by ON month_closings(closed
 -- RLS for audit_logs (read-only for authorized users)
 ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "audit_logs_select" ON audit_logs
+DROP POLICY IF EXISTS "audit_logs_select" ON audit_logs; DROP POLICY IF EXISTS "audit_logs_select" ON audit_logs; CREATE POLICY "audit_logs_select" ON audit_logs
   FOR SELECT TO authenticated
   USING (
     user_id = auth.uid()
@@ -52,14 +59,14 @@ CREATE POLICY "audit_logs_select" ON audit_logs
 -- RLS for month_closings
 ALTER TABLE month_closings ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "month_closings_select" ON month_closings
+DROP POLICY IF EXISTS "month_closings_select" ON month_closings; CREATE POLICY "month_closings_select" ON month_closings
   FOR SELECT TO authenticated
   USING (
     closed_by = auth.uid()
     OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('super_admin', 'dev_manager'))
   );
 
-CREATE POLICY "month_closings_insert" ON month_closings
+DROP POLICY IF EXISTS "month_closings_insert" ON month_closings; CREATE POLICY "month_closings_insert" ON month_closings
   FOR INSERT TO authenticated
   WITH CHECK (
     EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('super_admin', 'dev_manager'))
@@ -76,11 +83,11 @@ CREATE TABLE IF NOT EXISTS system_settings (
 
 ALTER TABLE system_settings ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "system_settings_select" ON system_settings
+DROP POLICY IF EXISTS "system_settings_select" ON system_settings; CREATE POLICY "system_settings_select" ON system_settings
   FOR SELECT TO authenticated
   USING (true);
 
-CREATE POLICY "system_settings_update" ON system_settings
+DROP POLICY IF EXISTS "system_settings_update" ON system_settings; CREATE POLICY "system_settings_update" ON system_settings
   FOR UPDATE TO authenticated
   USING (
     EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'super_admin')
@@ -92,32 +99,5 @@ CREATE INDEX IF NOT EXISTS idx_collections_date_range ON collections(collection_
 CREATE INDEX IF NOT EXISTS idx_installments_status_date ON installments(status, due_date);
 
 -- Add trigger for marking installments as overdue automatically
-CREATE OR REPLACE FUNCTION mark_overdue_installments()
-RETURNS void
-LANGUAGE plpgsql
-SECURITY DEFINER
-AS $$
-BEGIN
-  UPDATE installments
-  SET status = 'overdue', updated_at = now()
-  WHERE status = 'pending'
-    AND due_date < now()::date
-    AND updated_at < now() - INTERVAL '1 hour';
-END;
-$$;
 
 -- Function to get subordinate IDs (used in RLS)
-CREATE OR REPLACE FUNCTION get_subordinate_ids(manager_id uuid)
-RETURNS TABLE(id uuid)
-LANGUAGE plpgsql
-STABLE
-SECURITY DEFINER
-AS $$
-WITH RECURSIVE subordinates AS (
-  SELECT id FROM profiles WHERE manager_id = $1
-  UNION ALL
-  SELECT p.id FROM profiles p
-  INNER JOIN subordinates s ON p.manager_id = s.id
-)
-SELECT id FROM subordinates;
-$$;

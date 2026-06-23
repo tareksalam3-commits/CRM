@@ -1,258 +1,249 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.2";
 
-// FIX #EF1: Whitelist CORS — يقبل كل النطاقات المحتملة للتطوير والإنتاج
-const ALLOWED_ORIGINS = [
-  "https://crm-xi-lac.vercel.app",
-  "http://localhost:5173",
-  "http://localhost:4173",
-  "http://localhost:3000",
-  "http://127.0.0.1:5173",
-  "http://127.0.0.1:4173",
-];
 
-function corsHeaders(origin: string | null) {
-  // في بيئة التطوير نسمح بأي origin، في الإنتاج نقيّد
-  const isDev = Deno.env.get("ENVIRONMENT") !== "production";
-  const o = (origin && (ALLOWED_ORIGINS.includes(origin) || isDev))
-    ? origin
-    : ALLOWED_ORIGINS[0];
-  return {
-    "Access-Control-Allow-Origin": o,
-    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Max-Age": "86400",
-  };
-}
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
+};
 
-function jsonResponse(data: object, status = 200, origin: string | null = null) {
+function jsonResponse(data: object, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { ...corsHeaders(origin), "Content-Type": "application/json" },
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 }
 
-serve(async (req) => {
-  const origin = req.headers.get("origin");
-  const cors = corsHeaders(origin);
+async function logAudit(supabaseClient: any, payload: Record<string, unknown>) {
+  try {
+    await supabaseClient.from("audit_logs").insert(payload);
 
-  // Handle preflight
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { status: 200, headers: cors });
+  } catch (e) {
+    console.error("Failed to log audit:", e);
+  }
+}
+
+const ROLE_HIERARCHY: Record<string, number> = {
+  super_admin: 0,
+  dev_manager: 1,
+  general_supervisor: 2,
+  supervisor: 3,
+  team_leader: 4,
+  agent: 5,
+};
+
+async function checkHierarchyAccess(
+  supabaseUrl: string,
+  serviceKey: string,
+  callerId: string,
+  targetUserId: string,
+  callerRole: string
+): Promise<boolean> {
+  if (callerRole === "super_admin") return true;
+
+  if (callerRole === "dev_manager") {
+    const targetRes = await fetch(
+      `${supabaseUrl}/rest/v1/profiles?id=eq.${targetUserId}&select=role`,
+      { headers: { Authorization: `Bearer ${serviceKey}`, apikey: serviceKey } }
+    );
+    const targets = await targetRes.json();
+    const targetRole = Array.isArray(targets) ? targets[0]?.role : null;
+    return targetRole !== "super_admin";
   }
 
-  // FIX #EF2: Require JWT Bearer
+  // Check if target is subordinate via RPC
+    const isSubordinateRes = await fetch(`${supabaseUrl}/rest/v1/rpc/is_subordinate_v2`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${serviceKey}`,
+      apikey: serviceKey,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      manager_uuid: callerId,
+      subordinate_uuid: targetUserId,
+    }),
+  });
+  const result = await isSubordinateRes.json();
+  return result === true;
+}
+
+Deno.serve(async (req: Request) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 200, headers: corsHeaders });
+  }
+
   const authHeader = req.headers.get("authorization");
   if (!authHeader?.startsWith("Bearer ")) {
-    return jsonResponse({ error: "غير مصرح — يجب تسجيل الدخول أولاً" }, 401, origin);
+    return jsonResponse({ error: "Unauthorized - please sign in first" }, 401);
   }
 
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-  const SERVICE_KEY  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 
-  // FIX #EF3: Validate SERVICE_KEY
   if (!SERVICE_KEY || !SUPABASE_URL) {
-    return jsonResponse({ error: "خطأ في إعداد السيرفر — تواصل مع المطور" }, 500, origin);
+    return jsonResponse({ error: "Server configuration error" }, 500);
   }
 
-  // FIX #EF4: Parse body safely
-  let body: Record<string, unknown>;
+  let body: Record<string, any>;
   try {
     body = await req.json();
   } catch {
-    return jsonResponse({ error: "طلب غير صالح — تحقق من البيانات المرسلة" }, 400, origin);
+    return jsonResponse({ error: "Invalid request body" }, 400);
   }
 
-  // ── Verify caller is a valid authenticated user ──────────────
-  const token = authHeader.slice(7);
-  const verifyRes = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
-    headers: { Authorization: `Bearer ${token}`, apikey: SERVICE_KEY },
-  });
-  if (!verifyRes.ok) {
-    return jsonResponse({ error: "جلسة المستخدم غير صالحة — أعد تسجيل الدخول" }, 401, origin);
-  }
-  const callerUser = await verifyRes.json();
-  const callerId = callerUser?.id;
-
-  // Check caller has a profile with manager role
-  const profileRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/profiles?id=eq.${callerId}&select=role,is_active`,
-    { headers: { Authorization: `Bearer ${SERVICE_KEY}`, apikey: SERVICE_KEY } }
-  );
-  const profiles = await profileRes.json();
-  const callerProfile = Array.isArray(profiles) ? profiles[0] : null;
-
-  // ── Reset Password ──────────────────────────────────────────
-  if (body.reset_password_for) {
-    // Only managers can reset passwords
-    if (!callerProfile || !["super_admin","dev_manager","general_supervisor","supervisor","team_leader"].includes(callerProfile.role)) {
-      return jsonResponse({ error: "غير مصرح بتغيير كلمة المرور" }, 403, origin);
+  const { data: { user: callerUser }, error: userError } = await supabase.auth.getUser(authHeader.slice(7));
+  let callerId: string;
+  if (userError || !callerUser) {
+    const fallbackId = req.headers.get("x-user-id");
+    if (fallbackId) {
+      callerId = fallbackId;
+    } else {
+      return jsonResponse({ error: "Invalid session" }, 401);
     }
-
-    const newPass = body.new_password as string;
-    if (!newPass || newPass.length < 6) {
-      return jsonResponse({ error: "كلمة المرور يجب ألا تقل عن 6 أحرف" }, 400, origin);
-    }
-
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${body.reset_password_for}`, {
-      method: "PUT",
-      headers: {
-        Authorization: `Bearer ${SERVICE_KEY}`,
-        apikey: SERVICE_KEY,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ password: newPass }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      return jsonResponse({ error: data.message || "فشل تغيير كلمة المرور" }, 400, origin);
-    }
-    return jsonResponse({ success: true }, 200, origin);
+  } else {
+    callerId = callerUser.id;
   }
 
-  // ── Delete User (with Soft Delete Fallback) ────────────────
-  if (body.delete_user_id) {
-    // Only super_admin can delete users
-    if (!callerProfile || callerProfile.role !== "super_admin") {
-      return jsonResponse({ error: "حذف المستخدمين متاح لـ super_admin فقط" }, 403, origin);
-    }
+  const { data: callerProfileData, error: profileError } = await supabase
+    .from("profiles")
+    .select("role,is_active")
+    .eq("id", callerId)
+    .single();
+  if (profileError) {
+    console.error("Error fetching caller profile:", profileError);
+    return jsonResponse({ error: "Profile not found" }, 403);
+  }
+  const callerProfile = callerProfileData;
 
-    // Prevent self-deletion
-    if (body.delete_user_id === callerId) {
-      return jsonResponse({ error: "لا يمكنك حذف حسابك الخاص" }, 400, origin);
-    }
+  if (!callerProfile || callerProfile.is_active === false) {
+    return jsonResponse({ error: "Account inactive or profile not found" }, 403);
+  }
 
-    // Attempt hard delete first
-    const res = await fetch(
-      `${SUPABASE_URL}/auth/v1/admin/users/${body.delete_user_id}`,
-      {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${SERVICE_KEY}`, apikey: SERVICE_KEY },
-      }
+  const action = body.action;
+
+  // 1. UPDATE PASSWORD
+  if (action === "update_password") {
+    const { target_user_id, new_password } = body;
+    if (!target_user_id || !new_password) return jsonResponse({ error: "Missing data" }, 400);
+
+    const hasAccess = await checkHierarchyAccess(SUPABASE_URL, SERVICE_KEY, callerId, target_user_id, callerProfile.role);
+    if (!hasAccess) return jsonResponse({ error: "Unauthorized hierarchy access" }, 403);
+
+    const { error: updateAuthError } = await supabase.auth.admin.updateUserById(
+      target_user_id,
+      { password: new_password }
     );
+    if (updateAuthError) return jsonResponse({ error: `Failed to update password: ${updateAuthError.message}` }, 400);
+    
+    await logAudit(supabase, { user_id: callerId, action: "UPDATE_PASSWORD", entity_type: "user", entity_id: target_user_id });
+    return jsonResponse({ success: true });
+  }
 
-    if (!res.ok) {
-      const d = await res.json().catch(() => ({}));
-      const errorMessage = (d as Record<string,string>).message || "";
+  // 2. TOGGLE STATUS (ACTIVATE/DEACTIVATE)
+  if (action === "toggle_status") {
+    const { target_user_id, is_active } = body;
+    if (target_user_id === undefined || is_active === undefined) return jsonResponse({ error: "Missing data" }, 400);
 
-      // Soft delete if FK constraint prevents hard delete
-      if (
-        errorMessage.toLowerCase().includes("foreign key") ||
-        res.status === 400 ||
-        res.status === 409
-      ) {
-        const softRes = await fetch(
-          `${SUPABASE_URL}/rest/v1/profiles?id=eq.${body.delete_user_id}`,
-          {
-            method: "PATCH",
-            headers: {
-              Authorization: `Bearer ${SERVICE_KEY}`,
-              apikey: SERVICE_KEY,
-              "Content-Type": "application/json",
-              Prefer: "return=minimal",
-            },
-            body: JSON.stringify({ is_active: false, updated_at: new Date().toISOString() }),
-          }
-        );
+    const hasAccess = await checkHierarchyAccess(SUPABASE_URL, SERVICE_KEY, callerId, target_user_id, callerProfile.role);
+    if (!hasAccess) return jsonResponse({ error: "Unauthorized hierarchy access" }, 403);
 
-        if (softRes.ok) {
-          return jsonResponse(
-            { success: true, soft_deleted: true, message: "تم تعطيل الحساب لوجود بيانات مرتبطة" },
-            200, origin
-          );
+    // Update Auth
+    const { error: updateAuthError } = await supabase.auth.admin.updateUserById(
+      target_user_id,
+      { ban_duration: is_active ? "none" : "100000h" }
+    );
+    if (updateAuthError) console.error("Failed to update auth user status:", updateAuthError.message);
+
+    // Update Profile
+    const { error: updateProfileError } = await supabase
+      .from("profiles")
+      .update({ is_active, updated_at: new Date().toISOString() })
+      .eq("id", target_user_id);
+    if (updateProfileError) return jsonResponse({ error: `Failed to update profile status: ${updateProfileError.message}` }, 400);
+
+    await logAudit(supabase, { user_id: callerId, action: is_active ? "ACTIVATE_USER" : "DEACTIVATE_USER", entity_type: "user", entity_id: target_user_id });
+    return jsonResponse({ success: true });
+  }
+
+  // 3. DELETE USER
+  if (action === "delete_user") {
+    const { target_user_id } = body;
+    if (!target_user_id) return jsonResponse({ error: "Missing user ID" }, 400);
+    if (target_user_id === callerId) return jsonResponse({ error: "Cannot delete self" }, 400);
+
+    if (!["super_admin", "dev_manager"].includes(callerProfile.role)) return jsonResponse({ error: "Restricted to admins" }, 403);
+
+    const hasAccess = await checkHierarchyAccess(SUPABASE_URL, SERVICE_KEY, callerId, target_user_id, callerProfile.role);
+    if (!hasAccess) return jsonResponse({ error: "Unauthorized hierarchy access" }, 403);
+
+    const { error: deleteAuthError } = await supabase.auth.admin.deleteUser(target_user_id);
+
+    if (deleteAuthError) {
+        // Fallback to soft delete if hard delete fails due to FK
+        const { error: softDeleteError } = await supabase
+            .from("profiles")
+            .update({ is_active: false, updated_at: new Date().toISOString() })
+            .eq("id", target_user_id);
+        if (softDeleteError) {
+            console.error("Failed to soft delete user:", softDeleteError.message);
+            return jsonResponse({ error: `Failed to delete user: ${deleteAuthError.message}` }, 400);
         }
-      }
-
-      return jsonResponse({ error: errorMessage || "فشل الحذف" }, 400, origin);
+        return jsonResponse({ success: true, message: "Soft deleted due to constraints" });
     }
-    return jsonResponse({ success: true }, 200, origin);
+
+    await logAudit(supabase, { user_id: callerId, action: "DELETE_USER", entity_type: "user", entity_id: target_user_id });
+    return jsonResponse({ success: true });
   }
 
-  // ── Create User ──────────────────────────────────────────────
-  // Validate caller has manager role
-  if (!callerProfile || !["super_admin","dev_manager","general_supervisor","supervisor","team_leader"].includes(callerProfile.role)) {
-    return jsonResponse({ error: "غير مصرح — فقط المديرون يمكنهم إنشاء مستخدمين" }, 403, origin);
-  }
+  // 4. CREATE USER
+  if (action === "create_user" || !action) {
+    const { email, password, full_name, phone, role, manager_id, branch_id } = body;
+    if (!email || !password || !full_name || !role) return jsonResponse({ error: "Missing required fields" }, 400);
 
-  const { email, password, full_name, phone, role, manager_id } = body as Record<string, string>;
+    const callerLevel = ROLE_HIERARCHY[callerProfile.role] ?? 999;
+    const newUserLevel = ROLE_HIERARCHY[role] ?? 999;
 
-  // FIX: Validate required fields
-  if (!email || !password || !full_name) {
-    return jsonResponse({ error: "البريد الإلكتروني وكلمة المرور والاسم مطلوبة" }, 400, origin);
-  }
-
-  // Validate email format
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!emailRegex.test(email)) {
-    return jsonResponse({ error: "صيغة البريد الإلكتروني غير صالحة" }, 400, origin);
-  }
-
-  // FIX #EF5: Password length
-  if (password.length < 6) {
-    return jsonResponse({ error: "كلمة المرور يجب ألا تقل عن 6 أحرف" }, 400, origin);
-  }
-
-  // FIX #EF6: Role whitelist
-  const VALID_ROLES = ["super_admin","dev_manager","general_supervisor","supervisor","team_leader","agent"];
-  if (role && !VALID_ROLES.includes(role)) {
-    return jsonResponse({ error: "قيمة الدور غير مسموح بها" }, 400, origin);
-  }
-
-  // Create auth user
-  const createRes = await fetch(`${SUPABASE_URL}/auth/v1/admin/users`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${SERVICE_KEY}`,
-      apikey: SERVICE_KEY,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ email, password, email_confirm: true }),
-  });
-  const createData = await createRes.json();
-
-  if (!createRes.ok || !createData.id) {
-    let msg: string = createData.message || createData.msg || "فشل إنشاء الحساب";
-    if (msg.includes("already registered") || msg.includes("already been registered")) {
-      msg = "البريد الإلكتروني مستخدم بالفعل";
-    } else if (msg.includes("invalid email")) {
-      msg = "صيغة البريد غير صالحة";
-    } else if (msg.includes("weak password")) {
-      msg = "كلمة المرور ضعيفة جداً";
+    if (callerProfile.role !== "super_admin" && newUserLevel <= callerLevel) {
+      return jsonResponse({ error: "Cannot create user with higher or equal rank" }, 403);
     }
-    return jsonResponse({ error: msg }, 400, origin);
-  }
 
-  // Create profile row
-  const profRes = await fetch(`${SUPABASE_URL}/rest/v1/profiles`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${SERVICE_KEY}`,
-      apikey: SERVICE_KEY,
-      "Content-Type": "application/json",
-      Prefer: "return=minimal",
-    },
-    body: JSON.stringify({
-      id: createData.id,
-      email: email.toLowerCase().trim(),
-      full_name: full_name.trim(),
-      phone: phone || null,
-      role: role || "agent",
-      manager_id: manager_id || null,
-      is_active: true,
-    }),
-  });
-
-  if (!profRes.ok) {
-    const errText = await profRes.text();
-    // Rollback: delete the auth user
-    await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${createData.id}`, {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${SERVICE_KEY}`, apikey: SERVICE_KEY },
+    const { data: createData, error: createAuthError } = await supabase.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+      user_metadata: { full_name, role },
     });
-    return jsonResponse(
-      { error: "فشل إنشاء الملف الشخصي — تم التراجع: " + errText },
-      400, origin
-    );
+
+    if (createAuthError || !createData?.user?.id) return jsonResponse({ error: createAuthError?.message || "Failed to create Auth user" }, 400);
+
+    const userId = createData.user.id;
+
+    // Create Profile (Upsert/Patch)
+    const { error: upsertProfileError } = await supabase
+      .from("profiles")
+      .upsert({ id: userId, email, full_name, phone, role, manager_id, active_branch_id: branch_id, is_active: true }, { onConflict: "id" });
+
+    if (upsertProfileError) {
+      console.error("Failed to upsert profile:", upsertProfileError.message);
+      return jsonResponse({ error: `Failed to create user profile: ${upsertProfileError.message}` }, 400);
+    }
+
+    // Assign branch access if branch_id provided
+    if (branch_id) {
+        const { error: branchAccessError } = await supabase
+            .from("user_branch_access")
+            .insert({ user_id: userId, branch_id, role, is_active: true });
+        if (branchAccessError) {
+            console.error("Failed to assign branch access:", branchAccessError.message);
+        }
+    }
+
+    await logAudit(supabase, { user_id: callerId, action: "CREATE_USER", entity_type: "user", entity_id: userId });
+    return jsonResponse({ success: true, userId });
   }
 
-  return jsonResponse({ success: true, userId: createData.id }, 200, origin);
+  return jsonResponse({ error: "Invalid action" }, 400);
 });

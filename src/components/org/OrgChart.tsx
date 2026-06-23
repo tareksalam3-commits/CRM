@@ -50,7 +50,7 @@ function NodeCard({ node, allUsers, canRearrange, onMove }: {
   const [expanded, setExpanded] = useState(true);
   const [showMoveMenu, setShowMoveMenu] = useState(false);
 
-  const potentialManagers = allUsers.filter(u => u.id !== node.id && u.role !== 'agent');
+    const potentialManagers = allUsers.filter(u => u.id !== node.id);
 
   return (
     <div className="relative">
@@ -118,14 +118,24 @@ export default function OrgChart() {
   const canRearrange = profile ? canRearrangeOrg(profile.role) : false;
 
   const fetchUsers = useCallback(async () => {
-    const { data, error } = await supabase.from('profiles').select('*').order('role').order('full_name');
+    let query = supabase.from('profiles').select('*').order('full_name');
+    
+    // Data Isolation handled by RLS automatically
+
+    const { data, error } = await query;
     if (!error && data) {
       const users = data as Profile[];
       setAllUsers(users);
-      setTree(buildTree(users, null));
+      
+      // Build tree starting from the highest accessible level
+      const rootId = (profile && !['super_admin', 'dev_manager'].includes(profile.role)) 
+        ? (users.find(u => u.id === profile.id)?.manager_id || null) 
+        : null;
+        
+      setTree(buildTree(users, rootId));
     }
     setLoading(false);
-  }, []);
+  }, [profile]);
 
   useEffect(() => { fetchUsers(); }, [fetchUsers]);
 
