@@ -9,7 +9,7 @@ import PageHeader from '../common/PageHeader';
 import LoadingSpinner from '../common/LoadingSpinner';
 import {
   LayoutDashboard, Users, FileText, Wallet, TrendingUp,
-  Award, RefreshCw,
+  Award, RefreshCw, BarChart3, PieChart,
 } from 'lucide-react';
 
 interface DashboardStats {
@@ -40,6 +40,7 @@ export default function Dashboard() {
   const [stats, setStats] = useState<DashboardStats>(INITIAL_STATS);
   const [loading, setLoading] = useState(true);
   const [subordinateStats, setSubordinateStats] = useState<any[]>([]);
+  const [extraStats, setExtraStats] = useState<any>({});
 
   const fetchStats = useCallback(async () => {
     if (!profile) return;
@@ -60,7 +61,7 @@ export default function Dashboard() {
 
       let targetsQuery = supabase.from('targets').select('target_amount').eq('period_type', 'monthly').eq('year', now_date.getFullYear()).eq('period_number', now_date.getMonth() + 1);
 
-      if (branchId && branchId !== 'all' && userRole !== 'super_admin') {
+      if (branchId && branchId !== 'all' && userRole !== 'super_admin' && userRole !== 'dev_manager') {
         policiesQuery = policiesQuery.eq('branch_id', branchId);
         clientsQuery = clientsQuery.eq('branch_id', branchId);
         unifiedMetricsQuery = unifiedMetricsQuery.eq('branch_id', branchId);
@@ -106,8 +107,8 @@ export default function Dashboard() {
       });
 
       // Fetch subordinate stats for managers
-      if (['supervisor', 'team_leader', 'general_supervisor', 'dev_manager'].includes(userRole)) {
-        await fetchSubordinateStats(userId, userRole, monthStart, monthEnd);
+      if (['supervisor', 'team_leader', 'general_supervisor', 'dev_manager', 'super_admin'].includes(userRole)) {
+        await fetchManagerData(userId, userRole, monthStart, monthEnd, branchId);
       }
 
     } catch (err: any) {
@@ -117,44 +118,101 @@ export default function Dashboard() {
     }
   }, [activeBranch, profile]);
 
-  const fetchSubordinateStats = async (userId: string, role: string, monthStart: string, monthEnd: string) => {
+  const fetchManagerData = async (userId: string, role: string, monthStart: string, monthEnd: string, branchId?: string) => {
     try {
-      // Get subordinates
+      // 1. Get all subordinates recursively or directly depending on role
+      // For simplicity in this dashboard, we'll fetch based on manager_id
       const { data: subordinates } = await supabase
         .from('profiles')
-        .select('id, full_name, role')
-        .eq('manager_id', userId);
+        .select('id, full_name, role, manager_id, branch_id');
 
-      if (!subordinates || subordinates.length === 0) {
-        setSubordinateStats([]);
-        return;
+      if (!subordinates) return;
+
+      // Filter subordinates based on role hierarchy
+      let mySubordinates = [];
+      if (role === 'team_leader') {
+        mySubordinates = subordinates.filter(s => s.manager_id === userId);
+      } else if (role === 'supervisor') {
+        // Direct (Team Leaders) and Indirect (Agents)
+        const teamLeaders = subordinates.filter(s => s.manager_id === userId);
+        const agents = subordinates.filter(s => teamLeaders.some(tl => tl.id === s.manager_id));
+        mySubordinates = [...teamLeaders, ...agents];
+      } else if (role === 'general_supervisor') {
+        mySubordinates = subordinates.filter(s => s.branch_id === branchId);
+      } else {
+        mySubordinates = subordinates;
       }
 
-      const stats = [];
-      for (const sub of subordinates) {
-        const { data: metrics } = await supabase
-          .from('unified_performance_metrics')
-          .select('amount, is_new_business, collection_date')
-          .eq('agent_id', sub.id)
-          .eq('is_first_year_collection', true);
+      // 2. Fetch metrics for all relevant users
+      const { data: allMetrics } = await supabase
+        .from('unified_performance_metrics')
+        .select('*')
+        .eq('is_first_year_collection', true)
+        .gte('collection_date', monthStart)
+        .lte('collection_date', monthEnd);
 
-        const monthlyMetrics = (metrics || []).filter(m => m.collection_date >= monthStart && m.collection_date <= monthEnd);
-        const newBiz = monthlyMetrics.filter(m => m.is_new_business).reduce((s, m) => s + Number(m.amount), 0);
-        const collections = monthlyMetrics.filter(m => !m.is_new_business).reduce((s, m) => s + Number(m.amount), 0);
+      const metrics = allMetrics || [];
 
-        stats.push({
-          id: sub.id,
-          name: sub.full_name,
-          role: sub.role,
-          newBusiness: newBiz,
-          collections,
-          total: newBiz + collections,
+      // 3. Process data for the specific dashboard requirements
+      const userStats = subordinates.map(user => {
+        const userMetrics = metrics.filter(m => m.agent_id === user.id);
+        const newBiz = userMetrics.filter(m => m.is_new_business).reduce((s, m) => s + Number(m.amount), 0);
+        const colls = userMetrics.filter(m => !m.is_new_business).reduce((s, m) => s + Number(m.amount), 0);
+        return { ...user, newBusiness: newBiz, collections: colls, total: newBiz + colls };
+      });
+
+      if (role === 'supervisor') {
+        const agents = userStats.filter(u => u.role === 'agent' && mySubordinates.some(s => s.id === u.id));
+        const leaders = userStats.filter(u => u.role === 'team_leader' && mySubordinates.some(s => s.id === u.id));
+        
+        setExtraStats({
+          topAgents: [...agents].sort((a, b) => b.newBusiness - a.newBusiness).slice(0, 5),
+          bottomAgents: [...agents].sort((a, b) => a.newBusiness - b.newBusiness).slice(0, 5),
+          topGroups: [...leaders].sort((a, b) => b.total - a.total).slice(0, 5),
+          bottomGroups: [...leaders].sort((a, b) => a.total - b.total).slice(0, 5),
         });
+        setSubordinateStats(leaders);
+      } else if (role === 'general_supervisor') {
+        const agents = userStats.filter(u => u.role === 'agent' && u.branch_id === branchId);
+        const leaders = userStats.filter(u => u.role === 'team_leader' && u.branch_id === branchId);
+        const supervisors = userStats.filter(u => u.role === 'supervisor' && u.branch_id === branchId);
+
+        setExtraStats({
+          topAgents: [...agents].sort((a, b) => b.newBusiness - a.newBusiness).slice(0, 5),
+          bottomAgents: [...agents].sort((a, b) => a.newBusiness - b.newBusiness).slice(0, 5),
+          topLeaders: [...leaders].sort((a, b) => b.total - a.total).slice(0, 5),
+          topSupervisors: [...supervisors].sort((a, b) => b.total - a.total).slice(0, 5),
+        });
+        setSubordinateStats(supervisors);
+      } else if (role === 'dev_manager' || role === 'super_admin') {
+        const agents = userStats.filter(u => u.role === 'agent');
+        const leaders = userStats.filter(u => u.role === 'team_leader');
+        const supervisors = userStats.filter(u => u.role === 'supervisor');
+        const genSupervisors = userStats.filter(u => u.role === 'general_supervisor');
+
+        // Branch comparison
+        const { data: branches } = await supabase.from('branches').select('id, name');
+        const branchComparison = (branches || []).map(b => {
+          const bMetrics = metrics.filter(m => m.branch_id === b.id);
+          const newBiz = bMetrics.filter(m => m.is_new_business).reduce((s, m) => s + Number(m.amount), 0);
+          const colls = bMetrics.filter(m => !m.is_new_business).reduce((s, m) => s + Number(m.amount), 0);
+          return { name: b.name, newBusiness: newBiz, collections: colls, total: newBiz + colls };
+        });
+
+        setExtraStats({
+          topAgents: [...agents].sort((a, b) => b.newBusiness - a.newBusiness).slice(0, 5),
+          topLeaders: [...leaders].sort((a, b) => b.total - a.total).slice(0, 5),
+          topSupervisors: [...supervisors].sort((a, b) => b.total - a.total).slice(0, 5),
+          topGenSupervisors: [...genSupervisors].sort((a, b) => b.total - a.total).slice(0, 5),
+          branchComparison: branchComparison.sort((a, b) => b.total - a.total),
+        });
+      } else if (role === 'team_leader') {
+        const agents = userStats.filter(u => u.manager_id === userId);
+        setSubordinateStats(agents);
       }
 
-      setSubordinateStats(stats.sort((a, b) => b.total - a.total));
     } catch (err) {
-      console.error('Error fetching subordinate stats:', err);
+      console.error('Error fetching manager data:', err);
     }
   };
 
@@ -175,28 +233,81 @@ export default function Dashboard() {
         }
       />
 
-      {/* Agent Dashboard */}
       {profile?.role === 'agent' && <AgentDashboard stats={stats} />}
-
-      {/* Team Leader Dashboard */}
       {profile?.role === 'team_leader' && <TeamLeaderDashboard stats={stats} subordinateStats={subordinateStats} />}
-
-      {/* Supervisor Dashboard */}
-      {profile?.role === 'supervisor' && <SupervisorDashboard stats={stats} subordinateStats={subordinateStats} />}
-
-      {/* General Supervisor Dashboard */}
-      {profile?.role === 'general_supervisor' && <GeneralSupervisorDashboard stats={stats} subordinateStats={subordinateStats} />}
-
-      {/* Dev Manager Dashboard */}
-      {profile?.role === 'dev_manager' && <DevManagerDashboard stats={stats} />}
-
-      {/* Super Admin Dashboard */}
-      {profile?.role === 'super_admin' && <SuperAdminDashboard stats={stats} />}
+      {profile?.role === 'supervisor' && <SupervisorDashboard stats={stats} subordinateStats={subordinateStats} extraStats={extraStats} />}
+      {profile?.role === 'general_supervisor' && <GeneralSupervisorDashboard stats={stats} subordinateStats={subordinateStats} extraStats={extraStats} />}
+      {profile?.role === 'dev_manager' && <DevManagerDashboard stats={stats} extraStats={extraStats} />}
+      {profile?.role === 'super_admin' && <SuperAdminDashboard stats={stats} extraStats={extraStats} />}
     </div>
   );
 }
 
-// Agent Dashboard
+// Common Components
+function StatCard({ title, value, icon: Icon, color, trend, trendLabel }: any) {
+  const colors: any = {
+    blue: 'bg-blue-50 text-blue-600',
+    emerald: 'bg-emerald-50 text-emerald-600',
+    indigo: 'bg-indigo-50 text-indigo-600',
+    violet: 'bg-violet-50 text-violet-600',
+    green: 'bg-green-50 text-green-600',
+  };
+  return (
+    <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
+      <div className="flex justify-between items-start mb-4">
+        <div className={`p-3 rounded-2xl ${colors[color] || colors.blue}`}>
+          <Icon className="w-6 h-6" />
+        </div>
+        {trend !== undefined && (
+          <div className="text-right">
+            <p className="text-xs font-bold text-blue-600">{formatPercent(trend)}</p>
+            <p className="text-[10px] text-slate-400">{trendLabel}</p>
+          </div>
+        )}
+      </div>
+      <p className="text-sm text-slate-500 mb-1">{title}</p>
+      <p className="text-2xl font-black text-slate-900">{value}</p>
+    </div>
+  );
+}
+
+function RankingTable({ title, data, columns }: { title: string, data: any[], columns: { key: string, label: string, format?: any }[] }) {
+  return (
+    <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm">
+      <h3 className="text-lg font-bold mb-6 flex items-center gap-2">
+        <Award className="w-5 h-5 text-amber-500" />
+        {title}
+      </h3>
+      <div className="overflow-x-auto">
+        <table className="w-full text-right">
+          <thead className="bg-slate-50">
+            <tr>
+              <th className="px-4 py-3 text-xs font-bold text-slate-500">#</th>
+              {columns.map(col => <th key={col.key} className="px-4 py-3 text-xs font-bold text-slate-500">{col.label}</th>)}
+            </tr>
+          </thead>
+          <tbody className="divide-y">
+            {data.map((item, idx) => (
+              <tr key={item.id || idx} className="hover:bg-slate-50">
+                <td className="px-4 py-3 text-sm">{idx + 1}</td>
+                {columns.map(col => (
+                  <td key={col.key} className={`px-4 py-3 text-sm ${col.key === 'total' || col.key === 'newBusiness' ? 'font-bold' : ''}`}>
+                    {col.format ? col.format(item[col.key]) : item[col.key]}
+                  </td>
+                ))}
+              </tr>
+            ))}
+            {data.length === 0 && (
+              <tr><td colSpan={columns.length + 1} className="px-4 py-8 text-center text-slate-400">لا توجد بيانات متاحة</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// Role Dashboards
 function AgentDashboard({ stats }: { stats: DashboardStats }) {
   return (
     <div className="space-y-6">
@@ -206,41 +317,21 @@ function AgentDashboard({ stats }: { stats: DashboardStats }) {
         <StatCard title="الجديد (الشهر)" value={formatCurrency(stats.monthlyNewBusiness)} icon={Award} color="blue" />
         <StatCard title="التحصيل (الشهر)" value={formatCurrency(stats.monthlyFirstYearCollections)} icon={Wallet} color="emerald" />
       </div>
-
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="bg-white rounded-3xl p-8 border border-slate-100 shadow-sm">
           <h3 className="text-lg font-bold mb-6">ملخص الأداء</h3>
           <div className="space-y-4">
-            <div className="flex justify-between text-sm">
-              <span className="text-slate-500">إجمالي الإنتاج الجديد</span>
-              <span className="font-bold">{formatCurrency(stats.totalNewBusiness)}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-slate-500">إجمالي التحصيلات (سنة 1)</span>
-              <span className="font-bold">{formatCurrency(stats.totalFirstYearCollections)}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-slate-500">إجمالي الإنتاج</span>
-              <span className="font-bold">{formatCurrency(stats.totalProduction)}</span>
-            </div>
+            <div className="flex justify-between text-sm"><span className="text-slate-500">إجمالي الإنتاج الجديد</span><span className="font-bold">{formatCurrency(stats.totalNewBusiness)}</span></div>
+            <div className="flex justify-between text-sm"><span className="text-slate-500">إجمالي التحصيلات (سنة 1)</span><span className="font-bold">{formatCurrency(stats.totalFirstYearCollections)}</span></div>
+            <div className="flex justify-between text-sm"><span className="text-slate-500">إجمالي الإنتاج</span><span className="font-bold">{formatCurrency(stats.totalProduction)}</span></div>
           </div>
         </div>
-
         <div className="bg-white rounded-3xl p-8 border border-slate-100 shadow-sm">
           <h3 className="text-lg font-bold mb-6">الإحصائيات</h3>
           <div className="space-y-4">
-            <div className="flex justify-between text-sm">
-              <span className="text-slate-500">عدد الوثائق</span>
-              <span className="font-bold">{formatNumber(stats.policyCount)}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-slate-500">عدد العملاء</span>
-              <span className="font-bold">{formatNumber(stats.clientCount)}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-slate-500">الأقساط المسددة</span>
-              <span className="font-bold">{formatNumber(stats.policyCount)}</span>
-            </div>
+            <div className="flex justify-between text-sm"><span className="text-slate-500">عدد الوثائق</span><span className="font-bold">{formatNumber(stats.policyCount)}</span></div>
+            <div className="flex justify-between text-sm"><span className="text-slate-500">عدد العملاء</span><span className="font-bold">{formatNumber(stats.clientCount)}</span></div>
+            <div className="flex justify-between text-sm"><span className="text-slate-500">الأقساط المسددة</span><span className="font-bold">{formatNumber(stats.policyCount)}</span></div>
           </div>
         </div>
       </div>
@@ -248,7 +339,6 @@ function AgentDashboard({ stats }: { stats: DashboardStats }) {
   );
 }
 
-// Team Leader Dashboard
 function TeamLeaderDashboard({ stats, subordinateStats }: { stats: DashboardStats; subordinateStats: any[] }) {
   return (
     <div className="space-y-6">
@@ -258,40 +348,21 @@ function TeamLeaderDashboard({ stats, subordinateStats }: { stats: DashboardStat
         <StatCard title="الهدف الشهري" value={formatCurrency(stats.monthlyTarget)} icon={Award} color="blue" />
         <StatCard title="نسبة الإنجاز" value={formatPercent(stats.targetAchievement)} icon={TrendingUp} color="green" />
       </div>
-
-      <div className="bg-white rounded-3xl p-8 border border-slate-100 shadow-sm">
-        <h3 className="text-lg font-bold mb-6">ترتيب الوكلاء في المجموعة</h3>
-        <div className="overflow-x-auto">
-          <table className="w-full text-right">
-            <thead className="bg-slate-50">
-              <tr>
-                <th className="px-4 py-3 text-sm font-semibold">الترتيب</th>
-                <th className="px-4 py-3 text-sm font-semibold">الوكيل</th>
-                <th className="px-4 py-3 text-sm font-semibold">الجديد</th>
-                <th className="px-4 py-3 text-sm font-semibold">التحصيل</th>
-                <th className="px-4 py-3 text-sm font-semibold">الإجمالي</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {subordinateStats.map((agent, idx) => (
-                <tr key={agent.id} className="hover:bg-slate-50">
-                  <td className="px-4 py-3 text-sm">{idx + 1}</td>
-                  <td className="px-4 py-3 text-sm font-medium">{agent.name}</td>
-                  <td className="px-4 py-3 text-sm">{formatCurrency(agent.newBusiness)}</td>
-                  <td className="px-4 py-3 text-sm">{formatCurrency(agent.collections)}</td>
-                  <td className="px-4 py-3 text-sm font-bold">{formatCurrency(agent.total)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <RankingTable 
+        title="ترتيب الوكلاء في المجموعة" 
+        data={subordinateStats} 
+        columns={[
+          { key: 'full_name', label: 'الوكيل' },
+          { key: 'newBusiness', label: 'الجديد', format: formatCurrency },
+          { key: 'collections', label: 'التحصيل', format: formatCurrency },
+          { key: 'total', label: 'الإجمالي', format: formatCurrency }
+        ]} 
+      />
     </div>
   );
 }
 
-// Supervisor Dashboard
-function SupervisorDashboard({ stats, subordinateStats }: { stats: DashboardStats; subordinateStats: any[] }) {
+function SupervisorDashboard({ stats, subordinateStats, extraStats }: { stats: DashboardStats; subordinateStats: any[], extraStats: any }) {
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -300,40 +371,21 @@ function SupervisorDashboard({ stats, subordinateStats }: { stats: DashboardStat
         <StatCard title="عدد رؤساء المجموعات" value={formatNumber(subordinateStats.length)} icon={Users} color="indigo" />
         <StatCard title="الإنتاج الإجمالي" value={formatCurrency(stats.totalProduction)} icon={TrendingUp} color="green" />
       </div>
+      
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <RankingTable title="أعلى 5 وكلاء إنتاجاً" data={extraStats.topAgents || []} columns={[{ key: 'full_name', label: 'الوكيل' }, { key: 'newBusiness', label: 'الجديد', format: formatCurrency }]} />
+        <RankingTable title="أقل 5 وكلاء إنتاجاً" data={extraStats.bottomAgents || []} columns={[{ key: 'full_name', label: 'الوكيل' }, { key: 'newBusiness', label: 'الجديد', format: formatCurrency }]} />
+      </div>
 
-      <div className="bg-white rounded-3xl p-8 border border-slate-100 shadow-sm">
-        <h3 className="text-lg font-bold mb-6">ترتيب رؤساء المجموعات</h3>
-        <div className="overflow-x-auto">
-          <table className="w-full text-right">
-            <thead className="bg-slate-50">
-              <tr>
-                <th className="px-4 py-3 text-sm font-semibold">الترتيب</th>
-                <th className="px-4 py-3 text-sm font-semibold">رئيس المجموعة</th>
-                <th className="px-4 py-3 text-sm font-semibold">الجديد</th>
-                <th className="px-4 py-3 text-sm font-semibold">التحصيل</th>
-                <th className="px-4 py-3 text-sm font-semibold">الإجمالي</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {subordinateStats.map((leader, idx) => (
-                <tr key={leader.id} className="hover:bg-slate-50">
-                  <td className="px-4 py-3 text-sm">{idx + 1}</td>
-                  <td className="px-4 py-3 text-sm font-medium">{leader.name}</td>
-                  <td className="px-4 py-3 text-sm">{formatCurrency(leader.newBusiness)}</td>
-                  <td className="px-4 py-3 text-sm">{formatCurrency(leader.collections)}</td>
-                  <td className="px-4 py-3 text-sm font-bold">{formatCurrency(leader.total)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <RankingTable title="أعلى المجموعات أداءً" data={extraStats.topGroups || []} columns={[{ key: 'full_name', label: 'رئيس المجموعة' }, { key: 'total', label: 'الإجمالي', format: formatCurrency }]} />
+        <RankingTable title="أقل المجموعات أداءً" data={extraStats.bottomGroups || []} columns={[{ key: 'full_name', label: 'رئيس المجموعة' }, { key: 'total', label: 'الإجمالي', format: formatCurrency }]} />
       </div>
     </div>
   );
 }
 
-// General Supervisor Dashboard
-function GeneralSupervisorDashboard({ stats, subordinateStats }: { stats: DashboardStats; subordinateStats: any[] }) {
+function GeneralSupervisorDashboard({ stats, subordinateStats, extraStats }: { stats: DashboardStats; subordinateStats: any[], extraStats: any }) {
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -343,39 +395,17 @@ function GeneralSupervisorDashboard({ stats, subordinateStats }: { stats: Dashbo
         <StatCard title="الإنتاج الإجمالي" value={formatCurrency(stats.totalProduction)} icon={TrendingUp} color="green" />
       </div>
 
-      <div className="bg-white rounded-3xl p-8 border border-slate-100 shadow-sm">
-        <h3 className="text-lg font-bold mb-6">ترتيب المراقبين</h3>
-        <div className="overflow-x-auto">
-          <table className="w-full text-right">
-            <thead className="bg-slate-50">
-              <tr>
-                <th className="px-4 py-3 text-sm font-semibold">الترتيب</th>
-                <th className="px-4 py-3 text-sm font-semibold">المراقب</th>
-                <th className="px-4 py-3 text-sm font-semibold">الجديد</th>
-                <th className="px-4 py-3 text-sm font-semibold">التحصيل</th>
-                <th className="px-4 py-3 text-sm font-semibold">الإجمالي</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {subordinateStats.map((supervisor, idx) => (
-                <tr key={supervisor.id} className="hover:bg-slate-50">
-                  <td className="px-4 py-3 text-sm">{idx + 1}</td>
-                  <td className="px-4 py-3 text-sm font-medium">{supervisor.name}</td>
-                  <td className="px-4 py-3 text-sm">{formatCurrency(supervisor.newBusiness)}</td>
-                  <td className="px-4 py-3 text-sm">{formatCurrency(supervisor.collections)}</td>
-                  <td className="px-4 py-3 text-sm font-bold">{formatCurrency(supervisor.total)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <RankingTable title="أعلى 5 وكلاء على مستوى الفرع" data={extraStats.topAgents || []} columns={[{ key: 'full_name', label: 'الوكيل' }, { key: 'newBusiness', label: 'الجديد', format: formatCurrency }]} />
+        <RankingTable title="أعلى المراقبين" data={extraStats.topSupervisors || []} columns={[{ key: 'full_name', label: 'المراقب' }, { key: 'total', label: 'الإجمالي', format: formatCurrency }]} />
       </div>
+
+      <RankingTable title="أعلى رؤساء مجموعات" data={extraStats.topLeaders || []} columns={[{ key: 'full_name', label: 'رئيس المجموعة' }, { key: 'total', label: 'الإجمالي', format: formatCurrency }]} />
     </div>
   );
 }
 
-// Dev Manager Dashboard
-function DevManagerDashboard({ stats }: { stats: DashboardStats }) {
+function DevManagerDashboard({ stats, extraStats }: { stats: DashboardStats, extraStats: any }) {
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -385,33 +415,22 @@ function DevManagerDashboard({ stats }: { stats: DashboardStats }) {
         <StatCard title="عدد الوثائق" value={formatNumber(stats.policyCount)} icon={FileText} color="indigo" />
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="bg-white rounded-3xl p-8 border border-slate-100 shadow-sm">
-          <h3 className="text-lg font-bold mb-6">مقارنة الفروع</h3>
-          <div className="space-y-4">
-            <div className="flex justify-between text-sm">
-              <span className="text-slate-500">إجمالي الفروع</span>
-              <span className="font-bold">تحت الإنشاء</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-3xl p-8 border border-slate-100 shadow-sm">
-          <h3 className="text-lg font-bold mb-6">مؤشرات النمو</h3>
-          <div className="space-y-4">
-            <div className="flex justify-between text-sm">
-              <span className="text-slate-500">معدل النمو</span>
-              <span className="font-bold">تحت الإنشاء</span>
-            </div>
-          </div>
-        </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <RankingTable title="أعلى 5 وكلاء" data={extraStats.topAgents || []} columns={[{ key: 'full_name', label: 'الوكيل' }, { key: 'newBusiness', label: 'الجديد', format: formatCurrency }]} />
+        <RankingTable title="أعلى رؤساء مجموعات" data={extraStats.topLeaders || []} columns={[{ key: 'full_name', label: 'رئيس المجموعة' }, { key: 'total', label: 'الإجمالي', format: formatCurrency }]} />
       </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <RankingTable title="أعلى المراقبين" data={extraStats.topSupervisors || []} columns={[{ key: 'full_name', label: 'المراقب' }, { key: 'total', label: 'الإجمالي', format: formatCurrency }]} />
+        <RankingTable title="أعلى المشرفين" data={extraStats.topGenSupervisors || []} columns={[{ key: 'full_name', label: 'المشرف العام' }, { key: 'total', label: 'الإجمالي', format: formatCurrency }]} />
+      </div>
+
+      <RankingTable title="مقارنة الفروع" data={extraStats.branchComparison || []} columns={[{ key: 'name', label: 'الفرع' }, { key: 'newBusiness', label: 'الجديد', format: formatCurrency }, { key: 'collections', label: 'التحصيل', format: formatCurrency }, { key: 'total', label: 'الإجمالي', format: formatCurrency }]} />
     </div>
   );
 }
 
-// Super Admin Dashboard
-function SuperAdminDashboard({ stats }: { stats: DashboardStats }) {
+function SuperAdminDashboard({ stats, extraStats }: { stats: DashboardStats, extraStats: any }) {
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -425,66 +444,22 @@ function SuperAdminDashboard({ stats }: { stats: DashboardStats }) {
         <div className="bg-white rounded-3xl p-8 border border-slate-100 shadow-sm">
           <h3 className="text-lg font-bold mb-6">الإحصائيات العامة</h3>
           <div className="space-y-4">
-            <div className="flex justify-between text-sm">
-              <span className="text-slate-500">إجمالي العملاء</span>
-              <span className="font-bold">{formatNumber(stats.clientCount)}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-slate-500">إجمالي الوثائق النشطة</span>
-              <span className="font-bold">{formatNumber(stats.activePolicyCount)}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-slate-500">إجمالي الإنتاج</span>
-              <span className="font-bold">{formatCurrency(stats.totalProduction)}</span>
-            </div>
+            <div className="flex justify-between text-sm"><span className="text-slate-500">إجمالي العملاء</span><span className="font-bold">{formatNumber(stats.clientCount)}</span></div>
+            <div className="flex justify-between text-sm"><span className="text-slate-500">إجمالي الوثائق النشطة</span><span className="font-bold">{formatNumber(stats.activePolicyCount)}</span></div>
+            <div className="flex justify-between text-sm"><span className="text-slate-500">إجمالي الإنتاج</span><span className="font-bold">{formatCurrency(stats.totalProduction)}</span></div>
           </div>
         </div>
-
         <div className="bg-white rounded-3xl p-8 border border-slate-100 shadow-sm">
           <h3 className="text-lg font-bold mb-6">ملخص الأداء</h3>
           <div className="space-y-4">
-            <div className="flex justify-between text-sm">
-              <span className="text-slate-500">الإنتاج الجديد (السنة 1)</span>
-              <span className="font-bold">{formatCurrency(stats.totalNewBusiness)}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-slate-500">التحصيلات (السنة 1)</span>
-              <span className="font-bold">{formatCurrency(stats.totalFirstYearCollections)}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-slate-500">معدل التحصيل</span>
-              <span className="font-bold">{formatPercent(stats.collectionRate)}</span>
-            </div>
+            <div className="flex justify-between text-sm"><span className="text-slate-500">الإنتاج الجديد (السنة 1)</span><span className="font-bold">{formatCurrency(stats.totalNewBusiness)}</span></div>
+            <div className="flex justify-between text-sm"><span className="text-slate-500">التحصيلات (السنة 1)</span><span className="font-bold">{formatCurrency(stats.totalFirstYearCollections)}</span></div>
+            <div className="flex justify-between text-sm"><span className="text-slate-500">معدل التحصيل</span><span className="font-bold">{formatPercent(stats.collectionRate)}</span></div>
           </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-function StatCard({ title, value, icon: Icon, color, trend, trendLabel }: any) {
-  const colors: any = {
-    blue: 'bg-blue-50 text-blue-600',
-    emerald: 'bg-emerald-50 text-emerald-600',
-    indigo: 'bg-indigo-50 text-indigo-600',
-    violet: 'bg-violet-50 text-violet-600',
-    green: 'bg-green-50 text-green-600',
-  };
-  return (
-    <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
-      <div className="flex justify-between items-start mb-4">
-        <div className={`p-3 rounded-2xl ${colors[color]}`}>
-          <Icon className="w-6 h-6" />
-        </div>
-        {trend !== undefined && (
-          <div className="text-right">
-            <p className="text-xs font-bold text-blue-600">{formatPercent(trend)}</p>
-            <p className="text-[10px] text-slate-400">{trendLabel}</p>
-          </div>
-        )}
-      </div>
-      <p className="text-sm text-slate-500 mb-1">{title}</p>
-      <p className="text-2xl font-black text-slate-900">{value}</p>
+      
+      <RankingTable title="مقارنة الفروع" data={extraStats.branchComparison || []} columns={[{ key: 'name', label: 'الفرع' }, { key: 'newBusiness', label: 'الجديد', format: formatCurrency }, { key: 'collections', label: 'التحصيل', format: formatCurrency }, { key: 'total', label: 'الإجمالي', format: formatCurrency }]} />
     </div>
   );
 }
