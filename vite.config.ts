@@ -1,9 +1,11 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// FIX #V1: Removed lucide-react from optimizeDeps.exclude — was slowing dev server
 export default defineConfig({
   plugins: [react()],
+  server: {
+    allowedHosts: true,
+  },
   build: {
     rollupOptions: {
       output: {

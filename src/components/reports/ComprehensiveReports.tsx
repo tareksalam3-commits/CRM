@@ -74,7 +74,7 @@ export default function ComprehensiveReports() {
         case 'agent-performance':
           const agentMap: Record<string, any> = {};
           data.forEach(m => {
-            const name = m.collector?.full_name || 'غير معروف';
+            const name = (m.collector as any)?.full_name || 'غير معروف';
             if (!agentMap[name]) agentMap[name] = { name, newBusiness: 0, collections: 0, total: 0 };
             if (m.is_new_business) agentMap[name].newBusiness += Number(m.amount);
             else agentMap[name].collections += Number(m.amount);

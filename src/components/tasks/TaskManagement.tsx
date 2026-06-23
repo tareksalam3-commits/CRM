@@ -11,7 +11,7 @@ import toast from 'react-hot-toast';
 export default function TaskManagement() {
   const { profile } = useAuth();
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [users, setUsers] = useState<{ id: string; full_name: string; role: string }[]>([]);
+  const [users, setUsers] = useState<{ id: string; full_name: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);

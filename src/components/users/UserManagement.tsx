@@ -99,7 +99,7 @@ export default function UserManagement() {
             phone: formData.phone || null,
             role: formData.role,
             manager_id: formData.manager_id || null,
-            branch_id: formData.branch_id || null,
+            active_branch_id: formData.branch_id || null,
             updated_at: new Date().toISOString(),
           })
           .eq('id', editingUser.id);
@@ -241,7 +241,7 @@ export default function UserManagement() {
                   <td className="px-6 py-5">
                     <div className="flex items-center gap-2 text-xs font-bold text-slate-600 dark:text-slate-400">
                       <Building2 size={14} className="text-primary/60" />
-                      {branches.find(b => b.id === user.branch_id)?.name || 'غير محدد'}
+                      {branches.find(b => b.id === user.active_branch_id)?.name || 'غير محدد'}
                     </div>
                   </td>
                   <td className="px-6 py-5">
@@ -267,7 +267,7 @@ export default function UserManagement() {
                             ...user, 
                             phone: user.phone || '',
                             manager_id: user.manager_id || '',
-                            branch_id: user.branch_id || '',
+                            branch_id: user.active_branch_id || '',
                             password: '' 
                           }); 
                           setShowForm(true); 

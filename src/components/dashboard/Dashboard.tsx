@@ -10,7 +10,7 @@ import LoadingSpinner from '../common/LoadingSpinner';
 import {
   LayoutDashboard, TrendingUp, Award, RefreshCw, Wallet, 
   Users, Building2, BarChart3, PieChart, ArrowUpRight, ArrowDownRight,
-  ChevronLeft, Target, ShieldCheck
+  ChevronLeft, Target, ShieldCheck, FileText
 } from 'lucide-react';
 
 interface DashboardStats {

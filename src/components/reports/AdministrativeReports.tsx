@@ -13,6 +13,7 @@ import 'jspdf-autotable';
 type ReportType = 'supervisors' | 'team_leaders' | 'agents' | 'branches' | 'comprehensive';
 
 interface ReportData {
+  id: string;
   name: string;
   newBusiness: number;
   collections: number;
