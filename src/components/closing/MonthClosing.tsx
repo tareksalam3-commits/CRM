@@ -4,7 +4,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { formatCurrency, formatPercent, getMonthName } from '../../lib/utils';
 import PageHeader from '../common/PageHeader';
 import LoadingSpinner from '../common/LoadingSpinner';
-import { Calendar, Lock, FileText, Download, Target, TrendingUp, Wallet, Award, Building2, User } from 'lucide-react';
+import { Calendar, Lock, FileText, Download, Target, TrendingUp, Wallet, Award, Building2, User, ShieldCheck } from 'lucide-react';
 import toast from 'react-hot-toast';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
@@ -57,6 +57,7 @@ export default function MonthClosing() {
     newBusiness: 0,
     collections: 0,
   });
+  const [metrics, setMetrics] = useState<any[]>([]);
 
   useEffect(() => {
     loadData();
@@ -194,6 +195,7 @@ export default function MonthClosing() {
         newBusiness,
         collections,
       });
+      setMetrics(metrics);
 
       setIsCurrentClosed(closingsRes.data?.some(c => c.month === selectedMonth && c.year === selectedYear) || false);
     } catch (error) {
@@ -244,8 +246,20 @@ export default function MonthClosing() {
         'التحصيل': a.collections,
         'الإجمالي': a.totalProduction,
       }));
+
+      const detailedData = metrics.map(m => ({
+        'اسم العميل': (m.policy as any)?.client?.name || 'غير معروف',
+        'رقم الوثيقة': (m.policy as any)?.policy_number || 'غير معروف',
+        'النوع': m.is_new_business ? 'جديد' : 'تحصيل',
+        'المبلغ': m.amount,
+        'التاريخ': m.collection_date,
+        'الوكيل': (m.policy as any)?.agent?.full_name || 'غير معروف',
+        'الفرع': (m.policy as any)?.branch?.name || 'غير معروف'
+      }));
+      const detailedSheet = XLSX.utils.json_to_sheet(detailedData);
+      XLSX.utils.book_append_sheet(wb, detailedSheet, 'تفاصيل العمليات');
       const agentSheet = XLSX.utils.json_to_sheet(agentData);
-      XLSX.utils.book_append_sheet(wb, agentSheet, 'تفاصيل العمليات');
+      XLSX.utils.book_append_sheet(wb, agentSheet, 'أداء الوكلاء');
 
       XLSX.writeFile(wb, `تقرير_تقفيل_${selectedMonth}_${selectedYear}.xlsx`);
     } finally {
@@ -432,22 +446,4 @@ function SummaryCard({ title, value, icon: Icon, color, isPercent }: any) {
   );
 }
 
-function ShieldCheck(props: any) {
-  return (
-    <svg
-      {...props}
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
-      <path d="m9 12 2 2 4-4" />
-    </svg>
-  );
-}
+

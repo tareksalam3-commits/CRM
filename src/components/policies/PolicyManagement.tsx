@@ -251,7 +251,7 @@ export default function PolicyManagement() {
       <div className="flex flex-col sm:flex-row gap-3">
         <div className="relative flex-1">
           <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-          <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="بحث برقم الوثيقة أو اسم العميل..." className="w-full pr-10 pl-4 py-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none" />
+          <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="بحث باسم العميل أو رقم الوثيقة..." className="w-full pr-10 pl-4 py-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none" />
         </div>
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as any)} className="px-4 py-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none">
           {STATUS_FILTER_OPTS.map(opt => <option key={opt.key} value={opt.key}>{opt.label}</option>)}

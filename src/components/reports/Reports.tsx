@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { canViewAdminReports } from '../../lib/rbac';
-import { Download, Filter, BarChart, PieChart, TrendingUp, DollarSign, Calendar, User, FileText, Loader2, Building2, Users, Wallet, CheckSquare, Search } from 'lucide-react';
+import { Download, Filter, BarChart, PieChart, TrendingUp, DollarSign, Calendar, User, FileText, Loader2, Building2, Users, Wallet, CheckSquare, Search, RefreshCw } from 'lucide-react';
 import { formatCurrency } from '../../lib/utils';
 import { exportToExcel } from '../../lib/excel';
 import PageHeader from '../common/PageHeader';
@@ -52,7 +52,7 @@ export default function Reports() {
         case 'production': {
           let query = supabase
             .from('unified_performance_metrics')
-            .select('agent_id, amount, is_new_business, is_first_year_collection, collection_date')
+            .select('agent_id, amount, is_new_business, is_first_year_collection, collection_date, policy:policies(policy_number, client:clients(name))')
             .gte('collection_date', monthStart)
             .lt('collection_date', monthEnd)
             .eq('is_first_year_collection', true);
@@ -71,6 +71,8 @@ export default function Reports() {
               { label: 'التحصيل (السنة الأولى)', value: formatCurrency(collections), icon: Wallet, color: 'secondary' }
             );
             data = metrics.map(m => ({
+              'العميل': (m.policy as any)?.client?.name || 'Unknown',
+              'الوثيقة': (m.policy as any)?.policy_number || 'Unknown',
               'المندوب': profiles.find(p => p.id === m.agent_id)?.full_name || 'Unknown',
               'المبلغ': m.amount,
               'نوع': m.is_new_business ? 'إنتاج جديد' : 'تحصيل',
@@ -83,7 +85,7 @@ export default function Reports() {
         case 'collection': {
           let query = supabase
             .from('unified_performance_metrics')
-            .select('amount, collection_date, agent_id')
+            .select('amount, collection_date, agent_id, policy:policies(policy_number, client:clients(name))')
             .gte('collection_date', monthStart)
             .lt('collection_date', monthEnd)
             .eq('is_first_year_collection', true)
@@ -100,6 +102,8 @@ export default function Reports() {
               { label: 'عدد التحصيلات', value: collections.length.toString(), icon: CheckSquare, color: 'success' }
             );
             data = collections.map(c => ({
+              'العميل': (c.policy as any)?.client?.name || 'Unknown',
+              'الوثيقة': (c.policy as any)?.policy_number || 'Unknown',
               'المندوب': profiles.find(p => p.id === c.agent_id)?.full_name || 'Unknown',
               'المبلغ': c.amount,
               'التاريخ': c.collection_date
@@ -360,24 +364,4 @@ export default function Reports() {
   );
 }
 
-function RefreshCw(props: any) {
-  return (
-    <svg
-      {...props}
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
-      <path d="M21 3v5h-5" />
-      <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
-      <path d="M3 21v-5h5" />
-    </svg>
-  );
-}
+
