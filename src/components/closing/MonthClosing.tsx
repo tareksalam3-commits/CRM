@@ -4,7 +4,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { formatCurrency, formatPercent, getMonthName } from '../../lib/utils';
 import PageHeader from '../common/PageHeader';
 import LoadingSpinner from '../common/LoadingSpinner';
-import { Calendar, Lock, FileText } from 'lucide-react';
+import { Calendar, Lock, FileText, Download, Target, TrendingUp, Wallet, Award, Building2, User } from 'lucide-react';
 import toast from 'react-hot-toast';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
@@ -70,7 +70,6 @@ export default function MonthClosing() {
       const nextYear = selectedMonth === 12 ? selectedYear + 1 : selectedYear;
       const monthEnd = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
 
-      // Fetch unified metrics with full hierarchy (first year only)
       const [metricsRes, targetsRes, closingsRes] = await Promise.all([
         supabase
           .from('unified_performance_metrics')
@@ -105,7 +104,6 @@ export default function MonthClosing() {
       const metrics = metricsRes.data || [];
       const targets = targetsRes.data || [];
 
-      // Calculate totals based on is_new_business flag
       const newBusiness = metrics
         .filter(m => m.is_new_business === true)
         .reduce((s, m) => s + Number(m.amount), 0);
@@ -124,7 +122,6 @@ export default function MonthClosing() {
         collectionRate: totalTarget > 0 ? (totalProduction / totalTarget) * 100 : 0,
       });
 
-      // Build hierarchical collections map (first year only)
       const agentMap = new Map<string, AgentCollection>();
       const supervisorMap = new Map<string, any>();
       const teamLeaderMap = new Map<string, any>();
@@ -136,7 +133,6 @@ export default function MonthClosing() {
         const amount = Number(m.amount);
         const isNew = m.is_new_business;
 
-        // Agent level
         const agentId = policy.agent_id;
         if (agentId) {
           if (!agentMap.has(agentId)) {
@@ -156,7 +152,6 @@ export default function MonthClosing() {
           agent.count += 1;
         }
 
-        // Team Leader level
         const tlId = policy.team_leader_id;
         if (tlId) {
           if (!teamLeaderMap.has(tlId)) {
@@ -172,7 +167,6 @@ export default function MonthClosing() {
           else tl.collections += amount;
         }
 
-        // Supervisor level
         const supId = policy.supervisor_id;
         if (supId) {
           if (!supervisorMap.has(supId)) {
@@ -191,7 +185,6 @@ export default function MonthClosing() {
 
       setAgentCollections(Array.from(agentMap.values()).sort((a, b) => b.totalProduction - a.totalProduction));
 
-      // Build executive summary with hierarchy
       setExecutiveSummary({
         supervisors: Array.from(supervisorMap.values()).sort((a, b) => (b.newBusiness + b.collections) - (a.newBusiness + a.collections)),
         teamLeaders: Array.from(teamLeaderMap.values()).sort((a, b) => (b.newBusiness + b.collections) - (a.newBusiness + a.collections)),
@@ -234,8 +227,6 @@ export default function MonthClosing() {
     setExporting(true);
     try {
       const wb = XLSX.utils.book_new();
-
-      // Sheet 1: Executive Summary
       const summaryData = [
         ['الملخص الإداري'],
         ['الهدف', executiveSummary.target],
@@ -247,7 +238,6 @@ export default function MonthClosing() {
       const summarySheet = XLSX.utils.aoa_to_sheet(summaryData);
       XLSX.utils.book_append_sheet(wb, summarySheet, 'الملخص');
 
-      // Sheet 2: Agent Details
       const agentData = agentCollections.map(a => ({
         'المندوب': a.agentName,
         'الجديد': a.newBusiness,
@@ -256,17 +246,6 @@ export default function MonthClosing() {
       }));
       const agentSheet = XLSX.utils.json_to_sheet(agentData);
       XLSX.utils.book_append_sheet(wb, agentSheet, 'تفاصيل العمليات');
-
-      // Sheet 3: Totals
-      const totalsData = [
-        ['الإجماليات النهائية'],
-        ['إجمالي الجديد', executiveSummary.newBusiness],
-        ['إجمالي التحصيل', executiveSummary.collections],
-        ['إجمالي الإنتاج', executiveSummary.achieved],
-        ['عدد المندوبين', agentCollections.length],
-      ];
-      const totalsSheet = XLSX.utils.aoa_to_sheet(totalsData);
-      XLSX.utils.book_append_sheet(wb, totalsSheet, 'الإجماليات');
 
       XLSX.writeFile(wb, `تقرير_تقفيل_${selectedMonth}_${selectedYear}.xlsx`);
     } finally {
@@ -278,15 +257,8 @@ export default function MonthClosing() {
     setExporting(true);
     try {
       const doc = new jsPDF();
-      doc.setLanguage('ar');
-
-      // Title
       doc.setFontSize(16);
       doc.text(`تقرير تقفيل شهر ${getMonthName(selectedMonth)} ${selectedYear}`, 10, 20);
-
-      // Executive Summary
-      doc.setFontSize(12);
-      doc.text('الملخص الإداري:', 10, 35);
       (doc as any).autoTable({
         head: [['البيان', 'القيمة']],
         body: [
@@ -296,40 +268,8 @@ export default function MonthClosing() {
           ['الإنتاج الجديد', formatCurrency(executiveSummary.newBusiness)],
           ['التحصيل', formatCurrency(executiveSummary.collections)],
         ],
-        startY: 40,
-        margin: 10,
+        startY: 30,
       });
-
-      // Agent Details
-      let yPosition = (doc as any).lastAutoTable.finalY + 10;
-      doc.text('تفاصيل العمليات:', 10, yPosition);
-      (doc as any).autoTable({
-        head: [['المندوب', 'الجديد', 'التحصيل', 'الإجمالي']],
-        body: agentCollections.map(a => [
-          a.agentName,
-          formatCurrency(a.newBusiness),
-          formatCurrency(a.collections),
-          formatCurrency(a.totalProduction),
-        ]),
-        startY: yPosition + 5,
-        margin: 10,
-      });
-
-      // Totals
-      yPosition = (doc as any).lastAutoTable.finalY + 10;
-      doc.text('الإجماليات النهائية:', 10, yPosition);
-      (doc as any).autoTable({
-        head: [['البيان', 'القيمة']],
-        body: [
-          ['إجمالي الجديد', formatCurrency(executiveSummary.newBusiness)],
-          ['إجمالي التحصيل', formatCurrency(executiveSummary.collections)],
-          ['إجمالي الإنتاج', formatCurrency(executiveSummary.achieved)],
-          ['عدد المندوبين', agentCollections.length.toString()],
-        ],
-        startY: yPosition + 5,
-        margin: 10,
-      });
-
       doc.save(`تقرير_تقفيل_${selectedMonth}_${selectedYear}.pdf`);
     } finally {
       setExporting(false);
@@ -339,76 +279,175 @@ export default function MonthClosing() {
   if (loading) return <LoadingSpinner />;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8 pb-12 animate-in fade-in duration-500">
       <PageHeader
-        title="تقفيل الشهر (السنة الأولى فقط)"
+        title="تقفيل وإغلاق الشهر"
+        subtitle={`مراجعة أداء شهر ${getMonthName(selectedMonth)} ${selectedYear} (السنة الأولى فقط)`}
         icon={Calendar}
-        actions={!isCurrentClosed && (
-          <button onClick={closeMonth} className="px-4 py-2 bg-rose-600 text-white rounded-xl flex items-center gap-2">
-            <Lock className="w-4 h-4" /> تقفيل الشهر
-          </button>
-        )}
+        actions={
+          <div className="flex items-center gap-3">
+            {!isCurrentClosed && (
+              <button 
+                onClick={closeMonth} 
+                className="flex items-center gap-2 px-6 py-2.5 bg-danger text-white rounded-xl hover:bg-danger/90 transition-all shadow-crm font-black text-sm"
+              >
+                <Lock className="w-4 h-4" /> تقفيل الشهر نهائياً
+              </button>
+            )}
+            <div className="h-8 w-[1px] bg-slate-200 dark:bg-slate-700 mx-2"></div>
+            <button 
+              onClick={exportToExcel} 
+              disabled={exporting} 
+              className="flex items-center gap-2 px-4 py-2.5 bg-success/10 text-success border border-success/20 rounded-xl hover:bg-success/20 transition-all font-bold text-sm disabled:opacity-50"
+            >
+              <FileText className="w-4 h-4" /> Excel
+            </button>
+            <button 
+              onClick={exportToPDF} 
+              disabled={exporting} 
+              className="flex items-center gap-2 px-4 py-2.5 bg-danger/10 text-danger border border-danger/20 rounded-xl hover:bg-danger/20 transition-all font-bold text-sm disabled:opacity-50"
+            >
+              <Download className="w-4 h-4" /> PDF
+            </button>
+          </div>
+        }
       />
 
-      <div className="flex gap-4">
-        <select value={selectedMonth} onChange={e => setSelectedMonth(Number(e.target.value))} className="p-2 border rounded-xl">
-          {Array.from({ length: 12 }, (_, i) => <option key={i + 1} value={i + 1}>{getMonthName(i + 1)}</option>)}
-        </select>
-        <select value={selectedYear} onChange={e => setSelectedYear(Number(e.target.value))} className="p-2 border rounded-xl">
-          {Array.from({ length: 5 }, (_, i) => <option key={i} value={new Date().getFullYear() - i}>{new Date().getFullYear() - i}</option>)}
-        </select>
+      {/* Selectors */}
+      <div className="bg-white dark:bg-slate-900 p-6 rounded-[2rem] border border-slate-100 dark:border-slate-800 shadow-crm flex flex-wrap gap-6 items-center">
+        <div className="flex items-center gap-3">
+          <label className="text-xs font-black text-slate-400 uppercase tracking-wider">الشهر</label>
+          <select 
+            value={selectedMonth} 
+            onChange={e => setSelectedMonth(Number(e.target.value))} 
+            className="px-4 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-sm font-bold appearance-none min-w-[140px]"
+          >
+            {Array.from({ length: 12 }, (_, i) => <option key={i + 1} value={i + 1}>{getMonthName(i + 1)}</option>)}
+          </select>
+        </div>
+        <div className="flex items-center gap-3">
+          <label className="text-xs font-black text-slate-400 uppercase tracking-wider">السنة</label>
+          <select 
+            value={selectedYear} 
+            onChange={e => setSelectedYear(Number(e.target.value))} 
+            className="px-4 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-sm font-bold appearance-none min-w-[120px]"
+          >
+            {Array.from({ length: 5 }, (_, i) => <option key={i} value={new Date().getFullYear() - i}>{new Date().getFullYear() - i}</option>)}
+          </select>
+        </div>
+        {isCurrentClosed && (
+          <div className="flex items-center gap-2 px-4 py-2 bg-success/10 text-success rounded-full border border-success/20 ml-auto">
+            <ShieldCheck className="w-4 h-4" />
+            <span className="text-xs font-black">تم تقفيل هذا الشهر</span>
+          </div>
+        )}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="p-6 bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700">
-          <p className="text-sm text-slate-500 mb-1">الإنتاج الجديد</p>
-          <p className="text-2xl font-bold text-blue-600">{formatCurrency(monthData.newBusiness)}</p>
-        </div>
-        <div className="p-6 bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700">
-          <p className="text-sm text-slate-500 mb-1">التحصيل</p>
-          <p className="text-2xl font-bold text-emerald-600">{formatCurrency(monthData.collections)}</p>
-        </div>
-        <div className="p-6 bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700">
-          <p className="text-sm text-slate-500 mb-1">إجمالي الإنتاج</p>
-          <p className="text-2xl font-bold text-indigo-600">{formatCurrency(monthData.totalProduction)}</p>
-        </div>
-        <div className="p-6 bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700">
-          <p className="text-sm text-slate-500 mb-1">نسبة الإنجاز</p>
-          <p className="text-2xl font-bold text-slate-900 dark:text-white">{formatPercent(monthData.collectionRate)}</p>
-        </div>
+      {/* Stats Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <SummaryCard title="إجمالي الجديد" value={monthData.newBusiness} icon={Award} color="primary" />
+        <SummaryCard title="إجمالي التحصيل" value={monthData.collections} icon={Wallet} color="success" />
+        <SummaryCard title="الإنتاج الكلي" value={monthData.totalProduction} icon={TrendingUp} color="secondary" />
+        <SummaryCard title="نسبة الإنجاز" value={monthData.collectionRate} icon={Target} color="warning" isPercent />
       </div>
 
-      <div className="flex gap-2">
-        <button onClick={exportToExcel} disabled={exporting} className="px-4 py-2 bg-emerald-600 text-white rounded-xl flex items-center gap-2 hover:bg-emerald-700 disabled:opacity-50">
-          <FileText className="w-4 h-4" /> Excel
-        </button>
-        <button onClick={exportToPDF} disabled={exporting} className="px-4 py-2 bg-rose-600 text-white rounded-xl flex items-center gap-2 hover:bg-rose-700 disabled:opacity-50">
-          <FileText className="w-4 h-4" /> PDF
-        </button>
-      </div>
-
-      <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700 overflow-hidden">
-        <table className="w-full text-right">
-          <thead className="bg-slate-50 dark:bg-slate-900/50">
-            <tr>
-              <th className="px-6 py-4 text-sm font-bold">المندوب</th>
-              <th className="px-6 py-4 text-sm font-bold">الجديد</th>
-              <th className="px-6 py-4 text-sm font-bold">التحصيل</th>
-              <th className="px-6 py-4 text-sm font-bold">الإجمالي</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
-            {agentCollections.map(agent => (
-              <tr key={agent.agentId}>
-                <td className="px-6 py-4">{agent.agentName}</td>
-                <td className="px-6 py-4 text-blue-600 font-bold">{formatCurrency(agent.newBusiness)}</td>
-                <td className="px-6 py-4 text-emerald-600 font-bold">{formatCurrency(agent.collections)}</td>
-                <td className="px-6 py-4 font-bold">{formatCurrency(agent.totalProduction)}</td>
+      {/* Agent Performance Table */}
+      <div className="bg-white dark:bg-slate-900 rounded-[2.5rem] border border-slate-100 dark:border-slate-800 shadow-crm overflow-hidden">
+        <div className="px-8 py-6 border-b border-slate-50 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/50">
+          <h3 className="text-base font-black text-slate-900 dark:text-white flex items-center gap-3">
+            <div className="p-2 bg-white dark:bg-slate-900 rounded-lg shadow-sm border border-slate-100 dark:border-slate-800">
+              <User className="w-5 h-5 text-primary" />
+            </div>
+            تفاصيل أداء الوكلاء
+          </h3>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-right">
+            <thead>
+              <tr className="bg-white dark:bg-slate-900">
+                <th className="px-8 py-4 text-[11px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-50 dark:border-slate-800">الوكيل</th>
+                <th className="px-6 py-4 text-[11px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-50 dark:border-slate-800">الجديد</th>
+                <th className="px-6 py-4 text-[11px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-50 dark:border-slate-800">التحصيل</th>
+                <th className="px-6 py-4 text-[11px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-50 dark:border-slate-800">الإجمالي</th>
+                <th className="px-8 py-4 text-[11px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-50 dark:border-slate-800 text-center">العمليات</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-slate-50 dark:divide-slate-800">
+              {agentCollections.map((agent, idx) => (
+                <tr key={agent.agentId} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors group">
+                  <td className="px-8 py-4">
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs font-black text-slate-300 w-4">{idx + 1}</span>
+                      <span className="text-sm font-black text-slate-900 dark:text-white">{agent.agentName}</span>
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 text-sm font-bold text-primary">{formatCurrency(agent.newBusiness)}</td>
+                  <td className="px-6 py-4 text-sm font-bold text-success">{formatCurrency(agent.collections)}</td>
+                  <td className="px-6 py-4 text-sm font-black text-slate-900 dark:text-white">{formatCurrency(agent.totalProduction)}</td>
+                  <td className="px-8 py-4 text-center">
+                    <span className="px-3 py-1 bg-slate-100 dark:bg-slate-800 rounded-full text-[10px] font-black text-slate-500">
+                      {agent.count} وثيقة
+                    </span>
+                  </td>
+                </tr>
+              ))}
+              {agentCollections.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-8 py-12 text-center">
+                    <div className="flex flex-col items-center gap-2 opacity-30">
+                      <Calendar className="w-12 h-12" />
+                      <p className="text-sm font-bold">لا توجد عمليات مسجلة لهذا الشهر</p>
+                    </div>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
+  );
+}
+
+function SummaryCard({ title, value, icon: Icon, color, isPercent }: any) {
+  const colorStyles: any = {
+    primary: 'bg-primary/10 text-primary border-primary/20',
+    success: 'bg-success/10 text-success border-success/20',
+    warning: 'bg-warning/10 text-warning border-warning/20',
+    secondary: 'bg-secondary/10 text-secondary border-secondary/20',
+  };
+
+  return (
+    <div className="bg-white dark:bg-slate-900 p-6 rounded-[2rem] border border-slate-100 dark:border-slate-800 shadow-crm hover:shadow-crm-lg transition-all duration-300">
+      <div className="flex items-center gap-4 mb-4">
+        <div className={`p-3 rounded-2xl border ${colorStyles[color]}`}>
+          <Icon className="w-5 h-5" />
+        </div>
+        <p className="text-xs font-black text-slate-400 uppercase tracking-widest">{title}</p>
+      </div>
+      <p className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">
+        {isPercent ? formatPercent(value) : formatCurrency(value)}
+      </p>
+    </div>
+  );
+}
+
+function ShieldCheck(props: any) {
+  return (
+    <svg
+      {...props}
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
+      <path d="m9 12 2 2 4-4" />
+    </svg>
   );
 }
