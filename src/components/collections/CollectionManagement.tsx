@@ -50,7 +50,7 @@ export default function CollectionManagement() {
       } else if (userRole === 'supervisor') {
         // المشرف يرى أقساط رؤساء المجموعات والوكلاء التابعين له
         query = query.eq('policy.supervisor_id', userId);
-      } else if (userRole === 'general_supervisor') {
+      } else if (userRole === 'general_supervisor' && branchId) {
         // المشرف العام يرى أقساط فرعه بالكامل
         query = query.eq('policy.branch_id', branchId);
       }
@@ -195,6 +195,24 @@ export default function CollectionManagement() {
 
   if (loading) return <LoadingSpinner />;
 
+  // التحقق من وجود فرع نشط للمستخدم
+  if (profile?.role === 'general_supervisor' && !activeBranch) {
+    return (
+      <div className="space-y-6">
+        <PageHeader
+          title="التحصيل"
+          description="إدارة تحصيل الأقساط والدفعات"
+          icon={Wallet}
+        />
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 text-center">
+          <AlertTriangle className="w-12 h-12 text-amber-600 mx-auto mb-3" />
+          <p className="text-amber-900 font-bold">لم يتم تعيين فرع نشط لحسابك</p>
+          <p className="text-amber-700 text-sm mt-2">يرجى التواصل مع مسؤول النظام لتعيين فرع</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -207,6 +225,14 @@ export default function CollectionManagement() {
           </button>
         }
       />
+
+      {filtered.length === 0 && (
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-6 text-center">
+          <Wallet className="w-12 h-12 text-blue-600 mx-auto mb-3" />
+          <p className="text-blue-900 font-bold">لا توجد أقساط للعرض</p>
+          <p className="text-blue-700 text-sm mt-2">جميع الأقساط المستحقة تم تحصيلها أو لا توجد أقساط في هذا الفرع</p>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <StatCard label="الإجمالي" value={stats.total} color="blue" />
