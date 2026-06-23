@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
+import { canCloseMonth } from '../../lib/rbac';
 import { formatCurrency, formatPercent, getMonthName } from '../../lib/utils';
 import PageHeader from '../common/PageHeader';
 import LoadingSpinner from '../common/LoadingSpinner';
@@ -207,6 +208,24 @@ export default function MonthClosing() {
   }
 
   async function closeMonth() {
+    if (!profile) return;
+    
+    // SECURITY FIX: Use canCloseMonth from rbac.ts
+    if (!canCloseMonth(profile.role as any)) {
+      toast.error('ليس لديك صلاحية تقفيل الشهر');
+      return;
+    }
+
+    // BUG FIX #12: Prevent closing future months
+    const now = new Date();
+    const isCurrentOrPast = (selectedYear < now.getFullYear()) ||
+      (selectedYear === now.getFullYear() && selectedMonth <= now.getMonth() + 1);
+    
+    if (!isCurrentOrPast) {
+      toast.error('لا يمكن تقفيل شهر مستقبلي');
+      return;
+    }
+
     if (!confirm(`هل أنت متأكد من تقفيل شهر ${getMonthName(selectedMonth)} ${selectedYear}؟`)) return;
 
     try {
@@ -290,6 +309,8 @@ export default function MonthClosing() {
     }
   };
 
+  const canClose = profile?.role ? canCloseMonth(profile.role as any) : false;
+
   if (loading) return <LoadingSpinner />;
 
   return (
@@ -300,7 +321,7 @@ export default function MonthClosing() {
         icon={Calendar}
         actions={
           <div className="flex items-center gap-3">
-            {!isCurrentClosed && (
+            {canClose && !isCurrentClosed && (
               <button 
                 onClick={closeMonth} 
                 className="flex items-center gap-2 px-6 py-2.5 bg-danger text-white rounded-xl hover:bg-danger/90 transition-all shadow-crm font-black text-sm"
@@ -445,5 +466,3 @@ function SummaryCard({ title, value, icon: Icon, color, isPercent }: any) {
     </div>
   );
 }
-
-
