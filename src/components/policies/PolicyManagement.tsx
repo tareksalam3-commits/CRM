@@ -119,10 +119,12 @@ export default function PolicyManagement() {
     if (!formData.product) { toast.error('يجب اختيار المنتج'); return; }
     if (!formData.policy_number.trim()) { toast.error('رقم الوثيقة مطلوب'); return; }
     
-    // التحقق من صيغة رقم الوثيقة
-    const policyNumberRegex = /^POL-\d{4}-\d{5}$/;
-    if (!policyNumberRegex.test(formData.policy_number.trim())) {
-      toast.error('صيغة رقم الوثيقة غير صحيحة (POL-YYYY-XXXXX)');
+    // التحقق من أن رقم الوثيقة يحتوي على أرقام فقط (أو الصيغة القديمة)
+    const isNumeric = /^\d+$/.test(formData.policy_number.trim());
+    const isStandardFormat = /^POL-\d{4}-\d{5}$/.test(formData.policy_number.trim());
+    
+    if (!isNumeric && !isStandardFormat) {
+      toast.error('رقم الوثيقة يجب أن يحتوي على أرقام فقط');
       return;
     }
     
@@ -295,8 +297,8 @@ export default function PolicyManagement() {
             <form onSubmit={handleSubmit} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-1.5">
                 <label className="text-sm font-bold">رقم الوثيقة *</label>
-                <input required type="text" value={formData.policy_number} onChange={e => setFormData({...formData, policy_number: e.target.value})} placeholder="POL-YYYY-00001" className="w-full px-4 py-2 border rounded-xl" />
-                <p className="text-xs text-slate-500">الصيغة: POL-YYYY-XXXXX (مثال: POL-2026-00001)</p>
+                <input required type="text" value={formData.policy_number} onChange={e => setFormData({...formData, policy_number: e.target.value})} placeholder="أدخل رقم الوثيقة..." className="w-full px-4 py-2 border rounded-xl" />
+                <p className="text-xs text-slate-500">يمكنك إدخال أرقام فقط</p>
               </div>
               <div className="space-y-1.5">
                 <label className="text-sm font-bold">العميل *</label>
