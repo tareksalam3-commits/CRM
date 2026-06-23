@@ -147,10 +147,11 @@ export default function PolicyManagement() {
       coverage_amount: coverageAmount,
       annual_premium: annualPremium,
       issue_date: formData.issue_date,
+      start_date: formData.issue_date,
       status: formData.status,
       payment_frequency: formData.payment_frequency,
       payment_method: formData.payment_method || null,
-    };
+    }
 
     try {
       if (editingPolicy) {
