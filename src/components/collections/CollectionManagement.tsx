@@ -234,7 +234,7 @@ export default function CollectionManagement() {
         <table className="w-full text-right">
           <thead>
             <tr className="bg-slate-50 dark:bg-slate-900/50">
-              <th className="px-6 py-4 text-sm font-bold">الوثيقة / العميل</th>
+              <th className="px-6 py-4 text-sm font-bold">العميل / الوثيقة</th>
               <th className="px-6 py-4 text-sm font-bold">القسط</th>
               <th className="px-6 py-4 text-sm font-bold">المبلغ</th>
               <th className="px-6 py-4 text-sm font-bold">الاستحقاق</th>
@@ -246,8 +246,8 @@ export default function CollectionManagement() {
             {filtered.map(inst => (
               <tr key={inst.id} className="hover:bg-slate-50 dark:hover:bg-slate-900/30 transition-colors">
                 <td className="px-6 py-4">
-                  <p className="font-bold text-slate-900 dark:text-white">{(inst.policy as any)?.policy_number}</p>
-                  <p className="text-xs text-slate-500">{(inst.policy as any)?.client?.name}</p>
+                  <p className="font-bold text-slate-900 dark:text-white">{(inst.policy as any)?.client?.name}</p>
+                  <p className="text-xs text-slate-500">الوثيقة: {(inst.policy as any)?.policy_number}</p>
                 </td>
                 <td className="px-6 py-4 text-sm">قسط #{inst.installment_number}</td>
                 <td className="px-6 py-4 font-bold">{formatCurrency(inst.amount)}</td>

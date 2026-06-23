@@ -218,9 +218,9 @@ export default function EnhancedMonthClosing() {
 
     // 2. Operations Sheet
     const opRows = [
-      ['رقم الوثيقة', 'اسم العميل', 'الفرع', 'الوكيل', 'رئيس المجموعة', 'المراقب', 'النوع', 'القيمة', 'التاريخ'],
+      ['اسم العميل', 'رقم الوثيقة', 'الفرع', 'الوكيل', 'رئيس المجموعة', 'المراقب', 'النوع', 'القيمة', 'التاريخ'],
       ...closingData.operations.map(o => [
-        o.policyNumber, o.clientName, o.branchName, o.agentName, o.teamLeaderName, o.supervisorName, o.type, o.amount, o.date
+        o.clientName, o.policyNumber, o.branchName, o.agentName, o.teamLeaderName, o.supervisorName, o.type, o.amount, o.date
       ])
     ];
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(opRows), 'تفاصيل العمليات');
@@ -364,8 +364,8 @@ export default function EnhancedMonthClosing() {
               <table className="w-full text-right border-collapse">
                 <thead className="bg-slate-50 border-b border-slate-200">
                   <tr>
-                    <th className="px-4 py-3 text-sm font-bold text-slate-600">رقم الوثيقة</th>
                     <th className="px-4 py-3 text-sm font-bold text-slate-600">العميل</th>
+                    <th className="px-4 py-3 text-sm font-bold text-slate-600">رقم الوثيقة</th>
                     <th className="px-4 py-3 text-sm font-bold text-slate-600">الفرع</th>
                     <th className="px-4 py-3 text-sm font-bold text-slate-600">الوكيل</th>
                     <th className="px-4 py-3 text-sm font-bold text-slate-600">رئيس المجموعة</th>
@@ -378,8 +378,8 @@ export default function EnhancedMonthClosing() {
                 <tbody className="divide-y divide-slate-100">
                   {closingData.operations.map((op, i) => (
                     <tr key={i} className="hover:bg-slate-50 transition-colors">
-                      <td className="px-4 py-3 text-sm font-medium text-blue-600">{op.policyNumber}</td>
-                      <td className="px-4 py-3 text-sm text-slate-700">{op.clientName}</td>
+                      <td className="px-4 py-3 text-sm font-medium text-blue-600">{op.clientName}</td>
+                      <td className="px-4 py-3 text-sm text-slate-700">{op.policyNumber}</td>
                       <td className="px-4 py-3 text-sm text-slate-500">{op.branchName}</td>
                       <td className="px-4 py-3 text-sm text-slate-700">{op.agentName}</td>
                       <td className="px-4 py-3 text-sm text-slate-500">{op.teamLeaderName}</td>

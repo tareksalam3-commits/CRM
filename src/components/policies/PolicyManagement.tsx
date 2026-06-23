@@ -264,8 +264,8 @@ export default function PolicyManagement() {
             <div className="flex items-center gap-4">
               <div className="w-12 h-12 bg-blue-50 dark:bg-blue-900/20 rounded-xl flex items-center justify-center text-blue-600"><FileText className="w-6 h-6" /></div>
               <div>
-                <p className="font-bold text-slate-900 dark:text-white">{policy.policy_number}</p>
-                <p className="text-sm text-slate-500">العميل: {(policy.client as any)?.name} | المندوب: {(policy.agent as any)?.full_name}</p>
+                <p className="font-bold text-slate-900 dark:text-white">{(policy.client as any)?.name}</p>
+                <p className="text-sm text-slate-500">الوثيقة: {policy.policy_number} | المندوب: {(policy.agent as any)?.full_name}</p>
               </div>
             </div>
             <div className="flex items-center gap-3">
