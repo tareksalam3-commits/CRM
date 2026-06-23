@@ -58,11 +58,13 @@ export default function Reports() {
 
       switch (reportType) {
         case 'production': {
+          // Fetch only first-year metrics
           let query = supabase
             .from('unified_performance_metrics')
             .select('agent_id, amount, is_new_business, is_first_year_collection, collection_date')
             .gte('collection_date', monthStart)
-            .lt('collection_date', monthEnd);
+            .lt('collection_date', monthEnd)
+            .eq('is_first_year_collection', true);
 
           const { data: metrics, error: metricsError } = await query;
           if (metricsError) {
@@ -70,71 +72,134 @@ export default function Reports() {
           } else if (metrics) {
             const total = metrics.reduce((sum, m) => sum + (m.amount as number), 0);
             const newBiz = metrics.filter(m => m.is_new_business).reduce((sum, m) => sum + (m.amount as number), 0);
-            const renewals = metrics.filter(m => !m.is_new_business).reduce((sum, m) => sum + (m.amount as number), 0);
+            const collections = metrics.filter(m => !m.is_new_business).reduce((sum, m) => sum + (m.amount as number), 0);
             
             newKpis.push(
-              { label: 'إجمالي الإنتاج', value: formatCurrency(total), icon: DollarSign, color: 'blue' },
-              { label: 'أعمال جديدة', value: formatCurrency(newBiz), icon: TrendingUp, color: 'green' },
-              { label: 'تجديدات', value: formatCurrency(renewals), icon: Calendar, color: 'purple' }
+              { label: 'إجمالي الإنتاج (السنة الأولى)', value: formatCurrency(total), icon: DollarSign, color: 'blue' },
+              { label: 'الإنتاج الجديد', value: formatCurrency(newBiz), icon: TrendingUp, color: 'green' },
+              { label: 'التحصيل (السنة الأولى)', value: formatCurrency(collections), icon: Wallet, color: 'emerald' }
             );
-            data = metrics;
+            data = metrics.map(m => ({
+              'المندوب': m.agent_id,
+              'المبلغ': m.amount,
+              'نوع': m.is_new_business ? 'إنتاج جديد' : 'تحصيل',
+              'التاريخ': m.collection_date
+            }));
           }
           break;
         }
 
         case 'collection': {
+          // Fetch first-year collections only
           let query = supabase
-            .from('installments')
-            .select('amount, status, due_date, policy:policies!inner(agent_id, branch_id)')
-            .gte('due_date', monthStart)
-            .lt('due_date', monthEnd);
+            .from('unified_performance_metrics')
+            .select('amount, collection_date, agent_id')
+            .gte('collection_date', monthStart)
+            .lt('collection_date', monthEnd)
+            .eq('is_first_year_collection', true)
+            .eq('is_new_business', false);
 
-          const { data: installments, error: instError } = await query;
-          if (instError) {
-            console.error('Error fetching installments:', instError);
-          } else if (installments) {
-            const total = installments.reduce((sum, i) => sum + (i.amount as number), 0);
-            const collected = installments.filter(i => i.status === 'paid').reduce((sum, i) => sum + (i.amount as number), 0);
-            const rate = total > 0 ? (collected / total) * 100 : 0;
-
+          const { data: collections, error: colError } = await query;
+          if (colError) {
+            console.error('Error fetching collections:', colError);
+          } else if (collections) {
+            const total = collections.reduce((sum, c) => sum + (c.amount as number), 0);
+            
             newKpis.push(
-              { label: 'إجمالي المطلوب', value: formatCurrency(total), icon: Wallet, color: 'blue' },
-              { label: 'تم تحصيله', value: formatCurrency(collected), icon: CheckSquare, color: 'green' },
-              { label: 'نسبة التحصيل', value: `${rate.toFixed(1)}%`, icon: BarChart, color: 'orange' }
+              { label: 'إجمالي التحصيل (السنة الأولى)', value: formatCurrency(total), icon: Wallet, color: 'blue' },
+              { label: 'عدد التحصيلات', value: collections.length.toString(), icon: CheckSquare, color: 'green' }
             );
-            data = installments;
+            data = collections.map(c => ({
+              'المندوب': c.agent_id,
+              'المبلغ': c.amount,
+              'التاريخ': c.collection_date
+            }));
           }
           break;
         }
 
         case 'branch_performance': {
           if (!canViewAdmin) break;
-          const { data: branchData, error: bError } = await supabase.rpc('get_branch_performance_report', {
-            p_month: month,
-            p_year: year
-          });
-          if (bError) {
-            console.error('Error fetching branch report:', bError);
-          } else if (branchData) {
-            const total = branchData.reduce((sum: number, b: any) => sum + (b.total_production || 0), 0);
-            newKpis.push({ label: 'إجمالي إنتاج الفروع', value: formatCurrency(total), icon: Building2, color: 'blue' });
-            data = branchData;
+          
+          // Fetch branch performance from first-year metrics
+          const { data: metrics } = await supabase
+            .from('unified_performance_metrics')
+            .select('branch_id, amount, is_new_business')
+            .gte('collection_date', monthStart)
+            .lt('collection_date', monthEnd)
+            .eq('is_first_year_collection', true);
+
+          if (metrics) {
+            const { data: branches } = await supabase.from('branches').select('id, name');
+            const branchMap = new Map(branches?.map(b => [b.id, b.name]) || []);
+
+            const branchData = new Map<string, any>();
+            for (const m of metrics) {
+              const bid = m.branch_id;
+              if (!branchData.has(bid)) {
+                branchData.set(bid, {
+                  branch_id: bid,
+                  branch_name: branchMap.get(bid) || 'Unknown',
+                  new_business: 0,
+                  collections: 0,
+                  total_production: 0
+                });
+              }
+              const bd = branchData.get(bid);
+              if (m.is_new_business) {
+                bd.new_business += m.amount;
+              } else {
+                bd.collections += m.amount;
+              }
+              bd.total_production += m.amount;
+            }
+
+            const total = Array.from(branchData.values()).reduce((sum, b) => sum + b.total_production, 0);
+            newKpis.push({ label: 'إجمالي إنتاج الفروع (السنة الأولى)', value: formatCurrency(total), icon: Building2, color: 'blue' });
+            data = Array.from(branchData.values());
           }
           break;
         }
 
         case 'agent_performance': {
           if (!canViewAdmin) break;
-          const { data: agentData, error: aError } = await supabase.rpc('get_agent_performance_report', {
-            p_month: month,
-            p_year: year
-          });
-          if (aError) {
-            console.error('Error fetching agent report:', aError);
-          } else if (agentData) {
-            const total = agentData.reduce((sum: number, a: any) => sum + (a.total_production || 0), 0);
-            newKpis.push({ label: 'إجمالي إنتاج الوكلاء', value: formatCurrency(total), icon: Users, color: 'blue' });
-            data = agentData;
+          
+          // Fetch agent performance from first-year metrics
+          const { data: metrics } = await supabase
+            .from('unified_performance_metrics')
+            .select('agent_id, amount, is_new_business')
+            .gte('collection_date', monthStart)
+            .lt('collection_date', monthEnd)
+            .eq('is_first_year_collection', true);
+
+          if (metrics) {
+            const { data: profiles } = await supabase.from('profiles').select('id, full_name');
+            const profileMap = new Map(profiles?.map(p => [p.id, p.full_name]) || []);
+
+            const agentData = new Map<string, any>();
+            for (const m of metrics) {
+              const aid = m.agent_id;
+              if (!agentData.has(aid)) {
+                agentData.set(aid, {
+                  agent_id: aid,
+                  agent_name: profileMap.get(aid) || 'Unknown',
+                  new_business: 0,
+                  collections: 0,
+                  total_production: 0
+                });
+              }
+              const ad = agentData.get(aid);
+              if (m.is_new_business) {
+                ad.new_business += m.amount;
+              } else {
+                ad.collections += m.amount;
+              }
+              ad.total_production += m.amount;
+            }
+
+            const total = Array.from(agentData.values()).reduce((sum, a) => sum + a.total_production, 0);
+            newKpis.push({ label: 'إجمالي إنتاج الوكلاء (السنة الأولى)', value: formatCurrency(total), icon: Users, color: 'blue' });
+            data = Array.from(agentData.values());
           }
           break;
         }
@@ -144,6 +209,7 @@ export default function Reports() {
       setReportData(data);
     } catch (err) {
       console.error('Report generation error:', err);
+      toast.error('حدث خطأ أثناء إنشاء التقرير');
     } finally {
       setLoading(false);
     }
@@ -168,7 +234,7 @@ export default function Reports() {
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">التقارير</h1>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">التقارير (السنة الأولى فقط)</h1>
           <p className="text-slate-500 dark:text-slate-400">تحليل الأداء والإنتاج والتحصيل</p>
         </div>
         <button
@@ -192,12 +258,12 @@ export default function Reports() {
                 onChange={(e) => setReportType(e.target.value as ReportType)}
                 className="w-full pr-10 pl-4 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all"
               >
-                <option value="production">الإنتاج (شخصي/فريق)</option>
-                <option value="collection">التحصيل (شخصي/فريق)</option>
+                <option value="production">الإنتاج (السنة الأولى)</option>
+                <option value="collection">التحصيل (السنة الأولى)</option>
                 {canViewAdmin && (
                   <>
-                    <option value="branch_performance">أداء الفروع</option>
-                    <option value="agent_performance">أداء الوكلاء</option>
+                    <option value="branch_performance">أداء الفروع (السنة الأولى)</option>
+                    <option value="agent_performance">أداء الوكلاء (السنة الأولى)</option>
                   </>
                 )}
               </select>
@@ -284,7 +350,7 @@ export default function Reports() {
                   <tr key={i} className="hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
                     {Object.keys(row).filter(k => typeof row[k] !== 'object').map(key => (
                       <td key={key} className="px-6 py-4 text-sm text-slate-600 dark:text-slate-300">
-                        {typeof row[key] === 'number' && (key.includes('amount') || key.includes('production') || key.includes('collection')) ? formatCurrency(row[key]) : String(row[key])}
+                        {typeof row[key] === 'number' && (key.includes('amount') || key.includes('production') || key.includes('collection') || key.includes('المبلغ')) ? formatCurrency(row[key]) : String(row[key])}
                       </td>
                     ))}
                   </tr>

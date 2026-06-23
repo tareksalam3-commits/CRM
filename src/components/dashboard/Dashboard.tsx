@@ -56,6 +56,8 @@ export default function Dashboard() {
       let policiesQuery = supabase.from('policies').select('id, status', { count: 'exact' });
       let clientsQuery = supabase.from('clients').select('id', { count: 'exact' });
       let unifiedMetricsQuery = supabase.from('unified_performance_metrics').select('*').eq('is_first_year_collection', true);
+      // Ensure we only get first-year collections
+      unifiedMetricsQuery = unifiedMetricsQuery.or('is_new_business.eq.true,is_first_year_collection.eq.true');
       let targetsQuery = supabase.from('targets').select('target_amount').eq('period_type', 'monthly').eq('year', now_date.getFullYear()).eq('period_number', now_date.getMonth() + 1);
 
       if (branchId && branchId !== 'all' && userRole !== 'super_admin') {
