@@ -1,4 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.2";
+
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -13,18 +15,10 @@ function jsonResponse(data: object, status = 200) {
   });
 }
 
-async function logAudit(supabaseUrl: string, serviceKey: string, payload: Record<string, unknown>) {
+async function logAudit(supabaseClient: any, payload: Record<string, unknown>) {
   try {
-    await fetch(`${supabaseUrl}/rest/v1/audit_logs`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${serviceKey}`,
-        apikey: serviceKey,
-        "Content-Type": "application/json",
-        Prefer: "return=minimal",
-      },
-      body: JSON.stringify(payload),
-    });
+    await supabaseClient.from("audit_logs").insert(payload);
+
   } catch (e) {
     console.error("Failed to log audit:", e);
   }
@@ -59,7 +53,7 @@ async function checkHierarchyAccess(
   }
 
   // Check if target is subordinate via RPC
-  const isSubordinateRes = await fetch(`${supabaseUrl}/rest/v1/rpc/is_subordinate`, {
+    const isSubordinateRes = await fetch(`${supabaseUrl}/rest/v1/rpc/is_subordinate_v2`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${serviceKey}`,
@@ -87,6 +81,7 @@ Deno.serve(async (req: Request) => {
 
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
   const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 
   if (!SERVICE_KEY || !SUPABASE_URL) {
     return jsonResponse({ error: "Server configuration error" }, 500);
@@ -99,30 +94,29 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: "Invalid request body" }, 400);
   }
 
-  const token = authHeader.slice(7);
-  const verifyRes = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
-    headers: { Authorization: `Bearer ${token}`, apikey: SERVICE_KEY },
-  });
-
+  const { data: { user: callerUser }, error: userError } = await supabase.auth.getUser(authHeader.slice(7));
   let callerId: string;
-  if (verifyRes.ok) {
-    const callerUser = await verifyRes.json();
-    callerId = callerUser.id;
-  } else {
+  if (userError || !callerUser) {
     const fallbackId = req.headers.get("x-user-id");
     if (fallbackId) {
       callerId = fallbackId;
     } else {
       return jsonResponse({ error: "Invalid session" }, 401);
     }
+  } else {
+    callerId = callerUser.id;
   }
 
-  const profileRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/profiles?id=eq.${callerId}&select=role,is_active`,
-    { headers: { Authorization: `Bearer ${SERVICE_KEY}`, apikey: SERVICE_KEY } }
-  );
-  const profiles = await profileRes.json();
-  const callerProfile = Array.isArray(profiles) ? profiles[0] : null;
+  const { data: callerProfileData, error: profileError } = await supabase
+    .from("profiles")
+    .select("role,is_active")
+    .eq("id", callerId)
+    .single();
+  if (profileError) {
+    console.error("Error fetching caller profile:", profileError);
+    return jsonResponse({ error: "Profile not found" }, 403);
+  }
+  const callerProfile = callerProfileData;
 
   if (!callerProfile || callerProfile.is_active === false) {
     return jsonResponse({ error: "Account inactive or profile not found" }, 403);
@@ -138,15 +132,13 @@ Deno.serve(async (req: Request) => {
     const hasAccess = await checkHierarchyAccess(SUPABASE_URL, SERVICE_KEY, callerId, target_user_id, callerProfile.role);
     if (!hasAccess) return jsonResponse({ error: "Unauthorized hierarchy access" }, 403);
 
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${target_user_id}`, {
-      method: "PUT",
-      headers: { Authorization: `Bearer ${SERVICE_KEY}`, apikey: SERVICE_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({ password: new_password }),
-    });
-
-    if (!res.ok) return jsonResponse({ error: "Failed to update password" }, 400);
+    const { error: updateAuthError } = await supabase.auth.admin.updateUserById(
+      target_user_id,
+      { password: new_password }
+    );
+    if (updateAuthError) return jsonResponse({ error: `Failed to update password: ${updateAuthError.message}` }, 400);
     
-    await logAudit(SUPABASE_URL, SERVICE_KEY, { user_id: callerId, action: "UPDATE_PASSWORD", entity_type: "user", entity_id: target_user_id });
+    await logAudit(supabase, { user_id: callerId, action: "UPDATE_PASSWORD", entity_type: "user", entity_id: target_user_id });
     return jsonResponse({ success: true });
   }
 
@@ -159,22 +151,20 @@ Deno.serve(async (req: Request) => {
     if (!hasAccess) return jsonResponse({ error: "Unauthorized hierarchy access" }, 403);
 
     // Update Auth
-    await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${target_user_id}`, {
-      method: "PUT",
-      headers: { Authorization: `Bearer ${SERVICE_KEY}`, apikey: SERVICE_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({ ban_duration: is_active ? "none" : "100000h" }),
-    });
+    const { error: updateAuthError } = await supabase.auth.admin.updateUserById(
+      target_user_id,
+      { ban_duration: is_active ? "none" : "100000h" }
+    );
+    if (updateAuthError) console.error("Failed to update auth user status:", updateAuthError.message);
 
     // Update Profile
-    const profUpdate = await fetch(`${SUPABASE_URL}/rest/v1/profiles?id=eq.${target_user_id}`, {
-      method: "PATCH",
-      headers: { Authorization: `Bearer ${SERVICE_KEY}`, apikey: SERVICE_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({ is_active, updated_at: new Date().toISOString() }),
-    });
+    const { error: updateProfileError } = await supabase
+      .from("profiles")
+      .update({ is_active, updated_at: new Date().toISOString() })
+      .eq("id", target_user_id);
+    if (updateProfileError) return jsonResponse({ error: `Failed to update profile status: ${updateProfileError.message}` }, 400);
 
-    if (!profUpdate.ok) return jsonResponse({ error: "Failed to update profile status" }, 400);
-
-    await logAudit(SUPABASE_URL, SERVICE_KEY, { user_id: callerId, action: is_active ? "ACTIVATE_USER" : "DEACTIVATE_USER", entity_type: "user", entity_id: target_user_id });
+    await logAudit(supabase, { user_id: callerId, action: is_active ? "ACTIVATE_USER" : "DEACTIVATE_USER", entity_type: "user", entity_id: target_user_id });
     return jsonResponse({ success: true });
   }
 
@@ -189,22 +179,22 @@ Deno.serve(async (req: Request) => {
     const hasAccess = await checkHierarchyAccess(SUPABASE_URL, SERVICE_KEY, callerId, target_user_id, callerProfile.role);
     if (!hasAccess) return jsonResponse({ error: "Unauthorized hierarchy access" }, 403);
 
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${target_user_id}`, {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${SERVICE_KEY}`, apikey: SERVICE_KEY },
-    });
+    const { error: deleteAuthError } = await supabase.auth.admin.deleteUser(target_user_id);
 
-    if (!res.ok) {
+    if (deleteAuthError) {
         // Fallback to soft delete if hard delete fails due to FK
-        await fetch(`${SUPABASE_URL}/rest/v1/profiles?id=eq.${target_user_id}`, {
-            method: "PATCH",
-            headers: { Authorization: `Bearer ${SERVICE_KEY}`, apikey: SERVICE_KEY, "Content-Type": "application/json" },
-            body: JSON.stringify({ is_active: false, updated_at: new Date().toISOString() }),
-        });
+        const { error: softDeleteError } = await supabase
+            .from("profiles")
+            .update({ is_active: false, updated_at: new Date().toISOString() })
+            .eq("id", target_user_id);
+        if (softDeleteError) {
+            console.error("Failed to soft delete user:", softDeleteError.message);
+            return jsonResponse({ error: `Failed to delete user: ${deleteAuthError.message}` }, 400);
+        }
         return jsonResponse({ success: true, message: "Soft deleted due to constraints" });
     }
 
-    await logAudit(SUPABASE_URL, SERVICE_KEY, { user_id: callerId, action: "DELETE_USER", entity_type: "user", entity_id: target_user_id });
+    await logAudit(supabase, { user_id: callerId, action: "DELETE_USER", entity_type: "user", entity_id: target_user_id });
     return jsonResponse({ success: true });
   }
 
@@ -220,42 +210,38 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ error: "Cannot create user with higher or equal rank" }, 403);
     }
 
-    const createRes = await fetch(`${SUPABASE_URL}/auth/v1/admin/users`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${SERVICE_KEY}`, apikey: SERVICE_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, email_confirm: true, user_metadata: { full_name, role } }),
+    const { data: createData, error: createAuthError } = await supabase.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+      user_metadata: { full_name, role },
     });
-    const createData = await createRes.json();
 
-    if (!createRes.ok || !createData.id) return jsonResponse({ error: createData.message || "Failed to create Auth user" }, 400);
+    if (createAuthError || !createData?.user?.id) return jsonResponse({ error: createAuthError?.message || "Failed to create Auth user" }, 400);
 
-    const userId = createData.id;
+    const userId = createData.user.id;
 
     // Create Profile (Upsert/Patch)
-    const profRes = await fetch(`${SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}`, {
-      method: "PATCH",
-      headers: { Authorization: `Bearer ${SERVICE_KEY}`, apikey: SERVICE_KEY, "Content-Type": "application/json", Prefer: "return=representation" },
-      body: JSON.stringify({ email, full_name, phone, role, manager_id, branch_id, is_active: true }),
-    });
+    const { error: upsertProfileError } = await supabase
+      .from("profiles")
+      .upsert({ id: userId, email, full_name, phone, role, manager_id, active_branch_id: branch_id, is_active: true }, { onConflict: "id" });
 
-    if (!profRes.ok) {
-        await fetch(`${SUPABASE_URL}/rest/v1/profiles`, {
-            method: "POST",
-            headers: { Authorization: `Bearer ${SERVICE_KEY}`, apikey: SERVICE_KEY, "Content-Type": "application/json" },
-            body: JSON.stringify({ id: userId, email, full_name, phone, role, manager_id, branch_id, is_active: true }),
-        });
+    if (upsertProfileError) {
+      console.error("Failed to upsert profile:", upsertProfileError.message);
+      return jsonResponse({ error: `Failed to create user profile: ${upsertProfileError.message}` }, 400);
     }
 
     // Assign branch access if branch_id provided
     if (branch_id) {
-        await fetch(`${SUPABASE_URL}/rest/v1/user_branch_access`, {
-            method: "POST",
-            headers: { Authorization: `Bearer ${SERVICE_KEY}`, apikey: SERVICE_KEY, "Content-Type": "application/json" },
-            body: JSON.stringify({ user_id: userId, branch_id, role, is_active: true }),
-        });
+        const { error: branchAccessError } = await supabase
+            .from("user_branch_access")
+            .insert({ user_id: userId, branch_id, role, is_active: true });
+        if (branchAccessError) {
+            console.error("Failed to assign branch access:", branchAccessError.message);
+        }
     }
 
-    await logAudit(SUPABASE_URL, SERVICE_KEY, { user_id: callerId, action: "CREATE_USER", entity_type: "user", entity_id: userId });
+    await logAudit(supabase, { user_id: callerId, action: "CREATE_USER", entity_type: "user", entity_id: userId });
     return jsonResponse({ success: true, userId });
   }
 

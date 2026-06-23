@@ -55,9 +55,9 @@ export default function Dashboard() {
       // Base Queries - Restricted to first year only
       let policiesQuery = supabase.from('policies').select('id, status', { count: 'exact' });
       let clientsQuery = supabase.from('clients').select('id', { count: 'exact' });
-      let unifiedMetricsQuery = supabase.from('unified_performance_metrics').select('*').eq('is_first_year_collection', true);
+      let unifiedMetricsQuery = supabase.from(\'unified_performance_metrics\').select(\'*\').eq(\'is_first_year_collection\', true);
       // Ensure we only get first-year collections
-      unifiedMetricsQuery = unifiedMetricsQuery.or('is_new_business.eq.true,is_first_year_collection.eq.true');
+
       let targetsQuery = supabase.from('targets').select('target_amount').eq('period_type', 'monthly').eq('year', now_date.getFullYear()).eq('period_number', now_date.getMonth() + 1);
 
       if (branchId && branchId !== 'all' && userRole !== 'super_admin') {
@@ -119,7 +119,7 @@ export default function Dashboard() {
   return (
     <div className="space-y-6 pb-10">
       <PageHeader
-        title="لوحة التحكم (السنة الأولى فقط)"
+        title=\"لوحة التحكم (السنة الأولى فقط)\"
         icon={LayoutDashboard}
         description={`مرحباً ${profile?.full_name} | ${profile?.role}`}
         actions={
@@ -137,7 +137,7 @@ export default function Dashboard() {
       </div>
 
       <div className="bg-white rounded-3xl p-8 border border-slate-100 shadow-sm">
-        <h3 className="text-lg font-bold mb-6">ملخص أداء السنة الأولى</h3>
+        <h3 className=\"text-lg font-bold mb-6\">ملخص أداء السنة الأولى</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
           <div className="space-y-4">
             <div className="flex justify-between text-sm">
