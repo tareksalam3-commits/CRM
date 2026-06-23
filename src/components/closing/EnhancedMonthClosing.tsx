@@ -70,9 +70,9 @@ export default function EnhancedMonthClosing() {
             branch_manager:profiles!policies_branch_manager_id_fkey (full_name)
           )
         `)
-        .gte(\'collection_date\', startDate)
-        .lt(\'collection_date\', endDate)
-        .eq(\'is_first_year_collection\', true);
+        .gte('collection_date', startDate)
+        .lt('collection_date', endDate)
+        .eq('is_first_year_collection', true);
 
 
       if (metricsError) throw metricsError;
