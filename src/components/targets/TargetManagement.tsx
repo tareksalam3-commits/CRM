@@ -24,6 +24,14 @@ const MONTHS = [
   { num: 12, name: 'ديسمبر' },
 ];
 
+const FIXED_TARGETS: Record<string, number> = {
+  agent: 12150,
+  team_leader: 60000,
+  supervisor: 120000,
+  general_supervisor: 240000,
+  dev_manager: 750000,
+};
+
 // ── جيب كل IDs اللي تحت مستخدم معين (recursive) ───────────────────────────
 function getSubordinateIds(userId: string, allProfiles: Profile[]): string[] {
   const directReports = allProfiles.filter(p => p.manager_id === userId).map(p => p.id);
@@ -142,13 +150,8 @@ export default function TargetManagement() {
   }, [loadData, refreshKey]);
 
   function validateForm(): boolean {
-    if (!form.user_id || !form.target_amount) {
-      toast.error('يرجى ملء جميع الحقول');
-      return false;
-    }
-    const amount = Number(form.target_amount);
-    if (isNaN(amount) || amount <= 0) {
-      toast.error('يجب أن يكون مبلغ التارجت أكبر من صفر');
+    if (!form.user_id) {
+      toast.error('يرجى اختيار المستخدم');
       return false;
     }
     return true;
@@ -157,12 +160,15 @@ export default function TargetManagement() {
   async function handleSubmit() {
     if (!validateForm()) return;
 
+    const user = allProfiles.find(p => p.id === form.user_id);
+    const targetAmount = user ? (FIXED_TARGETS[user.role] || 0) : Number(form.target_amount);
+
     const payload = {
       user_id: form.user_id,
       period_type: 'monthly' as const,
       year: form.year,
       period_number: form.period_number,
-      target_amount: Number(form.target_amount),
+      target_amount: targetAmount,
     };
 
     try {
@@ -186,16 +192,13 @@ export default function TargetManagement() {
   }
 
   async function handleBulkAdd() {
-    if (!bulkForm.user_id || !bulkForm.monthly_amount) {
-      toast.error('يرجى ملء جميع الحقول');
+    if (!bulkForm.user_id) {
+      toast.error('يرجى اختيار المستخدم');
       return;
     }
 
-    const amount = Number(bulkForm.monthly_amount);
-    if (isNaN(amount) || amount <= 0) {
-      toast.error('يجب أن يكون مبلغ التارجت أكبر من صفر');
-      return;
-    }
+    const user = allProfiles.find(p => p.id === bulkForm.user_id);
+    const amount = user ? (FIXED_TARGETS[user.role] || 0) : 0;
 
     try {
       const targets_to_insert = Array.from({ length: 12 }, (_, i) => ({
@@ -255,28 +258,18 @@ export default function TargetManagement() {
   }
 
   async function handleBulkAddAllUsers() {
-    if (!bulkForm.monthly_amount) {
-      toast.error('يرجى إدخال مبلغ التارجت');
-      return;
-    }
-
-    const amount = Number(bulkForm.monthly_amount);
-    if (isNaN(amount) || amount <= 0) {
-      toast.error('يجب أن يكون مبلغ التارجت أكبر من صفر');
-      return;
-    }
-
     try {
       const targets_to_insert = allProfiles
-        .flatMap(user =>
-          Array.from({ length: 12 }, (_, i) => ({
+        .flatMap(user => {
+          const amount = FIXED_TARGETS[user.role] || 0;
+          return Array.from({ length: 12 }, (_, i) => ({
             user_id: user.id,
             period_type: 'monthly' as const,
             year: bulkForm.year,
             period_number: i + 1,
             target_amount: amount,
-          }))
-        );
+          }));
+        });
 
       const { error } = await supabase.from('targets').upsert(targets_to_insert, { onConflict: 'user_id,period_type,year,period_number' });
       if (error) throw error;
@@ -386,16 +379,17 @@ export default function TargetManagement() {
         </div>
       </div>
 
-      {/* Targets List */}
-      <div className="space-y-3">
+      {/* Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {targets.map(t => {
-          const userObj = t.user as { full_name: string; role: string } | undefined;
-          const monthName = MONTHS.find(m => m.num === t.period_number)?.name || '';
+          const userObj = allProfiles.find(p => p.id === t.user_id);
+          const monthName = MONTHS.find(m => m.num === t.period_number)?.name;
+
           return (
-            <div key={t.id} className="bg-white dark:bg-slate-800 rounded-xl p-4 border border-slate-100 dark:border-slate-700">
-              <div className="flex items-start justify-between gap-3 mb-3">
-                <div className="flex items-start gap-2">
-                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 ${t.isManagerTarget ? 'bg-purple-100 dark:bg-purple-900/30' : 'bg-blue-100 dark:bg-blue-900/30'}`}>
+            <div key={t.id} className="bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm hover:shadow-md transition-shadow">
+              <div className="flex items-start justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-blue-50 dark:bg-blue-900/20 rounded-xl flex items-center justify-center">
                     {t.isManagerTarget
                       ? <Users className="w-4 h-4 text-purple-600 dark:text-purple-400" />
                       : <User className="w-4 h-4 text-blue-600 dark:text-blue-400" />
@@ -480,10 +474,11 @@ export default function TargetManagement() {
                 </div>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">مبلغ التارجت</label>
-                <input type="number" value={form.target_amount} onChange={e => setForm({ ...form, target_amount: e.target.value })}
-                  className="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="0" dir="ltr" />
+              <div className="space-y-1.5">
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">المبلغ المستهدف (تلقائي حسب الرتبة)</label>
+                <input disabled type="number" 
+                  value={form.user_id ? (FIXED_TARGETS[allProfiles.find(p => p.id === form.user_id)?.role || ''] || '') : ''}
+                  className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none text-slate-500" />
               </div>
 
               <div className="flex gap-3 pt-2">
@@ -534,15 +529,16 @@ export default function TargetManagement() {
                 </select>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">مبلغ التارجت الشهري</label>
-                <input type="number" value={bulkForm.monthly_amount} onChange={e => setBulkForm({ ...bulkForm, monthly_amount: e.target.value })}
-                  className="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" placeholder="0" dir="ltr" />
+              <div className="space-y-1.5">
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">المبلغ الشهري (تلقائي حسب الرتبة)</label>
+                <input disabled type="number" 
+                  value={bulkForm.user_id ? (bulkForm.user_id === 'all' ? 'متعدد' : (FIXED_TARGETS[allProfiles.find(p => p.id === bulkForm.user_id)?.role || ''] || '')) : ''}
+                  className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none text-slate-500" />
               </div>
 
               <div className="bg-emerald-50 dark:bg-emerald-900/20 rounded-xl p-3 text-sm text-emerald-700 dark:text-emerald-300">
                 <p className="font-medium mb-1">سيتم إنشاء:</p>
-                <p>12 تارجت شهري × {bulkForm.monthly_amount || '0'} جنيه = {Number(bulkForm.monthly_amount || 0) * 12} جنيه سنوياً</p>
+                <p>12 تارجت شهري حسب رتبة الموظف للسنة {bulkForm.year}</p>
               </div>
 
               <div className="flex gap-3 pt-2">

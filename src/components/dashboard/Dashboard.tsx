@@ -72,6 +72,8 @@ export default function Dashboard() {
         clientsQuery = clientsQuery.eq('agent_id', userId);
         unifiedMetricsQuery = unifiedMetricsQuery.eq('agent_id', userId);
         targetsQuery = targetsQuery.eq('user_id', userId);
+      } else if (['team_leader', 'supervisor', 'general_supervisor'].includes(userRole)) {
+        targetsQuery = targetsQuery.eq('user_id', userId);
       }
 
       const [policiesRes, clientsRes, metricsRes, targetsRes] = await Promise.all([
