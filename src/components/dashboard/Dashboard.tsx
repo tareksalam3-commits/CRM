@@ -64,7 +64,9 @@ export default function Dashboard() {
         policiesQuery = policiesQuery.eq('branch_id', branchId);
         clientsQuery = clientsQuery.eq('branch_id', branchId);
         unifiedMetricsQuery = unifiedMetricsQuery.eq('branch_id', branchId);
-        targetsQuery = targetsQuery.eq('branch_id', branchId);
+        if (userRole !== 'agent' && !['team_leader', 'supervisor', 'general_supervisor'].includes(userRole)) {
+          targetsQuery = targetsQuery.eq('branch_id', branchId);
+        }
       }
 
       if (userRole === 'agent') {
