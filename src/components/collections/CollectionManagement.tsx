@@ -96,7 +96,8 @@ export default function CollectionManagement() {
         receipt_number: formData.receipt_number || null,
         collected_by: profile.id,
         notes: formData.notes || null,
-        branch_id: (selectedInstallment.policy as any)?.branch_id
+        branch_id: (selectedInstallment.policy as any)?.branch_id,
+        collection_category: (selectedInstallment.installment_number === 1) ? 'first_year' : 'renewal'
       });
 
       if (insertError) throw insertError;

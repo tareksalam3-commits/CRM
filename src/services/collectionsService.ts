@@ -35,12 +35,25 @@ export async function createCollection(data: CollectionData) {
     // Determine if this is new business (first installment only)
     const is_new_business = installment?.installment_number === 1;
 
+    // Get policy branch_id
+    const { data: policy, error: policyError } = await supabase
+      .from('policies')
+      .select('branch_id')
+      .eq('id', data.policy_id)
+      .single();
+
+    if (policyError) {
+      throw new Error(`خطأ في جلب بيانات الوثيقة: ${policyError.message}`);
+    }
+
     // Insert the collection
     const { data: collection, error } = await supabase
       .from('collections')
       .insert({
         ...data,
         is_new_business,
+        branch_id: policy?.branch_id,
+        collection_category: is_new_business ? 'first_year' : 'renewal'
       })
       .select()
       .single();
