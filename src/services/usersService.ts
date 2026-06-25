@@ -14,13 +14,7 @@ async function callEdgeFunction(body: Record<string, unknown>) {
     if (sessionData?.session?.access_token) {
       headers['Authorization'] = `Bearer ${sessionData.session.access_token}`;
     } else {
-      const fallbackUserId = localStorage.getItem('fallback_user_id');
-      if (fallbackUserId) {
-        headers['x-user-id'] = fallbackUserId;
-        headers['Authorization'] = `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY || ''}`;
-      } else {
-        return { error: 'انتهت الجلسة — يرجى إعادة تسجيل الدخول' };
-      }
+      return { error: 'انتهت الجلسة — يرجى إعادة تسجيل الدخول' };
     }
 
     const response = await fetch(EDGE_FUNCTION_URL, {
@@ -95,16 +89,28 @@ export async function updateUserProfile(userId: string, updates: Partial<Profile
 
 export async function linkUserToBranches(userId: string, branchIds: string[]) {
   try {
-    await supabase.from('user_branch_access').delete().eq('user_id', userId);
-    if (branchIds.length > 0) {
+    const { data: existing } = await supabase
+      .from('user_branch_access')
+      .select('branch_id, is_active')
+      .eq('user_id', userId);
+    const existingMap = new Map((existing || []).map((e: any) => [e.branch_id, e.is_active]));
+    const toAdd = branchIds.filter(bid => !existingMap.has(bid));
+    const toReactivate = branchIds.filter(bid => existingMap.has(bid) && existingMap.get(bid) === false);
+    const toDeactivate = Array.from(existingMap.entries())
+      .filter(([bid, active]) => !branchIds.includes(bid) && active === true)
+      .map(([bid]) => bid);
+
+    if (toAdd.length > 0) {
       const { error } = await supabase.from('user_branch_access').insert(
-        branchIds.map(branchId => ({
-          user_id: userId,
-          branch_id: branchId,
-          is_active: true,
-        }))
+        toAdd.map(branchId => ({ user_id: userId, branch_id: branchId, is_active: true }))
       );
       if (error) return { error: error.message };
+    }
+    for (const bid of toReactivate) {
+      await supabase.from('user_branch_access').update({ is_active: true }).eq('user_id', userId).eq('branch_id', bid);
+    }
+    for (const bid of toDeactivate) {
+      await supabase.from('user_branch_access').update({ is_active: false }).eq('user_id', userId).eq('branch_id', bid);
     }
     return { success: true };
   } catch (err) {

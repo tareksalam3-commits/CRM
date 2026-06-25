@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { canViewAdminReports } from '../../lib/rbac';
+import { getBranchScope, getSubordinateIds } from '../../lib/dataAccess';
 import { Download, Filter, BarChart, PieChart, TrendingUp, DollarSign, Calendar, User, FileText, Loader2, Building2, Users, Wallet, CheckSquare, Search, RefreshCw } from 'lucide-react';
 import { formatCurrency } from '../../lib/utils';
 import { exportToExcel } from '../../lib/excel';
@@ -18,7 +19,7 @@ interface KPICard {
 }
 
 export default function Reports() {
-  const { profile } = useAuth();
+  const { profile, activeBranch } = useAuth();
   const [loading, setLoading] = useState(false);
   const [reportType, setReportType] = useState<ReportType>('production');
   const [reportData, setReportData] = useState<any[]>([]);
@@ -41,6 +42,12 @@ export default function Reports() {
     const monthEnd = `${nxtY}-${String(nxtM).padStart(2, '0')}-01`;
 
     try {
+      const scope = getBranchScope(profile, activeBranch);
+      let subIds: string[] = [];
+      if (scope.role === 'team_leader' || scope.role === 'supervisor') {
+        subIds = await getSubordinateIds(scope.userId);
+      }
+
       const { data: profilesData } = await supabase.from('profiles').select('id, full_name, manager_id');
       const profiles = profilesData || [];
       setAllProfiles(profiles);
@@ -48,14 +55,27 @@ export default function Reports() {
       let data: Record<string, unknown>[] = [];
       const newKpis: KPICard[] = [];
 
+      const applyScope = (q: any) => {
+        let query = q;
+        if (!scope.isAllBranches && scope.branchId) {
+          query = query.eq('branch_id', scope.branchId);
+        }
+        if (scope.role === 'agent') {
+          query = query.eq('agent_id', scope.userId);
+        } else if ((scope.role === 'team_leader' || scope.role === 'supervisor') && subIds.length > 0) {
+          query = query.in('agent_id', subIds);
+        }
+        return query;
+      };
+
       switch (reportType) {
         case 'production': {
-          let query = supabase
+          let query = applyScope(supabase
             .from('unified_performance_metrics')
             .select('agent_id, amount, is_new_business, is_first_year_collection, collection_date, policy:policies(policy_number, client:clients(name))')
             .gte('collection_date', monthStart)
             .lt('collection_date', monthEnd)
-            .eq('is_first_year_collection', true);
+            .eq('is_first_year_collection', true));
 
           const { data: metrics, error: metricsError } = await query;
           if (metricsError) {
@@ -83,13 +103,13 @@ export default function Reports() {
         }
 
         case 'collection': {
-          let query = supabase
+          let query = applyScope(supabase
             .from('unified_performance_metrics')
             .select('amount, collection_date, agent_id, policy:policies(policy_number, client:clients(name))')
             .gte('collection_date', monthStart)
             .lt('collection_date', monthEnd)
             .eq('is_first_year_collection', true)
-            .eq('is_new_business', false);
+            .eq('is_new_business', false));
 
           const { data: collections, error: colError } = await query;
           if (colError) {
@@ -114,12 +134,14 @@ export default function Reports() {
 
         case 'branch_performance': {
           if (!canViewAdmin) break;
-          const { data: metrics } = await supabase
+          let query = applyScope(supabase
             .from('unified_performance_metrics')
             .select('branch_id, amount, is_new_business')
             .gte('collection_date', monthStart)
             .lt('collection_date', monthEnd)
-            .eq('is_first_year_collection', true);
+            .eq('is_first_year_collection', true));
+
+          const { data: metrics } = await query;
 
           if (metrics) {
             const { data: branches } = await supabase.from('branches').select('id, name');
@@ -154,12 +176,14 @@ export default function Reports() {
 
         case 'agent_performance': {
           if (!canViewAdmin) break;
-          const { data: metrics } = await supabase
+          let query = applyScope(supabase
             .from('unified_performance_metrics')
             .select('agent_id, amount, is_new_business')
             .gte('collection_date', monthStart)
             .lt('collection_date', monthEnd)
-            .eq('is_first_year_collection', true);
+            .eq('is_first_year_collection', true));
+
+          const { data: metrics } = await query;
 
           if (metrics) {
             const { data: profiles } = await supabase.from('profiles').select('id, full_name');
@@ -201,7 +225,7 @@ export default function Reports() {
     } finally {
       setLoading(false);
     }
-  }, [profile, reportType, month, year, canViewAdmin]);
+  }, [profile, activeBranch, reportType, month, year, canViewAdmin]);
 
   useEffect(() => {
     generateReport();
@@ -285,7 +309,7 @@ export default function Reports() {
                 onChange={(e) => setYear(Number(e.target.value))}
                 className="w-full pr-10 pl-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-sm font-bold appearance-none"
               >
-                {[2024, 2025, 2026].map(y => <option key={y} value={y}>{y}</option>)}
+                {[2024, 2025, 2026, 2027].map(y => <option key={y} value={y}>{y}</option>)}
               </select>
             </div>
           </div>

@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
+import { getBranchScope, getSubordinateIds } from '../../lib/dataAccess';
 import {
   Policy, POLICY_STATUS_LABELS, PAYMENT_FREQUENCY_LABELS,
   PolicyStatus, PaymentFrequency,
@@ -31,7 +32,7 @@ const STATUS_FILTER_OPTS = [
 ];
 
 export default function PolicyManagement() {
-  const { profile } = useAuth();
+  const { profile, activeBranch } = useAuth();
   const [policies, setPolicies] = useState<Policy[]>([]);
   const [clients, setClients] = useState<{ id: string; name: string; phone: string }[]>([]);
   const [agents, setAgents] = useState<{ id: string; full_name: string; role: string }[]>([]);
@@ -48,13 +49,11 @@ export default function PolicyManagement() {
   const [formData, setFormData] = useState({ ...EMPTY_FORM });
 
   const loadData = useCallback(async () => {
+    if (!profile) return;
     setLoading(true);
     try {
-      const userRole = profile?.role;
-      const userId = profile?.id;
-      const branchId = profile?.active_branch_id;
+      const scope = getBranchScope(profile, activeBranch);
 
-      // Queries
       let policiesQuery = supabase
         .from('policies')
         .select('*, client:clients(name, phone), agent:profiles!policies_agent_id_fkey(full_name), branch:branches(name)')
@@ -65,22 +64,27 @@ export default function PolicyManagement() {
       let branchesQuery = supabase.from('branches').select('id, name').eq('is_active', true).order('name');
       let settingsQuery = supabase.from('system_settings').select('key, value');
 
-      // تطبيق الفلاتر حسب الدور الوظيفي والهيكل الهرمي
-      if (userRole === 'agent') {
-        // الوكيل يرى وثائقه فقط
-        policiesQuery = policiesQuery.eq('agent_id', userId);
-        clientsQuery = clientsQuery.eq('agent_id', userId);
-      } else if (userRole === 'team_leader') {
-        // رئيس المجموعة يرى نفسه وأعضاء فريقه
-        policiesQuery = policiesQuery.or(`agent_id.eq.${userId},team_leader_id.eq.${userId}`);
-      } else if (userRole === 'supervisor') {
-        // المشرف يرى رؤساء المجموعات والوكلاء التابعين له
-        policiesQuery = policiesQuery.eq('supervisor_id', userId);
-      } else if (userRole === 'general_supervisor') {
-        // المشرف العام يرى وثائق فرعه بالكامل
-        policiesQuery = policiesQuery.eq('branch_id', branchId);
+      if (!scope.isAllBranches && scope.branchId) {
+        policiesQuery = policiesQuery.eq('branch_id', scope.branchId);
+        clientsQuery = clientsQuery.eq('branch_id', scope.branchId);
       }
-      // Super Admin و Dev Manager يرون الكل بدون فلاتر
+
+      if (scope.role === 'agent') {
+        policiesQuery = policiesQuery.eq('agent_id', scope.userId);
+        clientsQuery = clientsQuery.eq('agent_id', scope.userId);
+      } else if (scope.role === 'team_leader') {
+        const subIds = await getSubordinateIds(scope.userId);
+        if (subIds.length > 0) {
+          policiesQuery = policiesQuery.in('agent_id', subIds);
+          clientsQuery = clientsQuery.in('agent_id', subIds);
+        }
+      } else if (scope.role === 'supervisor') {
+        const subIds = await getSubordinateIds(scope.userId);
+        if (subIds.length > 0) {
+          policiesQuery = policiesQuery.in('agent_id', subIds);
+          clientsQuery = clientsQuery.in('agent_id', subIds);
+        }
+      }
 
       const [policiesRes, clientsRes, agentsRes, branchesRes, settingsRes] = await Promise.all([
         policiesQuery,
@@ -108,7 +112,7 @@ export default function PolicyManagement() {
     } finally {
       setLoading(false);
     }
-  }, [profile]);
+  }, [profile, activeBranch]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -142,7 +146,7 @@ export default function PolicyManagement() {
       policy_number: formData.policy_number.trim(),
       client_id: formData.client_id,
       agent_id: profile?.role === 'agent' ? profile.id : (formData.agent_id || profile?.id),
-      branch_id: formData.branch_id || profile?.active_branch_id,
+      branch_id: formData.branch_id || (activeBranch && activeBranch.id !== 'all' ? activeBranch.id : profile?.active_branch_id),
       product: formData.product,
       coverage_amount: coverageAmount,
       annual_premium: annualPremium,

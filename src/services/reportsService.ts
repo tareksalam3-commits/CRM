@@ -208,14 +208,21 @@ export async function calculateBranchPerformance(
  */
 export async function getAllAgentsPerformance(
   month: number,
-  year: number
+  year: number,
+  branchId?: string
 ): Promise<{ success: boolean; data?: AgentPerformance[]; error?: string }> {
   try {
-    // Get all agents
-    const { data: agents, error: agentsError } = await supabase
+    let agentsQuery = supabase
       .from('profiles')
       .select('id, full_name')
-      .eq('is_active', true);
+      .eq('is_active', true)
+      .eq('role', 'agent');
+
+    if (branchId) {
+      agentsQuery = agentsQuery.eq('active_branch_id', branchId);
+    }
+
+    const { data: agents, error: agentsError } = await agentsQuery;
 
     if (agentsError) {
       return { success: false, error: `خطأ في جلب المندوبين: ${agentsError.message}` };

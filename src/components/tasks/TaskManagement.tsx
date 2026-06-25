@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
+import { getBranchScope, getSubordinateIds } from '../../lib/dataAccess';
 import { Task, TASK_STATUS_LABELS, TASK_PRIORITY_LABELS, TaskStatus, TaskPriority } from '../../types';
 import { formatDate } from '../../lib/utils';
 import PageHeader from '../common/PageHeader';
@@ -9,7 +10,7 @@ import { CheckSquare, Plus, X, Edit2, Clock, AlertTriangle, CheckCircle2, Circle
 import toast from 'react-hot-toast';
 
 export default function TaskManagement() {
-  const { profile } = useAuth();
+  const { profile, activeBranch } = useAuth();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [users, setUsers] = useState<{ id: string; full_name: string }[]>([]);
   const [loading, setLoading] = useState(true);
@@ -21,17 +22,39 @@ export default function TaskManagement() {
     title: '', description: '', assigned_to: '', due_date: '', priority: 'medium' as TaskPriority, status: 'new' as TaskStatus,
   });
 
-  useEffect(() => { loadData(); }, []);
+  const loadData = useCallback(async () => {
+    if (!profile) return;
+    setLoading(true);
+    const scope = getBranchScope(profile, activeBranch);
+    let subIds: string[] = [];
+    if (scope.role === 'team_leader' || scope.role === 'supervisor') {
+      subIds = await getSubordinateIds(scope.userId);
+    }
 
-  async function loadData() {
-    const [tasksRes, usersRes] = await Promise.all([
-      supabase.from('tasks').select('*, assignee:profiles!tasks_assigned_to_fkey(full_name), creator:profiles!tasks_created_by_fkey(full_name)').order('created_at', { ascending: false }),
-      supabase.from('profiles').select('id, full_name').eq('is_active', true),
-    ]);
+    let tasksQuery = supabase.from('tasks').select('*, assignee:profiles!tasks_assigned_to_fkey(full_name), creator:profiles!tasks_created_by_fkey(full_name)').order('created_at', { ascending: false });
+    let usersQuery = supabase.from('profiles').select('id, full_name').eq('is_active', true);
+
+    if (!scope.isAllBranches && scope.branchId) {
+      tasksQuery = tasksQuery.eq('branch_id', scope.branchId);
+      usersQuery = usersQuery.eq('active_branch_id', scope.branchId);
+    }
+
+    if (scope.role === 'agent') {
+      tasksQuery = tasksQuery.eq('assigned_to', scope.userId);
+      usersQuery = usersQuery.eq('id', scope.userId);
+    } else if ((scope.role === 'team_leader' || scope.role === 'supervisor') && subIds.length > 0) {
+      const visibleIds = [scope.userId, ...subIds];
+      tasksQuery = tasksQuery.in('assigned_to', visibleIds);
+      usersQuery = usersQuery.in('id', visibleIds);
+    }
+
+    const [tasksRes, usersRes] = await Promise.all([tasksQuery, usersQuery]);
     if (tasksRes.data) setTasks(tasksRes.data as unknown as Task[]);
     if (usersRes.data) setUsers(usersRes.data);
     setLoading(false);
-  }
+  }, [profile, activeBranch]);
+
+  useEffect(() => { loadData(); }, [loadData]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -45,6 +68,7 @@ export default function TaskManagement() {
       priority: formData.priority,
       status: formData.status,
       created_by: profile.id,
+      branch_id: activeBranch && activeBranch.id !== 'all' ? activeBranch.id : profile.active_branch_id,
     };
 
     if (editingTask) {
@@ -61,7 +85,8 @@ export default function TaskManagement() {
   }
 
   async function updateStatus(task: Task, status: TaskStatus) {
-    await supabase.from('tasks').update({ status, updated_at: new Date().toISOString() }).eq('id', task.id);
+    const { error } = await supabase.from('tasks').update({ status, updated_at: new Date().toISOString() }).eq('id', task.id);
+    if (error) { toast.error('خطأ في تحديث الحالة'); return; }
     loadData();
   }
 

@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
+import { getBranchScope, getSubordinateIds } from '../../lib/dataAccess';
 import { Profile, ROLE_LABELS, UserRole } from '../../types';
 import { canRearrangeOrg } from '../../lib/rbac';
 import PageHeader from '../common/PageHeader';
@@ -31,6 +32,18 @@ const ROLE_DOT: Record<UserRole, string> = {
   agent: 'bg-slate-400',
 };
 
+function isDescendant(userId: string, ancestorId: string, allUsers: Profile[]): boolean {
+  let current: string | null = userId;
+  const visited = new Set<string>();
+  while (current && !visited.has(current)) {
+    visited.add(current);
+    if (current === ancestorId) return true;
+    const user = allUsers.find(u => u.id === current);
+    current = user?.manager_id || null;
+  }
+  return false;
+}
+
 function buildTree(allUsers: Profile[], parentId: string | null): OrgNode[] {
   return allUsers
     .filter(u => u.manager_id === parentId)
@@ -50,7 +63,7 @@ function NodeCard({ node, allUsers, canRearrange, onMove }: {
   const [expanded, setExpanded] = useState(true);
   const [showMoveMenu, setShowMoveMenu] = useState(false);
 
-    const potentialManagers = allUsers.filter(u => u.id !== node.id);
+    const potentialManagers = allUsers.filter(u => u.id !== node.id && !isDescendant(u.id, node.id, allUsers));
 
   return (
     <div className="relative">
@@ -110,7 +123,7 @@ function NodeCard({ node, allUsers, canRearrange, onMove }: {
 }
 
 export default function OrgChart() {
-  const { profile } = useAuth();
+  const { profile, activeBranch } = useAuth();
   const [allUsers, setAllUsers] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
   const [tree, setTree] = useState<OrgNode[]>([]);
@@ -118,16 +131,26 @@ export default function OrgChart() {
   const canRearrange = profile ? canRearrangeOrg(profile.role) : false;
 
   const fetchUsers = useCallback(async () => {
+    if (!profile) return;
+    const scope = getBranchScope(profile, activeBranch);
     let query = supabase.from('profiles').select('*').order('full_name');
     
-    // Data Isolation handled by RLS automatically
+    if (!scope.isAllBranches && scope.branchId) {
+      query = query.eq('active_branch_id', scope.branchId);
+    }
+    if (scope.role === 'agent') {
+      query = query.eq('id', scope.userId);
+    } else if (scope.role === 'team_leader' || scope.role === 'supervisor') {
+      const subIds = await getSubordinateIds(scope.userId);
+      const visibleIds = [scope.userId, ...subIds];
+      query = query.in('id', visibleIds);
+    }
 
     const { data, error } = await query;
     if (!error && data) {
       const users = data as Profile[];
       setAllUsers(users);
       
-      // Build tree starting from the highest accessible level
       const rootId = (profile && !['super_admin', 'dev_manager'].includes(profile.role)) 
         ? (users.find(u => u.id === profile.id)?.manager_id || null) 
         : null;
@@ -135,7 +158,7 @@ export default function OrgChart() {
       setTree(buildTree(users, rootId));
     }
     setLoading(false);
-  }, [profile]);
+  }, [profile, activeBranch]);
 
   useEffect(() => { fetchUsers(); }, [fetchUsers]);
 

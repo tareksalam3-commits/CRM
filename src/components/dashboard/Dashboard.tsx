@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
+import { getBranchScope, getSubordinateIds, getCurrentMonthRange } from '../../lib/dataAccess';
 import {
   formatCurrency, formatPercent,
 } from '../../lib/utils';
@@ -47,35 +48,39 @@ export default function Dashboard() {
     if (!profile) return;
     setLoading(true);
     try {
-      const branchId = activeBranch?.id;
-      const userRole = profile?.role;
-      const userId = profile?.id;
-
-      const now_date = new Date();
-      const monthStart = new Date(now_date.getFullYear(), now_date.getMonth(), 1).toISOString().split('T')[0];
-      const monthEnd = new Date(now_date.getFullYear(), now_date.getMonth() + 1, 0).toISOString().split('T')[0];
+      const scope = getBranchScope(profile, activeBranch);
+      const { monthStart, monthEnd, year, month } = getCurrentMonthRange();
 
       let policiesQuery = supabase.from('policies').select('id, status', { count: 'exact' });
       let clientsQuery = supabase.from('clients').select('id', { count: 'exact' });
       let unifiedMetricsQuery = supabase.from('unified_performance_metrics').select('*').eq('is_first_year_collection', true);
-      let targetsQuery = supabase.from('targets').select('target_amount').eq('period_type', 'monthly').eq('year', now_date.getFullYear()).eq('period_number', now_date.getMonth() + 1);
+      let targetsQuery = supabase.from('targets').select('target_amount').eq('period_type', 'monthly').eq('year', year).eq('period_number', month);
 
-      if (branchId && branchId !== 'all' && userRole !== 'super_admin' && userRole !== 'dev_manager') {
-        policiesQuery = policiesQuery.eq('branch_id', branchId);
-        clientsQuery = clientsQuery.eq('branch_id', branchId);
-        unifiedMetricsQuery = unifiedMetricsQuery.eq('branch_id', branchId);
-        if (userRole !== 'agent' && !['team_leader', 'supervisor', 'general_supervisor'].includes(userRole)) {
-          targetsQuery = targetsQuery.eq('branch_id', branchId);
-        }
+      let subordinateIds: string[] = [];
+      if (scope.role === 'team_leader') {
+        subordinateIds = await getSubordinateIds(scope.userId);
       }
 
-      if (userRole === 'agent') {
-        policiesQuery = policiesQuery.eq('agent_id', userId);
-        clientsQuery = clientsQuery.eq('agent_id', userId);
-        unifiedMetricsQuery = unifiedMetricsQuery.eq('agent_id', userId);
-        targetsQuery = targetsQuery.eq('user_id', userId);
-      } else if (['team_leader', 'supervisor', 'general_supervisor'].includes(userRole)) {
-        targetsQuery = targetsQuery.eq('user_id', userId);
+      if (!scope.isAllBranches && scope.branchId) {
+        policiesQuery = policiesQuery.eq('branch_id', scope.branchId);
+        clientsQuery = clientsQuery.eq('branch_id', scope.branchId);
+        unifiedMetricsQuery = unifiedMetricsQuery.eq('branch_id', scope.branchId);
+      }
+
+      if (scope.role === 'agent') {
+        policiesQuery = policiesQuery.eq('agent_id', scope.userId);
+        clientsQuery = clientsQuery.eq('agent_id', scope.userId);
+        unifiedMetricsQuery = unifiedMetricsQuery.eq('agent_id', scope.userId);
+        targetsQuery = targetsQuery.eq('user_id', scope.userId);
+      } else if (scope.role === 'team_leader') {
+        targetsQuery = targetsQuery.eq('user_id', scope.userId);
+        if (subordinateIds.length > 0) {
+          policiesQuery = policiesQuery.in('agent_id', subordinateIds);
+          clientsQuery = clientsQuery.in('agent_id', subordinateIds);
+          unifiedMetricsQuery = unifiedMetricsQuery.in('agent_id', subordinateIds);
+        }
+      } else if (['supervisor', 'general_supervisor'].includes(scope.role)) {
+        targetsQuery = targetsQuery.eq('user_id', scope.userId);
       }
 
       const [policiesRes, clientsRes, metricsRes, targetsRes] = await Promise.all([
@@ -84,6 +89,7 @@ export default function Dashboard() {
 
       const metrics = metricsRes.data || [];
       const targets = targetsRes.data || [];
+      const policies = policiesRes.data || [];
       
       const totalNewBusiness = metrics.filter(m => m.is_new_business).reduce((s, m) => s + Number(m.amount), 0);
       const totalFirstYearCollections = metrics.filter(m => !m.is_new_business).reduce((s, m) => s + Number(m.amount), 0);
@@ -93,6 +99,9 @@ export default function Dashboard() {
       const monthlyFirstYearCollections = monthlyMetrics.filter(m => !m.is_new_business).reduce((s, m) => s + Number(m.amount), 0);
       
       const monthlyTarget = targets.reduce((s, t) => s + Number(t.target_amount), 0) || 0;
+      const monthlyTotal = monthlyNewBusiness + monthlyFirstYearCollections;
+      const activePolicyCount = policies.filter(p => p.status === 'active').length;
+      const collectionRate = totalNewBusiness > 0 ? (totalFirstYearCollections / totalNewBusiness) * 100 : 0;
 
       setStats({
         totalNewBusiness,
@@ -100,17 +109,17 @@ export default function Dashboard() {
         totalProduction: totalNewBusiness + totalFirstYearCollections,
         clientCount: clientsRes.count || 0,
         policyCount: policiesRes.count || 0,
-        activePolicyCount: 0,
-        collectionRate: 0,
-        targetAchievement: monthlyTarget > 0 ? (monthlyNewBusiness / monthlyTarget) * 100 : 0,
+        activePolicyCount,
+        collectionRate,
+        targetAchievement: monthlyTarget > 0 ? (monthlyTotal / monthlyTarget) * 100 : 0,
         monthlyNewBusiness,
         monthlyFirstYearCollections,
-        monthlyTotal: monthlyNewBusiness + monthlyFirstYearCollections,
+        monthlyTotal,
         monthlyTarget
       });
 
-      if (['supervisor', 'team_leader', 'general_supervisor', 'dev_manager', 'super_admin'].includes(userRole)) {
-        await fetchManagerData(userId, userRole, monthStart, monthEnd, branchId);
+      if (['supervisor', 'team_leader', 'general_supervisor', 'dev_manager', 'super_admin'].includes(scope.role)) {
+        await fetchManagerData(scope.userId, scope.role, monthStart, monthEnd, scope.branchId, scope.isAllBranches);
       }
 
     } catch (err: any) {
@@ -120,15 +129,15 @@ export default function Dashboard() {
     }
   }, [activeBranch, profile]);
 
-  const fetchManagerData = async (userId: string, role: string, monthStart: string, monthEnd: string, branchId?: string) => {
+  const fetchManagerData = async (userId: string, role: string, monthStart: string, monthEnd: string, branchId: string | null, isAllBranches: boolean) => {
     try {
       const { data: subordinates } = await supabase
         .from('profiles')
-        .select('id, full_name, role, manager_id, branch_id');
+        .select('id, full_name, role, manager_id, active_branch_id');
 
       if (!subordinates) return;
 
-      let mySubordinates = [];
+      let mySubordinates: any[] = [];
       if (role === 'team_leader') {
         mySubordinates = subordinates.filter(s => s.manager_id === userId);
       } else if (role === 'supervisor') {
@@ -136,18 +145,23 @@ export default function Dashboard() {
         const agents = subordinates.filter(s => teamLeaders.some(tl => tl.id === s.manager_id));
         mySubordinates = [...teamLeaders, ...agents];
       } else if (role === 'general_supervisor') {
-        mySubordinates = subordinates.filter(s => s.branch_id === branchId);
+        mySubordinates = subordinates.filter(s => s.active_branch_id === branchId);
       } else {
         mySubordinates = subordinates;
       }
 
-      const { data: allMetrics } = await supabase
+      let metricsQuery = supabase
         .from('unified_performance_metrics')
         .select('*')
         .eq('is_first_year_collection', true)
         .gte('collection_date', monthStart)
         .lte('collection_date', monthEnd);
 
+      if (!isAllBranches && branchId) {
+        metricsQuery = metricsQuery.eq('branch_id', branchId);
+      }
+
+      const { data: allMetrics } = await metricsQuery;
       const metrics = allMetrics || [];
 
       const userStats = subordinates.map(user => {
@@ -169,9 +183,9 @@ export default function Dashboard() {
         });
         setSubordinateStats(leaders);
       } else if (role === 'general_supervisor') {
-        const agents = userStats.filter(u => u.role === 'agent' && u.branch_id === branchId);
-        const leaders = userStats.filter(u => u.role === 'team_leader' && u.branch_id === branchId);
-        const supervisors = userStats.filter(u => u.role === 'supervisor' && u.branch_id === branchId);
+        const agents = userStats.filter(u => u.role === 'agent' && u.active_branch_id === branchId);
+        const leaders = userStats.filter(u => u.role === 'team_leader' && u.active_branch_id === branchId);
+        const supervisors = userStats.filter(u => u.role === 'supervisor' && u.active_branch_id === branchId);
 
         setExtraStats({
           topAgents: [...agents].sort((a, b) => b.newBusiness - a.newBusiness).slice(0, 5),
@@ -479,6 +493,6 @@ function DevManagerDashboard({ extraStats }: { stats: DashboardStats, extraStats
   );
 }
 
-function SuperAdminDashboard({ extraStats }: { stats: DashboardStats, extraStats: any }) {
-  return <DevManagerDashboard stats={extraStats} extraStats={extraStats} />;
+function SuperAdminDashboard({ stats, extraStats }: { stats: DashboardStats, extraStats: any }) {
+  return <DevManagerDashboard stats={stats} extraStats={extraStats} />;
 }

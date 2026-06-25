@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { canCloseMonth } from '../../lib/rbac';
+import { getBranchScope, getSubordinateIds } from '../../lib/dataAccess';
 import { formatCurrency, formatPercent, getMonthName } from '../../lib/utils';
 import PageHeader from '../common/PageHeader';
 import LoadingSpinner from '../common/LoadingSpinner';
@@ -38,7 +39,7 @@ interface ExecutiveSummary {
 }
 
 export default function MonthClosing() {
-  const { profile } = useAuth();
+  const { profile, activeBranch } = useAuth();
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
@@ -62,44 +63,70 @@ export default function MonthClosing() {
 
   useEffect(() => {
     loadData();
-  }, [selectedMonth, selectedYear]);
+  }, [selectedMonth, selectedYear, activeBranch, profile]);
 
   async function loadData() {
+    if (!profile) return;
     setLoading(true);
     try {
+      const scope = getBranchScope(profile, activeBranch);
+      let subIds: string[] = [];
+      if (scope.role === 'team_leader' || scope.role === 'supervisor') {
+        subIds = await getSubordinateIds(scope.userId);
+      }
+
       const monthStart = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-01`;
       const nextMonth = selectedMonth === 12 ? 1 : selectedMonth + 1;
       const nextYear = selectedMonth === 12 ? selectedYear + 1 : selectedYear;
       const monthEnd = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
 
+      let metricsQuery = supabase
+        .from('unified_performance_metrics')
+        .select(`
+          *,
+          policy:policies(
+            policy_number,
+            client_id,
+            agent_id,
+            branch_id,
+            team_leader_id,
+            supervisor_id,
+            client:clients(name),
+            agent:profiles(full_name),
+            team_leader:profiles!policies_team_leader_id_fkey(full_name),
+            supervisor:profiles!policies_supervisor_id_fkey(full_name),
+            branch:branches(name)
+          )
+        `)
+        .gte('collection_date', monthStart)
+        .lt('collection_date', monthEnd)
+        .eq('is_first_year_collection', true);
+
+      let targetsQuery = supabase
+        .from('targets')
+        .select('target_amount, user_id')
+        .eq('period_type', 'monthly')
+        .eq('period_number', selectedMonth)
+        .eq('year', selectedYear);
+
+      if (!scope.isAllBranches && scope.branchId) {
+        metricsQuery = metricsQuery.eq('branch_id', scope.branchId);
+      }
+
+      if (scope.role === 'agent') {
+        metricsQuery = metricsQuery.eq('agent_id', scope.userId);
+        targetsQuery = targetsQuery.eq('user_id', scope.userId);
+      } else if ((scope.role === 'team_leader' || scope.role === 'supervisor') && subIds.length > 0) {
+        metricsQuery = metricsQuery.in('agent_id', subIds);
+        const visibleIds = [scope.userId, ...subIds];
+        targetsQuery = targetsQuery.in('user_id', visibleIds);
+      } else if (scope.role === 'general_supervisor' && scope.branchId) {
+        targetsQuery = targetsQuery.eq('branch_id', scope.branchId);
+      }
+
       const [metricsRes, targetsRes, closingsRes] = await Promise.all([
-        supabase
-          .from('unified_performance_metrics')
-          .select(`
-            *,
-            policy:policies(
-              policy_number,
-              client_id,
-              agent_id,
-              branch_id,
-              team_leader_id,
-              supervisor_id,
-              client:clients(name),
-              agent:profiles(full_name),
-              team_leader:profiles!policies_team_leader_id_fkey(full_name),
-              supervisor:profiles!policies_supervisor_id_fkey(full_name),
-              branch:branches(name)
-            )
-          `)
-          .gte('collection_date', monthStart)
-          .lt('collection_date', monthEnd)
-          .eq('is_first_year_collection', true),
-        supabase
-          .from('targets')
-          .select('target_amount, user_id')
-          .eq('period_type', 'monthly')
-          .eq('period_number', selectedMonth)
-          .eq('year', selectedYear),
+        metricsQuery,
+        targetsQuery,
         supabase.from('month_closings').select('month, year'),
       ]);
 
@@ -234,6 +261,7 @@ export default function MonthClosing() {
         year: selectedYear,
         closed_by: profile?.id,
         closed_at: new Date().toISOString(),
+        branch_id: activeBranch && activeBranch.id !== 'all' ? activeBranch.id : null,
       });
 
       if (error) throw error;

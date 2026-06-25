@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
+import { getBranchScope, getSubordinateIds } from '../../lib/dataAccess';
 import { Installment, Policy, INSTALLMENT_STATUS_LABELS } from '../../types';
 import { formatCurrency, formatDate, formatPercent } from '../../lib/utils';
 import PageHeader from '../common/PageHeader';
@@ -29,32 +30,37 @@ export default function CollectionManagement() {
   const [formError, setFormError] = useState('');
 
   const loadData = useCallback(async () => {
+    if (!profile) return;
     setLoading(true);
     try {
-      const userRole = profile?.role;
-      const userId = profile?.id;
-      const branchId = activeBranch?.id;
+      const scope = getBranchScope(profile, activeBranch);
 
       let query = supabase
         .from('installments')
         .select('*, policy:policies(policy_number, client_id, agent_id, annual_premium, first_year_end, team_leader_id, supervisor_id, branch_id, branch_manager_id, client:clients(name))')
         .order('due_date', { ascending: true });
 
-      // تطبيق الفلاتر حسب الدور الوظيفي والهيكل الهرمي
-      if (userRole === 'agent') {
-        // الوكيل يرى أقساط عملائه فقط
-        query = query.eq('policy.agent_id', userId);
-      } else if (userRole === 'team_leader') {
-        // رئيس المجموعة يرى أقساط نفسه وأعضاء فريقه
-        query = query.or(`policy.agent_id.eq.${userId},policy.team_leader_id.eq.${userId}`);
-      } else if (userRole === 'supervisor') {
-        // المشرف يرى أقساط رؤساء المجموعات والوكلاء التابعين له
-        query = query.eq('policy.supervisor_id', userId);
-      } else if (userRole === 'general_supervisor' && branchId) {
-        // المشرف العام يرى أقساط فرعه بالكامل
-        query = query.eq('policy.branch_id', branchId);
+      if (!scope.isAllBranches && scope.branchId) {
+        query = query.eq('policy.branch_id', scope.branchId);
       }
-      // Super Admin و Dev Manager يرون الكل بدون فلاتر
+
+      if (scope.role === 'agent') {
+        query = query.eq('policy.agent_id', scope.userId);
+      } else if (scope.role === 'team_leader') {
+        const subIds = await getSubordinateIds(scope.userId);
+        if (subIds.length > 0) {
+          query = query.in('policy.agent_id', subIds);
+        } else {
+          query = query.eq('policy.agent_id', scope.userId);
+        }
+      } else if (scope.role === 'supervisor') {
+        const subIds = await getSubordinateIds(scope.userId);
+        if (subIds.length > 0) {
+          query = query.in('policy.agent_id', subIds);
+        } else {
+          query = query.eq('policy.agent_id', scope.userId);
+        }
+      }
 
       const { data, error } = await query;
 

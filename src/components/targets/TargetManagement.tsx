@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
+import { getBranchScope, getSubordinateIds } from '../../lib/dataAccess';
 import { Target as TargetType, ROLE_LABELS, Profile } from '../../types';
 import { canManageTargets } from '../../lib/rbac';
 import { formatCurrency } from '../../lib/utils';
@@ -51,7 +52,7 @@ interface EnrichedTarget extends Omit<TargetType, 'user'> {
 type ModalMode = 'add' | 'edit' | 'bulk_add' | 'copy_year' | null;
 
 export default function TargetManagement() {
-  const { profile } = useAuth();
+  const { profile, activeBranch } = useAuth();
   const [targets, setTargets] = useState<EnrichedTarget[]>([]);
   const [allProfiles, setAllProfiles] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
@@ -86,48 +87,53 @@ export default function TargetManagement() {
   const canManage = profile ? canManageTargets(profile.role) : false;
 
   const loadData = useCallback(async () => {
+    if (!profile) return;
     try {
       setLoading(true);
+      const scope = getBranchScope(profile, activeBranch);
 
-      // Fetch all profiles
-      const { data: profilesData, error: profilesError } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('is_active', true);
-
-      if (profilesError) throw profilesError;
-      const profiles: Profile[] = profilesData || [];
-
-      // Fetch targets only (no achievement calculation)
-      const { data: allTargetsData, error: targetsError } = await supabase
+      let profilesQuery = supabase.from('profiles').select('*').eq('is_active', true);
+      let targetsQuery = supabase
         .from('targets')
         .select('*, user:profiles(full_name, role)')
         .eq('period_type', 'monthly')
         .order('year', { ascending: false })
         .order('period_number', { ascending: false });
 
-      if (targetsError) throw targetsError;
-      const allTargetsRaw = allTargetsData || [];
+      if (!scope.isAllBranches && scope.branchId) {
+        profilesQuery = profilesQuery.eq('active_branch_id', scope.branchId);
+      }
 
-      // Apply client-side filters
+      if (scope.role === 'agent') {
+        profilesQuery = profilesQuery.eq('id', scope.userId);
+        targetsQuery = targetsQuery.eq('user_id', scope.userId);
+      } else if (scope.role === 'team_leader' || scope.role === 'supervisor') {
+        const subIds = await getSubordinateIds(scope.userId);
+        const visibleIds = [scope.userId, ...subIds];
+        profilesQuery = profilesQuery.in('id', visibleIds);
+        targetsQuery = targetsQuery.in('user_id', visibleIds);
+      }
+
+      const [profilesRes, targetsRes] = await Promise.all([profilesQuery, targetsQuery]);
+
+      if (profilesRes.error) throw profilesRes.error;
+      if (targetsRes.error) throw targetsRes.error;
+
+      const profiles: Profile[] = profilesRes.data || [];
+      const allTargetsRaw = targetsRes.data || [];
+
       const filtered = allTargetsRaw.filter(t => {
         if (filterYear && t.year !== filterYear) return false;
         if (filterMonth && t.period_number !== filterMonth) return false;
         return true;
       });
 
-      // Enrich targets with basic info only
-      const enriched: EnrichedTarget[] = filtered.map((t) => {
+      const enriched: EnrichedTarget[] = filtered.map(t => {
         const userProfile = profiles.find(p => p.id === t.user_id);
         const isAgent = userProfile?.role === 'agent';
         const isManagerTarget = !isAgent;
         const subordinateCount = isManagerTarget ? getSubordinateIds(t.user_id, profiles).length : 0;
-
-        return {
-          ...t,
-          isManagerTarget,
-          subordinateCount,
-        } as EnrichedTarget;
+        return { ...t, isManagerTarget, subordinateCount } as EnrichedTarget;
       });
 
       const finalTargets = filterRole === 'all' ? enriched
@@ -143,7 +149,7 @@ export default function TargetManagement() {
     } finally {
       setLoading(false);
     }
-  }, [filterYear, filterMonth, filterRole]);
+  }, [profile, activeBranch, filterYear, filterMonth, filterRole]);
 
   useEffect(() => { 
     loadData(); 
@@ -160,8 +166,7 @@ export default function TargetManagement() {
   async function handleSubmit() {
     if (!validateForm()) return;
 
-    const user = allProfiles.find(p => p.id === form.user_id);
-    const targetAmount = user ? (FIXED_TARGETS[user.role] || 0) : Number(form.target_amount);
+    const targetAmount = Number(form.target_amount) || 0;
 
     const payload = {
       user_id: form.user_id,
@@ -197,8 +202,7 @@ export default function TargetManagement() {
       return;
     }
 
-    const user = allProfiles.find(p => p.id === bulkForm.user_id);
-    const amount = user ? (FIXED_TARGETS[user.role] || 0) : 0;
+    const amount = Number(bulkForm.monthly_amount) || 0;
 
     try {
       const targets_to_insert = Array.from({ length: 12 }, (_, i) => ({
@@ -259,9 +263,9 @@ export default function TargetManagement() {
 
   async function handleBulkAddAllUsers() {
     try {
+      const amount = Number(bulkForm.monthly_amount) || 0;
       const targets_to_insert = allProfiles
         .flatMap(user => {
-          const amount = FIXED_TARGETS[user.role] || 0;
           return Array.from({ length: 12 }, (_, i) => ({
             user_id: user.id,
             period_type: 'monthly' as const,
@@ -475,10 +479,11 @@ export default function TargetManagement() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">المبلغ المستهدف (تلقائي حسب الرتبة)</label>
-                <input disabled type="number" 
-                  value={form.user_id ? (FIXED_TARGETS[allProfiles.find(p => p.id === form.user_id)?.role || ''] || '') : ''}
-                  className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none text-slate-500" />
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">المبلغ المستهدف</label>
+                <input type="number" value={form.target_amount}
+                  onChange={e => setForm({ ...form, target_amount: e.target.value })}
+                  placeholder="أدخل المبلغ"
+                  className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" />
               </div>
 
               <div className="flex gap-3 pt-2">
@@ -530,10 +535,11 @@ export default function TargetManagement() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">المبلغ الشهري (تلقائي حسب الرتبة)</label>
-                <input disabled type="number" 
-                  value={bulkForm.user_id ? (bulkForm.user_id === 'all' ? 'متعدد' : (FIXED_TARGETS[allProfiles.find(p => p.id === bulkForm.user_id)?.role || ''] || '')) : ''}
-                  className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none text-slate-500" />
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">المبلغ الشهري</label>
+                <input type="number" value={bulkForm.monthly_amount}
+                  onChange={e => setBulkForm({ ...bulkForm, monthly_amount: e.target.value })}
+                  placeholder="أدخل المبلغ الشهري"
+                  className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" />
               </div>
 
               <div className="bg-emerald-50 dark:bg-emerald-900/20 rounded-xl p-3 text-sm text-emerald-700 dark:text-emerald-300">
