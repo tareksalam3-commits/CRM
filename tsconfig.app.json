@@ -20,6 +20,5 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"],
-  "exclude": ["src/components/closing/EnhancedMonthClosing.tsx"]
+  "include": ["src"]
 }
