@@ -1,162 +1,79 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { Layout } from './components/layout';
-import {
-  LoginPage,
-  DashboardPage,
-  UsersPage,
-  BranchesPage,
-  OrganizationPage,
-  ClientsPage,
-  PoliciesPage,
-  CollectionsPage,
-  TargetsPage,
-  ReportsPage,
-  MonthClosingPage,
-  NotificationsPage,
-  TasksPage,
-  AuditLogPage,
-  SettingsPage,
-} from './pages';
+import { useState } from 'react';
+import { AuthProvider, useAuthContext } from './contexts/AuthContext';
+import Layout from './components/Layout';
+import ToastContainer from './components/ToastContainer';
+import { useToast } from './hooks/useToast';
+import LoginPage from './pages/LoginPage';
+import DashboardPage from './pages/DashboardPage';
+import UsersPage from './pages/UsersPage';
+import ClientsPage from './pages/ClientsPage';
+import PoliciesPage from './pages/PoliciesPage';
+import CollectionsPage from './pages/CollectionsPage';
+import TargetsPage from './pages/TargetsPage';
+import ReportsPage from './pages/ReportsPage';
+import MonthlyClosingPage from './pages/MonthlyClosingPage';
+import ActivityLogsPage from './pages/ActivityLogsPage';
+import SettingsPage from './pages/SettingsPage';
+import ProfilePage from './pages/ProfilePage';
 
-function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode; allowedRoles?: string[] }) {
-  const { profile, loading } = useAuth();
+export type ToastContextType = {
+  showSuccess: (message: string) => void;
+  showError: (message: string) => void;
+};
+
+function AppContent() {
+  const { user, loading } = useAuthContext();
+  const [currentPage, setCurrentPage] = useState('dashboard');
+  const { toasts, addToast, removeToast } = useToast();
+
+  const showSuccess = (message: string) => addToast('success', message);
+  const showError = (message: string) => addToast('error', message);
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+      <div className="min-h-screen bg-secondary-50 flex items-center justify-center">
+        <div className="animate-spin w-10 h-10 border-4 border-primary-600 border-t-transparent rounded-full" />
       </div>
     );
   }
 
-  if (!profile) {
-    return <Navigate to="/login" replace />;
+  if (!user) {
+    return <LoginPage />;
   }
 
-  if (allowedRoles && !allowedRoles.includes(profile.role)) {
-    return <Navigate to="/" replace />;
-  }
+  const renderPage = () => {
+    const pageProps = { showSuccess, showError };
+    switch (currentPage) {
+      case 'dashboard': return <DashboardPage {...pageProps} />;
+      case 'users': return <UsersPage {...pageProps} />;
+      case 'clients': return <ClientsPage {...pageProps} />;
+      case 'policies': return <PoliciesPage {...pageProps} />;
+      case 'collections': return <CollectionsPage {...pageProps} />;
+      case 'targets': return <TargetsPage {...pageProps} />;
+      case 'reports': return <ReportsPage {...pageProps} />;
+      case 'monthly-closing': return <MonthlyClosingPage {...pageProps} />;
+      case 'activity-logs': return <ActivityLogsPage {...pageProps} />;
+      case 'settings': return <SettingsPage {...pageProps} />;
+      case 'profile': return <ProfilePage {...pageProps} />;
+      default: return <DashboardPage {...pageProps} />;
+    }
+  };
 
-  return <>{children}</>;
-}
-
-function PublicRoute({ children }: { children: React.ReactNode }) {
-  const { profile, loading } = useAuth();
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
-      </div>
-    );
-  }
-
-  if (profile) {
-    return <Navigate to="/" replace />;
-  }
-
-  return <>{children}</>;
-}
-
-function AppRoutes() {
   return (
-    <Routes>
-      <Route
-        path="/login"
-        element={
-          <PublicRoute>
-            <LoginPage />
-          </PublicRoute>
-        }
-      />
-
-      <Route
-        path="/"
-        element={
-          <ProtectedRoute>
-            <Layout />
-          </ProtectedRoute>
-        }
-      >
-        <Route index element={<DashboardPage />} />
-
-        <Route
-          path="users"
-          element={
-            <ProtectedRoute allowedRoles={['super_admin', 'development_manager']}>
-              <UsersPage />
-            </ProtectedRoute>
-          }
-        />
-
-        <Route
-          path="branches"
-          element={
-            <ProtectedRoute allowedRoles={['super_admin', 'development_manager']}>
-              <BranchesPage />
-            </ProtectedRoute>
-          }
-        />
-
-        <Route
-          path="organization"
-          element={
-            <ProtectedRoute allowedRoles={['super_admin', 'development_manager', 'general_supervisor']}>
-              <OrganizationPage />
-            </ProtectedRoute>
-          }
-        />
-
-        <Route path="clients" element={<ClientsPage />} />
-        <Route path="policies" element={<PoliciesPage />} />
-        <Route path="collections" element={<CollectionsPage />} />
-        <Route path="targets" element={<TargetsPage />} />
-        <Route path="reports" element={<ReportsPage />} />
-
-        <Route
-          path="month-closing"
-          element={
-            <ProtectedRoute allowedRoles={['super_admin', 'development_manager']}>
-              <MonthClosingPage />
-            </ProtectedRoute>
-          }
-        />
-
-        <Route path="notifications" element={<NotificationsPage />} />
-        <Route path="tasks" element={<TasksPage />} />
-
-        <Route
-          path="audit-log"
-          element={
-            <ProtectedRoute allowedRoles={['super_admin']}>
-              <AuditLogPage />
-            </ProtectedRoute>
-          }
-        />
-
-        <Route
-          path="settings"
-          element={
-            <ProtectedRoute allowedRoles={['super_admin']}>
-              <SettingsPage />
-            </ProtectedRoute>
-          }
-        />
-
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Route>
-    </Routes>
+    <>
+      <Layout currentPage={currentPage} onNavigate={setCurrentPage}>
+        {renderPage()}
+      </Layout>
+      <ToastContainer toasts={toasts} onRemove={removeToast} />
+    </>
   );
 }
 
 function App() {
   return (
-    <BrowserRouter>
-      <AuthProvider>
-        <AppRoutes />
-      </AuthProvider>
-    </BrowserRouter>
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   );
 }
 

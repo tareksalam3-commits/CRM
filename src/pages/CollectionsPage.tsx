@@ -1,279 +1,301 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '../lib/supabase';
-import { Card, Table, Badge, Button, Modal, Input, Select } from '../components/ui';
-import type { Collection, Policy } from '../types/database';
-import { COLLECTION_STATUS_LABELS } from '../types/database';
-import { CreditCard, CheckCircle, AlertTriangle, Search, RotateCcw } from 'lucide-react';
+import { supabase, type Collection, type Installment, type User } from '../lib/supabase';
+import { useAuthContext } from '../contexts/AuthContext';
+import type { PageProps } from '../types';
+import {
+  Receipt, X, Check, Search, RotateCcw, DollarSign, Clock, Calendar,
+  FileText, UserCircle, ChevronDown, ChevronUp, TrendingUp,
+} from 'lucide-react';
 
-export default function CollectionsPage() {
+interface DueInstallment extends Installment {
+  policies?: { policy_number: string; client_id: string; agent_id: string };
+  clients?: { full_name: string };
+}
+
+export default function CollectionsPage({ showSuccess, showError }: PageProps) {
+  const { user: currentUser } = useAuthContext();
+  const [dueInstallments, setDueInstallments] = useState<DueInstallment[]>([]);
   const [collections, setCollections] = useState<Collection[]>([]);
+  const [collectors, setCollectors] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [selectedInstallment, setSelectedInstallment] = useState<DueInstallment | null>(null);
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [showPaymentModal, setShowPaymentModal] = useState(false);
-  const [selectedCollection, setSelectedCollection] = useState<Collection | null>(null);
-  const [paymentData, setPaymentData] = useState({
-    payment_date: new Date().toISOString().split('T')[0],
-    payment_method: 'cash',
-    receipt_number: '',
-    notes: '',
-  });
+  const [collectionDate, setCollectionDate] = useState(new Date().toISOString().split('T')[0]);
+  const [collectorId, setCollectorId] = useState('');
+  const [notes, setNotes] = useState('');
+  const [activeTab, setActiveTab] = useState<'due' | 'collected'>('due');
+  const [expandedItem, setExpandedItem] = useState<string | null>(null);
+  const [stats, setStats] = useState({ totalDue: 0, totalCollected: 0, todayCollected: 0 });
 
   useEffect(() => {
+    fetchDueInstallments();
     fetchCollections();
-  }, [search, statusFilter]);
+    fetchCollectors();
+  }, []);
 
-  const fetchCollections = async () => {
+  const fetchDueInstallments = async () => {
     setLoading(true);
-    let query = supabase
-      .from('collections')
-      .select('*, policy:policies(policy_number, policy_type), client:clients(full_name, mobile), agent:profiles(full_name), branch:branches(name)')
+    const { data } = await supabase
+      .from('installments')
+      .select('*, policies(policy_number, client_id, agent_id), clients(full_name)')
+      .eq('status', 'due')
       .order('due_date', { ascending: true });
-
-    if (statusFilter) {
-      query = query.eq('status', statusFilter);
-    }
-
-    const { data, error } = await query;
-    if (!error && data) {
-      setCollections(data);
-    }
+    setDueInstallments((data as unknown as DueInstallment[]) || []);
     setLoading(false);
   };
 
-  const handlePayment = async (e: React.FormEvent) => {
+  const fetchCollections = async () => {
+    const { data } = await supabase
+      .from('collections')
+      .select('*, policies(policy_number), clients(full_name), users(full_name)')
+      .order('created_at', { ascending: false });
+    setCollections((data as unknown as Collection[]) || []);
+
+    // Calculate stats
+    const totalDue = dueInstallments.reduce((s, i) => s + (i.amount || 0), 0);
+    const totalColl = (data as unknown as Collection[])?.reduce((s, c) => s + (c.amount || 0), 0) || 0;
+    const today = new Date().toISOString().split('T')[0];
+    const todayColl = (data as unknown as Collection[])?.filter((c: unknown) => (c as Collection).collection_date === today).reduce((s, c) => s + (c.amount || 0), 0) || 0;
+    setStats({ totalDue, totalCollected: totalColl, todayCollected: todayColl });
+  };
+
+  const fetchCollectors = async () => {
+    const { data } = await supabase.from('users').select('*').eq('is_active', true);
+    setCollectors((data as User[]) || []);
+  };
+
+  const handleCollect = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedCollection) return;
-
-    const { error } = await supabase
-      .from('collections')
-      .update({
-        status: 'paid',
-        payment_date: paymentData.payment_date,
-        payment_method: paymentData.payment_method,
-        receipt_number: paymentData.receipt_number || null,
-        notes: paymentData.notes || null,
-      })
-      .eq('id', selectedCollection.id);
-
-    if (!error) {
-      setShowPaymentModal(false);
-      fetchCollections();
-    }
+    if (!selectedInstallment || !collectorId) return;
+    try {
+      const { error } = await supabase.from('collections').insert({
+        installment_id: selectedInstallment.id,
+        policy_id: selectedInstallment.policy_id,
+        client_id: selectedInstallment.policies?.client_id || '',
+        collector_id: collectorId,
+        collection_date: collectionDate,
+        amount: selectedInstallment.amount,
+        notes: notes || null,
+      });
+      if (error) throw error;
+      setShowForm(false); setSelectedInstallment(null); setCollectorId(''); setNotes('');
+      fetchDueInstallments(); fetchCollections();
+      showSuccess('تم التحصيل بنجاح');
+    } catch (err: unknown) { showError(err instanceof Error ? err.message : 'حدث خطأ'); }
   };
 
-  const openPaymentModal = (collection: Collection) => {
-    setSelectedCollection(collection);
-    setPaymentData({
-      payment_date: new Date().toISOString().split('T')[0],
-      payment_method: 'cash',
-      receipt_number: '',
-      notes: '',
-    });
-    setShowPaymentModal(true);
+  const handleUndoCollection = async (collectionId: string) => {
+    if (!confirm('هل أنت متأكد من التراجع عن هذا التحصيل؟')) return;
+    try {
+      const { error } = await supabase.from('collections').delete().eq('id', collectionId);
+      if (error) throw error;
+      fetchDueInstallments(); fetchCollections();
+      showSuccess('تم التراجع عن التحصيل');
+    } catch (err: unknown) { showError(err instanceof Error ? err.message : 'حدث خطأ'); }
   };
 
-  const reversePayment = async (collection: Collection) => {
-    if (!confirm('هل أنت متأكد من التراجع عن عملية التحصيل؟')) return;
-
-    const { error } = await supabase
-      .from('collections')
-      .update({
-        status: 'pending',
-        payment_date: null,
-        payment_method: null,
-        receipt_number: null,
-        notes: null,
-      })
-      .eq('id', collection.id);
-
-    if (!error) {
-      fetchCollections();
-    }
+  const openCollectForm = (inst: DueInstallment) => {
+    setSelectedInstallment(inst);
+    setCollectorId(currentUser?.id || '');
+    setCollectionDate(new Date().toISOString().split('T')[0]);
+    setNotes('');
+    setShowForm(true);
   };
 
-  const statusVariants: Record<string, 'success' | 'warning' | 'danger' | 'default'> = {
-    paid: 'success',
-    pending: 'warning',
-    overdue: 'danger',
-    cancelled: 'default',
-  };
+  const filteredDue = dueInstallments.filter((i) =>
+    i.policies?.policy_number?.toLowerCase().includes(search.toLowerCase()) ||
+    i.clients?.full_name?.toLowerCase().includes(search.toLowerCase())
+  );
 
-  const columns = [
-    {
-      key: 'policy',
-      header: 'رقم الوثيقة',
-      render: (c: Collection) => (
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
-            <CreditCard className="w-5 h-5 text-green-600" />
-          </div>
-          <div>
-            <p className="font-medium">{c.policy?.policy_number}</p>
-            <p className="text-xs text-gray-500">قسط #{c.collection_number}</p>
-          </div>
-        </div>
-      ),
-    },
-    { key: 'client', header: 'العميل', render: (c: Collection) => c.client?.full_name || '-' },
-    {
-      key: 'amount',
-      header: 'المبلغ',
-      render: (c: Collection) => `${Number(c.amount).toLocaleString()} ر.س`,
-    },
-    {
-      key: 'due_date',
-      header: 'تاريخ الاستحقاق',
-      render: (c: Collection) => new Date(c.due_date).toLocaleDateString('ar-SA'),
-    },
-    {
-      key: 'status',
-      header: 'الحالة',
-      render: (c: Collection) => (
-        <Badge variant={statusVariants[c.status]}>{COLLECTION_STATUS_LABELS[c.status]}</Badge>
-      ),
-    },
-    {
-      key: 'agent',
-      header: 'الوكيل',
-      render: (c: Collection) => c.agent?.full_name || '-',
-    },
-    {
-      key: 'actions',
-      header: 'الإجراءات',
-      render: (collection: Collection) => (
-        <div className="flex gap-2">
-          {collection.status === 'pending' ? (
-            <Button size="sm" onClick={() => openPaymentModal(collection)}>
-              <CheckCircle className="w-4 h-4" />
-              تحصيل
-            </Button>
-          ) : collection.status === 'paid' ? (
-            <Button variant="danger" size="sm" onClick={() => reversePayment(collection)}>
-              <RotateCcw className="w-4 h-4" />
-              تراجع
-            </Button>
-          ) : null}
-        </div>
-      ),
-    },
-  ];
-
-  const pendingCount = collections.filter((c) => c.status === 'pending').length;
-  const overdueCount = collections.filter((c) => c.status === 'overdue').length;
-  const paidCount = collections.filter((c) => c.status === 'paid').length;
+  const filteredCollections = collections.filter((c) =>
+    (c as unknown as { policies?: { policy_number: string } }).policies?.policy_number?.toLowerCase().includes(search.toLowerCase()) ||
+    (c as unknown as { clients?: { full_name: string } }).clients?.full_name?.toLowerCase().includes(search.toLowerCase())
+  );
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">التحصيل</h1>
-          <p className="text-gray-500 mt-1">إدارة تحصيل الأقساط</p>
+    <div className="space-y-5">
+      <div className="page-header">
+        <h2 className="page-title">التحصيل</h2>
+        <p className="page-subtitle">إدارة تحصيل الأقساط</p>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-3 gap-3">
+        <div className="stat-card">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-8 h-8 bg-amber-100 rounded-xl flex items-center justify-center"><Clock className="w-4 h-4 text-amber-600" /></div>
+            <span className="text-[10px] text-slate-500 font-medium">مستحق</span>
+          </div>
+          <p className="text-lg font-extrabold text-slate-900">{stats.totalDue.toLocaleString()}</p>
+        </div>
+        <div className="stat-card">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-8 h-8 bg-emerald-100 rounded-xl flex items-center justify-center"><TrendingUp className="w-4 h-4 text-emerald-600" /></div>
+            <span className="text-[10px] text-slate-500 font-medium">إجمالي</span>
+          </div>
+          <p className="text-lg font-extrabold text-slate-900">{stats.totalCollected.toLocaleString()}</p>
+        </div>
+        <div className="stat-card">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-8 h-8 bg-blue-100 rounded-xl flex items-center justify-center"><DollarSign className="w-4 h-4 text-blue-600" /></div>
+            <span className="text-[10px] text-slate-500 font-medium">اليوم</span>
+          </div>
+          <p className="text-lg font-extrabold text-slate-900">{stats.todayCollected.toLocaleString()}</p>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card className="bg-yellow-50 border-yellow-200">
-          <div className="flex items-center gap-4">
-            <div className="p-3 bg-yellow-500 text-white rounded-xl">
-              <CreditCard className="w-6 h-6" />
-            </div>
-            <div>
-              <p className="text-sm text-yellow-600 font-medium">معلق</p>
-              <p className="text-2xl font-bold text-yellow-900">{pendingCount}</p>
-            </div>
-          </div>
-        </Card>
-
-        <Card className="bg-red-50 border-red-200">
-          <div className="flex items-center gap-4">
-            <div className="p-3 bg-red-500 text-white rounded-xl">
-              <AlertTriangle className="w-6 h-6" />
-            </div>
-            <div>
-              <p className="text-sm text-red-600 font-medium">متأخر</p>
-              <p className="text-2xl font-bold text-red-900">{overdueCount}</p>
-            </div>
-          </div>
-        </Card>
-
-        <Card className="bg-green-50 border-green-200">
-          <div className="flex items-center gap-4">
-            <div className="p-3 bg-green-500 text-white rounded-xl">
-              <CheckCircle className="w-6 h-6" />
-            </div>
-            <div>
-              <p className="text-sm text-green-600 font-medium">محصل</p>
-              <p className="text-2xl font-bold text-green-900">{paidCount}</p>
-            </div>
-          </div>
-        </Card>
+      {/* Tabs */}
+      <div className="flex gap-2">
+        <button onClick={() => setActiveTab('due')} className={activeTab === 'due' ? 'tab-btn-active' : 'tab-btn-inactive'}>
+          <Clock className="w-4 h-4 inline ml-1" /> الأقساط المستحقة
+        </button>
+        <button onClick={() => setActiveTab('collected')} className={activeTab === 'collected' ? 'tab-btn-active' : 'tab-btn-inactive'}>
+          <Receipt className="w-4 h-4 inline ml-1" /> التحصيلات
+        </button>
       </div>
 
-      <div className="flex gap-4">
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-          <input
-            type="text"
-            placeholder="البحث..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full pr-10 pl-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-        </div>
-        <Select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          options={[
-            { value: '', label: 'كل الحالات' },
-            { value: 'pending', label: 'معلق' },
-            { value: 'paid', label: 'محصل' },
-            { value: 'overdue', label: 'متأخر' },
-            { value: 'cancelled', label: 'ملغي' },
-          ]}
-        />
+      <div className="search-bar">
+        <Search className="search-bar-icon" />
+        <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="بحث..." className="input-field" />
       </div>
 
-      <Card>
-        <Table columns={columns} data={collections} loading={loading} />
-      </Card>
+      {/* Collect Form Drawer */}
+      {showForm && selectedInstallment && (
+        <>
+          <div className="bottom-sheet-overlay" onClick={() => setShowForm(false)} />
+          <div className="bottom-sheet p-5 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <h3 className="text-lg font-extrabold text-slate-900">تحصيل القسط</h3>
+              <button onClick={() => setShowForm(false)} className="btn-icon"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="grid grid-cols-3 gap-2 mb-2">
+              <div className="p-3 bg-slate-50 rounded-xl text-center">
+                <span className="text-[10px] text-slate-500 block">الوثيقة</span>
+                <span className="text-sm font-bold text-slate-900">{selectedInstallment.policies?.policy_number}</span>
+              </div>
+              <div className="p-3 bg-slate-50 rounded-xl text-center">
+                <span className="text-[10px] text-slate-500 block">العميل</span>
+                <span className="text-sm font-bold text-slate-900">{selectedInstallment.clients?.full_name}</span>
+              </div>
+              <div className="p-3 bg-slate-50 rounded-xl text-center">
+                <span className="text-[10px] text-slate-500 block">المبلغ</span>
+                <span className="text-sm font-bold text-emerald-700">{selectedInstallment.amount.toLocaleString()}</span>
+              </div>
+            </div>
+            <form onSubmit={handleCollect} className="space-y-4 pb-8">
+              <div>
+                <label className="label">المحصل *</label>
+                <select value={collectorId} onChange={(e) => setCollectorId(e.target.value)} className="input-field" required>
+                  <option value="">اختر المحصل</option>
+                  {collectors.map((c) => <option key={c.id} value={c.id}>{c.full_name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="label">تاريخ التحصيل *</label>
+                <input type="date" value={collectionDate} onChange={(e) => setCollectionDate(e.target.value)} className="input-field" required />
+              </div>
+              <div>
+                <label className="label">ملاحظات</label>
+                <input value={notes} onChange={(e) => setNotes(e.target.value)} className="input-field" />
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={() => setShowForm(false)} className="btn-secondary flex-1">إلغاء</button>
+                <button type="submit" className="btn-primary flex-1"><Check className="w-5 h-5" /> تأكيد</button>
+              </div>
+            </form>
+          </div>
+        </>
+      )}
 
-      <Modal isOpen={showPaymentModal} onClose={() => setShowPaymentModal(false)} title="تسجيل الدفع">
-        <form onSubmit={handlePayment} className="space-y-4">
-          <div className="p-4 bg-gray-50 rounded-lg mb-4">
-            <p className="text-sm text-gray-500">الوثيقة: {selectedCollection?.policy?.policy_number}</p>
-            <p className="text-lg font-bold">{Number(selectedCollection?.amount || 0).toLocaleString()} ر.س</p>
+      {/* Due Installments List */}
+      {activeTab === 'due' && (
+        loading ? (
+          <div className="flex items-center justify-center py-20"><div className="animate-spin w-10 h-10 border-3 border-emerald-600 border-t-transparent rounded-full" /></div>
+        ) : filteredDue.length === 0 ? (
+          <div className="empty-state">
+            <Clock className="empty-state-icon" />
+            <p className="text-sm">لا توجد أقساط مستحقة</p>
           </div>
-          <div className="grid grid-cols-2 gap-4">
-            <Input label="تاريخ الدفع" type="date" value={paymentData.payment_date} onChange={(e) => setPaymentData({ ...paymentData, payment_date: e.target.value })} required />
-            <Select
-              label="طريقة الدفع"
-              value={paymentData.payment_method}
-              onChange={(e) => setPaymentData({ ...paymentData, payment_method: e.target.value })}
-              options={[
-                { value: 'cash', label: 'نقداً' },
-                { value: 'bank_transfer', label: 'تحويل بنكي' },
-                { value: 'check', label: 'شيك' },
-                { value: 'card', label: 'بطاقة' },
-              ]}
-            />
+        ) : (
+          <div className="space-y-3">
+            {filteredDue.map((inst) => (
+              <div key={inst.id} className="card-hover border-l-4 border-l-amber-400">
+                <div className="flex items-start gap-3">
+                  <div className="w-12 h-12 bg-amber-100 rounded-2xl flex items-center justify-center shrink-0">
+                    <Receipt className="w-6 h-6 text-amber-600" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="badge badge-warning">قسط {inst.installment_number}</span>
+                      <span className="text-xs text-slate-400">السنة {inst.insurance_year}</span>
+                    </div>
+                    <p className="font-bold text-slate-900 text-base mt-1">{inst.policies?.policy_number}</p>
+                    <p className="text-sm text-slate-500">{inst.clients?.full_name}</p>
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-slate-400">
+                      <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />{new Date(inst.due_date).toLocaleDateString('ar-EG')}</span>
+                      <span className="flex items-center gap-1"><DollarSign className="w-3 h-3" />{inst.amount.toLocaleString()}</span>
+                    </div>
+                  </div>
+                  <button onClick={() => openCollectForm(inst)} className="btn-primary text-xs py-2 px-3 shrink-0">
+                    <DollarSign className="w-4 h-4" /> تحصيل
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
-          <Input label="رقم الإيصال" value={paymentData.receipt_number} onChange={(e) => setPaymentData({ ...paymentData, receipt_number: e.target.value })} />
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">ملاحظات</label>
-            <textarea
-              value={paymentData.notes}
-              onChange={(e) => setPaymentData({ ...paymentData, notes: e.target.value })}
-              rows={2}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+        )
+      )}
+
+      {/* Collections List */}
+      {activeTab === 'collected' && (
+        filteredCollections.length === 0 ? (
+          <div className="empty-state">
+            <Receipt className="empty-state-icon" />
+            <p className="text-sm">لا توجد تحصيلات</p>
           </div>
-          <div className="flex gap-3 pt-4">
-            <Button type="submit">تأكيد الدفع</Button>
-            <Button variant="secondary" type="button" onClick={() => setShowPaymentModal(false)}>إلغاء</Button>
+        ) : (
+          <div className="space-y-3">
+            {filteredCollections.map((coll) => {
+              const isExpanded = expandedItem === coll.id;
+              const policyNum = (coll as unknown as { policies?: { policy_number: string } }).policies?.policy_number || '-';
+              const clientName = (coll as unknown as { clients?: { full_name: string } }).clients?.full_name || '-';
+              const collectorName = (coll as unknown as { users?: { full_name: string } }).users?.full_name || '-';
+              return (
+                <div key={coll.id} className="card-hover border-l-4 border-l-emerald-400">
+                  <div className="flex items-start gap-3">
+                    <div className="w-12 h-12 bg-emerald-100 rounded-2xl flex items-center justify-center shrink-0">
+                      <DollarSign className="w-6 h-6 text-emerald-600" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="badge badge-success">تم التحصيل</span>
+                      </div>
+                      <p className="font-bold text-slate-900 text-base mt-1">{policyNum}</p>
+                      <p className="text-sm text-slate-500">{clientName}</p>
+                      <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-slate-400">
+                        <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />{new Date(coll.collection_date).toLocaleDateString('ar-EG')}</span>
+                        <span className="flex items-center gap-1"><DollarSign className="w-3 h-3" />{coll.amount.toLocaleString()}</span>
+                        <span className="flex items-center gap-1"><UserCircle className="w-3 h-3" />{collectorName}</span>
+                      </div>
+                    </div>
+                    <button onClick={() => setExpandedItem(isExpanded ? null : coll.id)} className="btn-icon">
+                      {isExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                    </button>
+                  </div>
+                  {isExpanded && (
+                    <div className="mt-3 pt-3 border-t border-slate-50 flex justify-end">
+                      <button onClick={() => handleUndoCollection(coll.id)} className="btn-danger text-sm">
+                        <RotateCcw className="w-4 h-4" /> تراجع عن التحصيل
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
-        </form>
-      </Modal>
+        )
+      )}
     </div>
   );
 }

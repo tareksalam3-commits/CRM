@@ -1,275 +1,370 @@
 import { useEffect, useState } from 'react';
-import { useAuth } from '../contexts/AuthContext';
-import { supabase } from '../lib/supabase';
-import { Card, Table, Badge, Button, Modal, Input, Select } from '../components/ui';
-import type { Policy, Client } from '../types/database';
-import { POLICY_STATUS_LABELS } from '../types/database';
-import { Plus, Edit2, FileText, Search } from 'lucide-react';
+import { supabase, type Policy, type Client, type PolicyType, PAYMENT_METHOD_LABELS } from '../lib/supabase';
+import type { PageProps } from '../types';
+import {
+  FileText, Plus, Pencil, Trash2, X, Check, Search, Eye,
+  UserCircle, Calendar, DollarSign, Shield, ChevronDown, ChevronUp,
+} from 'lucide-react';
 
-export default function PoliciesPage() {
-  const { profile } = useAuth();
+export default function PoliciesPage({ showSuccess, showError }: PageProps) {
   const [policies, setPolicies] = useState<Policy[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
+  const [policyTypes, setPolicyTypes] = useState<PolicyType[]>([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [showModal, setShowModal] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [showDetails, setShowDetails] = useState<Policy | null>(null);
   const [editingPolicy, setEditingPolicy] = useState<Policy | null>(null);
+  const [search, setSearch] = useState('');
+  const [expandedPolicy, setExpandedPolicy] = useState<string | null>(null);
   const [formData, setFormData] = useState({
-    policy_number: '',
-    client_id: '',
-    policy_type: '',
-    premium_amount: '',
-    monthly_premium: '',
-    issue_date: '',
-    start_date: '',
-    end_date: '',
-    beneficiary_name: '',
-    beneficiary_relation: '',
-    notes: '',
+    policy_number: '', client_id: '', policy_type_id: '', issue_date: '', start_date: '',
+    duration_years: 1, payment_method: 'annual' as 'annual' | 'semi_annual' | 'quarterly' | 'monthly',
+    annual_premium: 0, periodic_premium: 0, sum_insured: 0,
   });
 
-  useEffect(() => {
-    fetchPolicies();
-    fetchClients();
-  }, [search, statusFilter]);
+  useEffect(() => { fetchPolicies(); fetchClients(); fetchPolicyTypes(); }, []);
 
   const fetchPolicies = async () => {
     setLoading(true);
-    let query = supabase
+    const { data } = await supabase
       .from('policies')
-      .select('*, client:clients(full_name, mobile), agent:profiles(full_name), branch:branches(name)')
+      .select('*, clients(full_name), policy_types(name), agent:users!policies_agent_id_fkey(full_name), group_leader:users!policies_group_leader_id_fkey(full_name), supervisor:users!policies_supervisor_id_fkey(full_name)')
       .order('created_at', { ascending: false });
-
-    if (search) {
-      query = query.or(`policy_number.ilike.%${search}%,client_id.in.(select id from clients where full_name.ilike.%${search}%)`);
-    }
-
-    if (statusFilter) {
-      query = query.eq('status', statusFilter);
-    }
-
-    const { data, error } = await query;
-    if (!error && data) {
-      setPolicies(data);
-    }
+    setPolicies((data as unknown as Policy[]) || []);
     setLoading(false);
   };
 
   const fetchClients = async () => {
     const { data } = await supabase.from('clients').select('*').order('full_name');
-    if (data) setClients(data);
+    setClients((data as Client[]) || []);
+  };
+
+  const fetchPolicyTypes = async () => {
+    const { data } = await supabase.from('policy_types').select('*').eq('is_active', true).order('name');
+    setPolicyTypes((data as PolicyType[]) || []);
+  };
+
+  const getClientData = (clientId: string) => clients.find((c) => c.id === clientId);
+
+  const calculatePeriodicPremium = () => {
+    const annual = Number(formData.annual_premium) || 0;
+    switch (formData.payment_method) {
+      case 'annual': return annual;
+      case 'semi_annual': return annual / 2;
+      case 'quarterly': return annual / 4;
+      case 'monthly': return annual / 12;
+      default: return annual;
+    }
+  };
+
+  const generateInstallments = async (policyId: string) => {
+    const installments = [];
+    const startDate = new Date(formData.start_date);
+    const duration = Number(formData.duration_years) || 1;
+    const periodic = calculatePeriodicPremium();
+
+    let frequencyMonths: number;
+    switch (formData.payment_method) {
+      case 'monthly': frequencyMonths = 1; break;
+      case 'quarterly': frequencyMonths = 3; break;
+      case 'semi_annual': frequencyMonths = 6; break;
+      case 'annual': frequencyMonths = 12; break;
+      default: frequencyMonths = 12;
+    }
+
+    const totalInstallments = Math.ceil((duration * 12) / frequencyMonths);
+
+    for (let i = 0; i < totalInstallments; i++) {
+      const dueDate = new Date(startDate);
+      dueDate.setMonth(dueDate.getMonth() + (i * frequencyMonths));
+      const insuranceYear = Math.floor((i * frequencyMonths) / 12) + 1;
+
+      installments.push({
+        policy_id: policyId,
+        installment_number: i + 1,
+        due_date: dueDate.toISOString().split('T')[0],
+        amount: periodic,
+        insurance_year: insuranceYear,
+      });
+    }
+
+    const { error } = await supabase.from('installments').insert(installments);
+    if (error) throw error;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    try {
+      const clientData = getClientData(formData.client_id);
+      if (!clientData) { showError('العميل غير موجود'); return; }
 
-    const policyData = {
-      policy_number: formData.policy_number,
-      client_id: formData.client_id,
-      agent_id: profile!.id,
-      branch_id: profile!.branch_id!,
-      policy_type: formData.policy_type,
-      premium_amount: Number(formData.premium_amount),
-      monthly_premium: Number(formData.monthly_premium),
-      issue_date: formData.issue_date,
-      start_date: formData.start_date,
-      end_date: formData.end_date,
-      beneficiary_name: formData.beneficiary_name || null,
-      beneficiary_relation: formData.beneficiary_relation || null,
-      notes: formData.notes || null,
-      status: 'pending',
-    };
+      const periodic = calculatePeriodicPremium();
+      const payload = {
+        policy_number: formData.policy_number,
+        client_id: formData.client_id,
+        agent_id: clientData.agent_id,
+        group_leader_id: clientData.group_leader_id,
+        supervisor_id: clientData.supervisor_id,
+        policy_type_id: formData.policy_type_id,
+        issue_date: formData.issue_date,
+        start_date: formData.start_date,
+        duration_years: Number(formData.duration_years),
+        payment_method: formData.payment_method,
+        annual_premium: Number(formData.annual_premium),
+        periodic_premium: periodic,
+        sum_insured: Number(formData.sum_insured),
+      };
 
-    if (editingPolicy) {
-      const { error } = await supabase
-        .from('policies')
-        .update(policyData)
-        .eq('id', editingPolicy.id);
-      if (!error) {
-        setShowModal(false);
-        fetchPolicies();
+      if (editingPolicy) {
+        const { error } = await supabase.from('policies').update(payload).eq('id', editingPolicy.id);
+        if (error) throw error;
+        showSuccess('تم تحديث الوثيقة بنجاح');
+      } else {
+        const { data, error } = await supabase.from('policies').insert(payload).select('id').single();
+        if (error) throw error;
+        if (data?.id) await generateInstallments(data.id);
+        showSuccess('تم إنشاء الوثيقة والأقساط بنجاح');
       }
-    } else {
-      const { error } = await supabase.from('policies').insert(policyData);
-      if (!error) {
-        setShowModal(false);
-        fetchPolicies();
-      }
+      closeForm();
+      fetchPolicies();
+    } catch (err: unknown) { showError(err instanceof Error ? err.message : 'حدث خطأ'); }
+  };
+
+  const closeForm = () => {
+    setShowForm(false); setEditingPolicy(null);
+    setFormData({ policy_number: '', client_id: '', policy_type_id: '', issue_date: '', start_date: '', duration_years: 1, payment_method: 'annual', annual_premium: 0, periodic_premium: 0, sum_insured: 0 });
+  };
+
+  const handleEdit = (p: Policy) => {
+    setEditingPolicy(p);
+    setFormData({ policy_number: p.policy_number, client_id: p.client_id, policy_type_id: p.policy_type_id, issue_date: p.issue_date, start_date: p.start_date, duration_years: p.duration_years, payment_method: p.payment_method, annual_premium: p.annual_premium, periodic_premium: p.periodic_premium, sum_insured: p.sum_insured });
+    setShowForm(true);
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm('هل أنت متأكد من حذف هذه الوثيقة؟ سيتم حذف جميع الأقساط المرتبطة بها.')) return;
+    const { error } = await supabase.from('policies').delete().eq('id', id);
+    if (error) { showError(error.message); return; }
+    showSuccess('تم حذف الوثيقة بنجاح'); fetchPolicies();
+  };
+
+  const filteredPolicies = policies.filter((p) =>
+    p.policy_number.toLowerCase().includes(search.toLowerCase()) ||
+    (p as unknown as { clients?: { full_name: string } }).clients?.full_name?.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case 'active': return <span className="badge badge-info">نشط</span>;
+      case 'paid': return <span className="badge badge-success">مدفوع</span>;
+      case 'cancelled': return <span className="badge badge-danger">ملغى</span>;
+      case 'expired': return <span className="badge badge-secondary">منتهي</span>;
+      default: return <span className="badge badge-secondary">{status}</span>;
     }
   };
 
-  const openNewModal = () => {
-    setEditingPolicy(null);
-    setFormData({
-      policy_number: '',
-      client_id: '',
-      policy_type: '',
-      premium_amount: '',
-      monthly_premium: '',
-      issue_date: new Date().toISOString().split('T')[0],
-      start_date: '',
-      end_date: '',
-      beneficiary_name: '',
-      beneficiary_relation: '',
-      notes: '',
-    });
-    setShowModal(true);
-  };
-
-  const openEditModal = (policy: Policy) => {
-    setEditingPolicy(policy);
-    setFormData({
-      policy_number: policy.policy_number,
-      client_id: policy.client_id,
-      policy_type: policy.policy_type,
-      premium_amount: String(policy.premium_amount),
-      monthly_premium: String(policy.monthly_premium),
-      issue_date: policy.issue_date,
-      start_date: policy.start_date,
-      end_date: policy.end_date,
-      beneficiary_name: policy.beneficiary_name || '',
-      beneficiary_relation: policy.beneficiary_relation || '',
-      notes: policy.notes || '',
-    });
-    setShowModal(true);
-  };
-
-  const statusVariants: Record<string, 'success' | 'warning' | 'danger' | 'default'> = {
-    active: 'success',
-    pending: 'warning',
-    cancelled: 'danger',
-    expired: 'default',
-  };
-
-  const columns = [
-    {
-      key: 'policy_number',
-      header: 'رقم الوثيقة',
-      render: (p: Policy) => (
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-            <FileText className="w-5 h-5 text-blue-600" />
-          </div>
-          <span className="font-medium">{p.policy_number}</span>
-        </div>
-      ),
-    },
-    { key: 'client', header: 'العميل', render: (p: Policy) => p.client?.full_name || '-' },
-    { key: 'policy_type', header: 'نوع الوثيقة' },
-    {
-      key: 'premium_amount',
-      header: 'قيمة القسط',
-      render: (p: Policy) => `${Number(p.premium_amount).toLocaleString()} ر.س`,
-    },
-    {
-      key: 'issue_date',
-      header: 'تاريخ الإصدار',
-      render: (p: Policy) => new Date(p.issue_date).toLocaleDateString('ar-SA'),
-    },
-    {
-      key: 'status',
-      header: 'الحالة',
-      render: (p: Policy) => (
-        <Badge variant={statusVariants[p.status]}>{POLICY_STATUS_LABELS[p.status]}</Badge>
-      ),
-    },
-    {
-      key: 'actions',
-      header: 'الإجراءات',
-      render: (policy: Policy) => (
-        <Button variant="ghost" size="sm" onClick={() => openEditModal(policy)}>
-          <Edit2 className="w-4 h-4" />
-        </Button>
-      ),
-    },
-  ];
-
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="space-y-5">
+      <div className="page-header flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">الوثائق</h1>
-          <p className="text-gray-500 mt-1">إدارة وثائق التأمين</p>
+          <h2 className="page-title">الوثائق</h2>
+          <p className="page-subtitle">إدارة وثائق التأمين</p>
         </div>
-        <Button onClick={openNewModal}>
-          <Plus className="w-4 h-4" />
-          إضافة وثيقة
-        </Button>
+        <button onClick={() => { setShowForm(true); setEditingPolicy(null); }} className="btn-primary">
+          <Plus className="w-5 h-5" />
+          <span className="hidden sm:inline">وثيقة جديدة</span>
+        </button>
       </div>
 
-      <div className="flex gap-4">
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-          <input
-            type="text"
-            placeholder="البحث برقم الوثيقة أو العميل..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full pr-10 pl-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-        </div>
-        <Select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          options={[
-            { value: '', label: 'كل الحالات' },
-            { value: 'pending', label: 'قيد الانتظار' },
-            { value: 'active', label: 'نشط' },
-            { value: 'cancelled', label: 'ملغي' },
-            { value: 'expired', label: 'منتهي' },
-          ]}
-        />
+      <div className="search-bar">
+        <Search className="search-bar-icon" />
+        <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="بحث برقم الوثيقة أو اسم العميل..." className="input-field" />
       </div>
 
-      <Card>
-        <Table columns={columns} data={policies} loading={loading} />
-      </Card>
+      {/* Form Drawer */}
+      {showForm && (
+        <>
+          <div className="bottom-sheet-overlay" onClick={closeForm} />
+          <div className="bottom-sheet p-5 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <h3 className="text-lg font-extrabold text-slate-900">{editingPolicy ? 'تعديل وثيقة' : 'وثيقة جديدة'}</h3>
+              <button onClick={closeForm} className="btn-icon"><X className="w-5 h-5" /></button>
+            </div>
+            <form onSubmit={handleSubmit} className="space-y-4 pb-8">
+              <div>
+                <label className="label">رقم الوثيقة *</label>
+                <input value={formData.policy_number} onChange={(e) => setFormData({ ...formData, policy_number: e.target.value })} className="input-field" required />
+              </div>
+              <div>
+                <label className="label">العميل *</label>
+                <select value={formData.client_id} onChange={(e) => setFormData({ ...formData, client_id: e.target.value })} className="input-field" required>
+                  <option value="">اختر العميل</option>
+                  {clients.map((c) => <option key={c.id} value={c.id}>{c.full_name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="label">نوع الوثيقة *</label>
+                <select value={formData.policy_type_id} onChange={(e) => setFormData({ ...formData, policy_type_id: e.target.value })} className="input-field" required>
+                  <option value="">اختر النوع</option>
+                  {policyTypes.map((pt) => <option key={pt.id} value={pt.id}>{pt.name}</option>)}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label">تاريخ الإصدار *</label>
+                  <input type="date" value={formData.issue_date} onChange={(e) => setFormData({ ...formData, issue_date: e.target.value })} className="input-field" required />
+                </div>
+                <div>
+                  <label className="label">تاريخ بدء السريان *</label>
+                  <input type="date" value={formData.start_date} onChange={(e) => setFormData({ ...formData, start_date: e.target.value })} className="input-field" required />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label">المدة (سنوات) *</label>
+                  <input type="number" min={1} max={30} value={formData.duration_years} onChange={(e) => setFormData({ ...formData, duration_years: Number(e.target.value) })} className="input-field" required />
+                </div>
+                <div>
+                  <label className="label">طريقة السداد *</label>
+                  <select value={formData.payment_method} onChange={(e) => setFormData({ ...formData, payment_method: e.target.value as typeof formData.payment_method })} className="input-field" required>
+                    <option value="annual">سنوي</option>
+                    <option value="semi_annual">نصف سنوي</option>
+                    <option value="quarterly">ربع سنوي</option>
+                    <option value="monthly">شهري</option>
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label">القسط السنوي *</label>
+                  <input type="number" min={0} step="0.01" value={formData.annual_premium} onChange={(e) => setFormData({ ...formData, annual_premium: Number(e.target.value) })} className="input-field" required />
+                </div>
+                <div>
+                  <label className="label">القسط الدوري</label>
+                  <input type="number" value={calculatePeriodicPremium().toFixed(2)} className="input-field bg-slate-50 text-slate-500" readOnly />
+                </div>
+              </div>
+              <div>
+                <label className="label">مبلغ التأمين *</label>
+                <input type="number" min={0} step="0.01" value={formData.sum_insured} onChange={(e) => setFormData({ ...formData, sum_insured: Number(e.target.value) })} className="input-field" required />
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={closeForm} className="btn-secondary flex-1">إلغاء</button>
+                <button type="submit" className="btn-primary flex-1"><Check className="w-5 h-5" /> {editingPolicy ? 'حفظ' : 'إنشاء'}</button>
+              </div>
+            </form>
+          </div>
+        </>
+      )}
 
-      <Modal isOpen={showModal} onClose={() => setShowModal(false)} title={editingPolicy ? 'تعديل وثيقة' : 'إضافة وثيقة'} size="xl">
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <Input label="رقم الوثيقة" value={formData.policy_number} onChange={(e) => setFormData({ ...formData, policy_number: e.target.value })} required />
-            <Select
-              label="العميل"
-              value={formData.client_id}
-              onChange={(e) => setFormData({ ...formData, client_id: e.target.value })}
-              options={[
-                { value: '', label: 'اختر العميل' },
-                ...clients.map((c) => ({ value: c.id, label: c.full_name })),
-              ]}
-              required
-            />
+      {/* Details Drawer */}
+      {showDetails && (
+        <>
+          <div className="bottom-sheet-overlay" onClick={() => setShowDetails(null)} />
+          <div className="bottom-sheet p-5 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <h3 className="text-lg font-extrabold text-slate-900">تفاصيل الوثيقة</h3>
+              <button onClick={() => setShowDetails(null)} className="btn-icon"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="space-y-3 pb-8">
+              <div className="flex items-center gap-3 p-4 bg-slate-50 rounded-2xl">
+                <div className="w-12 h-12 bg-emerald-100 rounded-2xl flex items-center justify-center">
+                  <Shield className="w-6 h-6 text-emerald-600" />
+                </div>
+                <div>
+                  <p className="font-extrabold text-slate-900">{showDetails.policy_number}</p>
+                  <p className="text-xs text-slate-500">{(showDetails as unknown as { policy_types?: { name: string } }).policy_types?.name || '-'}</p>
+                </div>
+                <div className="mr-auto">{getStatusBadge(showDetails.status)}</div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3 bg-slate-50 rounded-xl">
+                  <span className="text-xs text-slate-500 block mb-1">العميل</span>
+                  <span className="text-sm font-bold text-slate-900">{(showDetails as unknown as { clients?: { full_name: string } }).clients?.full_name || '-'}</span>
+                </div>
+                <div className="p-3 bg-slate-50 rounded-xl">
+                  <span className="text-xs text-slate-500 block mb-1">الوكيل</span>
+                  <span className="text-sm font-bold text-slate-900">{(showDetails as unknown as { agent?: { full_name: string } }).agent?.full_name || '-'}</span>
+                </div>
+                <div className="p-3 bg-slate-50 rounded-xl">
+                  <span className="text-xs text-slate-500 block mb-1">القسط السنوي</span>
+                  <span className="text-sm font-bold text-emerald-700">{showDetails.annual_premium.toLocaleString()}</span>
+                </div>
+                <div className="p-3 bg-slate-50 rounded-xl">
+                  <span className="text-xs text-slate-500 block mb-1">مبلغ التأمين</span>
+                  <span className="text-sm font-bold text-slate-900">{showDetails.sum_insured.toLocaleString()}</span>
+                </div>
+                <div className="p-3 bg-slate-50 rounded-xl">
+                  <span className="text-xs text-slate-500 block mb-1">تاريخ الإصدار</span>
+                  <span className="text-sm font-bold text-slate-900">{showDetails.issue_date}</span>
+                </div>
+                <div className="p-3 bg-slate-50 rounded-xl">
+                  <span className="text-xs text-slate-500 block mb-1">تاريخ البدء</span>
+                  <span className="text-sm font-bold text-slate-900">{showDetails.start_date}</span>
+                </div>
+              </div>
+            </div>
           </div>
-          <div className="grid grid-cols-3 gap-4">
-            <Input label="نوع الوثيقة" value={formData.policy_type} onChange={(e) => setFormData({ ...formData, policy_type: e.target.value })} required />
-            <Input label="قيمة القسط السنوي" type="number" value={formData.premium_amount} onChange={(e) => setFormData({ ...formData, premium_amount: e.target.value })} required />
-            <Input label="القسط الشهري" type="number" value={formData.monthly_premium} onChange={(e) => setFormData({ ...formData, monthly_premium: e.target.value })} required />
-          </div>
-          <div className="grid grid-cols-3 gap-4">
-            <Input label="تاريخ الإصدار" type="date" value={formData.issue_date} onChange={(e) => setFormData({ ...formData, issue_date: e.target.value })} required />
-            <Input label="تاريخ البدء" type="date" value={formData.start_date} onChange={(e) => setFormData({ ...formData, start_date: e.target.value })} required />
-            <Input label="تاريخ الانتهاء" type="date" value={formData.end_date} onChange={(e) => setFormData({ ...formData, end_date: e.target.value })} required />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <Input label="اسم المستفيد" value={formData.beneficiary_name} onChange={(e) => setFormData({ ...formData, beneficiary_name: e.target.value })} />
-            <Input label="صلة القرابة" value={formData.beneficiary_relation} onChange={(e) => setFormData({ ...formData, beneficiary_relation: e.target.value })} />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">ملاحظات</label>
-            <textarea
-              value={formData.notes}
-              onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-              rows={3}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-          <div className="flex gap-3 pt-4">
-            <Button type="submit">{editingPolicy ? 'تحديث' : 'إضافة'}</Button>
-            <Button variant="secondary" type="button" onClick={() => setShowModal(false)}>إلغاء</Button>
-          </div>
-        </form>
-      </Modal>
+        </>
+      )}
+
+      {/* Policy Cards */}
+      {loading ? (
+        <div className="flex items-center justify-center py-20"><div className="animate-spin w-10 h-10 border-3 border-emerald-600 border-t-transparent rounded-full" /></div>
+      ) : filteredPolicies.length === 0 ? (
+        <div className="empty-state">
+          <FileText className="empty-state-icon" />
+          <p className="text-sm">لا توجد وثائق</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {filteredPolicies.map((p) => {
+            const isExpanded = expandedPolicy === p.id;
+            const clientName = (p as unknown as { clients?: { full_name: string } }).clients?.full_name || '-';
+            const typeName = (p as unknown as { policy_types?: { name: string } }).policy_types?.name || '-';
+            const agentName = (p as unknown as { agent?: { full_name: string } }).agent?.full_name || '-';
+            return (
+              <div key={p.id} className="card-hover">
+                <div className="flex items-start gap-3">
+                  <div className="w-12 h-12 bg-emerald-100 rounded-2xl flex items-center justify-center shrink-0">
+                    <FileText className="w-6 h-6 text-emerald-600" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-bold text-slate-900 text-base">{p.policy_number}</h3>
+                      {getStatusBadge(p.status)}
+                    </div>
+                    <p className="text-sm text-slate-500 mt-1">{clientName} · {typeName}</p>
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-slate-400">
+                      <span className="flex items-center gap-1"><UserCircle className="w-3 h-3" />{agentName}</span>
+                      <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />{PAYMENT_METHOD_LABELS[p.payment_method]}</span>
+                      <span className="flex items-center gap-1"><DollarSign className="w-3 h-3" />{p.annual_premium.toLocaleString()}</span>
+                    </div>
+                  </div>
+                  <button onClick={() => setExpandedPolicy(isExpanded ? null : p.id)} className="btn-icon">
+                    {isExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                  </button>
+                </div>
+                {isExpanded && (
+                  <div className="mt-3 pt-3 border-t border-slate-50 space-y-2">
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div className="p-2 bg-slate-50 rounded-lg"><span className="text-slate-400 block">القسط الدوري</span><span className="font-bold text-slate-800">{p.periodic_premium.toLocaleString()}</span></div>
+                      <div className="p-2 bg-slate-50 rounded-lg"><span className="text-slate-400 block">مبلغ التأمين</span><span className="font-bold text-slate-800">{p.sum_insured.toLocaleString()}</span></div>
+                      <div className="p-2 bg-slate-50 rounded-lg"><span className="text-slate-400 block">تاريخ الإصدار</span><span className="font-bold text-slate-800">{p.issue_date}</span></div>
+                      <div className="p-2 bg-slate-50 rounded-lg"><span className="text-slate-400 block">مدة الوثيقة</span><span className="font-bold text-slate-800">{p.duration_years} سنوات</span></div>
+                    </div>
+                    <div className="flex items-center gap-2 pt-2">
+                      <button onClick={() => setShowDetails(p)} className="action-btn-view flex-1"><Eye className="w-4 h-4" /> عرض</button>
+                      <button onClick={() => handleEdit(p)} className="action-btn-edit flex-1"><Pencil className="w-4 h-4" /> تعديل</button>
+                      <button onClick={() => handleDelete(p.id)} className="action-btn-delete flex-1"><Trash2 className="w-4 h-4" /> حذف</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
