@@ -182,17 +182,17 @@ export default function CollectionsPage({ showSuccess, showError }: PageProps) {
               <h3 className="text-lg font-extrabold text-slate-900">تحصيل القسط</h3>
               <button onClick={() => setShowForm(false)} className="btn-icon"><X className="w-5 h-5" /></button>
             </div>
-            <div className="grid grid-cols-3 gap-2 mb-2">
-              <div className="p-3 bg-slate-50 rounded-xl text-center">
-                <span className="text-[10px] text-slate-500 block">الوثيقة</span>
+            <div className="space-y-3 mb-2">
+              <div className="p-3 bg-slate-50 rounded-xl">
+                <span className="text-[10px] text-slate-500 block mb-1">الوثيقة</span>
                 <span className="text-sm font-bold text-slate-900">{selectedInstallment.policies?.policy_number}</span>
               </div>
-              <div className="p-3 bg-slate-50 rounded-xl text-center">
-                <span className="text-[10px] text-slate-500 block">العميل</span>
+              <div className="p-3 bg-slate-50 rounded-xl">
+                <span className="text-[10px] text-slate-500 block mb-1">العميل</span>
                 <span className="text-sm font-bold text-slate-900">{selectedInstallment.clients?.full_name}</span>
               </div>
-              <div className="p-3 bg-slate-50 rounded-xl text-center">
-                <span className="text-[10px] text-slate-500 block">المبلغ</span>
+              <div className="p-3 bg-slate-50 rounded-xl">
+                <span className="text-[10px] text-slate-500 block mb-1">المبلغ</span>
                 <span className="text-sm font-bold text-emerald-700">{selectedInstallment.amount.toLocaleString()}</span>
               </div>
             </div>
@@ -233,24 +233,50 @@ export default function CollectionsPage({ showSuccess, showError }: PageProps) {
         ) : (
           <div className="space-y-3">
             {filteredDue.map((inst) => (
-              <div key={inst.id} className="card-hover border-l-4 border-l-amber-400">
-                <div className="flex items-start gap-3">
-                  <div className="w-12 h-12 bg-amber-100 rounded-2xl flex items-center justify-center shrink-0">
-                    <Receipt className="w-6 h-6 text-amber-600" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="badge badge-warning">قسط {inst.installment_number}</span>
-                      <span className="text-xs text-slate-400">السنة {inst.insurance_year}</span>
+              <div key={inst.id} className="card-hover border-l-4 border-l-amber-400 p-4">
+                <div className="space-y-3">
+                  {/* Header with icon */}
+                  <div className="flex items-start gap-3">
+                    <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center shrink-0">
+                      <Receipt className="w-5 h-5 text-amber-600" />
                     </div>
-                    <p className="font-bold text-slate-900 text-base mt-1">{inst.policies?.policy_number}</p>
-                    <p className="text-sm text-slate-500">{inst.clients?.full_name}</p>
-                    <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-slate-400">
-                      <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />{new Date(inst.due_date).toLocaleDateString('ar-EG')}</span>
-                      <span className="flex items-center gap-1"><DollarSign className="w-3 h-3" />{inst.amount.toLocaleString()}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="badge badge-warning text-xs">قسط {inst.installment_number}</span>
+                        <span className="text-xs text-slate-400">السنة {inst.insurance_year}</span>
+                      </div>
                     </div>
                   </div>
-                  <button onClick={() => openCollectForm(inst)} className="btn-primary text-xs py-2 px-3 shrink-0">
+
+                  {/* Data rows - vertical layout */}
+                  <div className="space-y-2 pl-2 border-r-2 border-amber-200">
+                    <div className="flex justify-between items-start gap-2">
+                      <span className="text-xs text-slate-500 font-medium">اسم العميل:</span>
+                      <span className="text-sm font-bold text-slate-900 text-right">{inst.clients?.full_name}</span>
+                    </div>
+                    <div className="flex justify-between items-start gap-2">
+                      <span className="text-xs text-slate-500 font-medium">رقم الوثيقة:</span>
+                      <span className="text-sm font-bold text-slate-900 text-right">{inst.policies?.policy_number}</span>
+                    </div>
+                    <div className="flex justify-between items-start gap-2">
+                      <span className="text-xs text-slate-500 font-medium">قيمة القسط:</span>
+                      <span className="text-sm font-bold text-emerald-700 text-right">{inst.amount.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between items-start gap-2">
+                      <span className="text-xs text-slate-500 font-medium">تاريخ الاستحقاق:</span>
+                      <span className="text-sm font-bold text-slate-900 text-right">{new Date(inst.due_date).toLocaleDateString('ar-EG')}</span>
+                    </div>
+                    <div className="flex justify-between items-start gap-2">
+                      <span className="text-xs text-slate-500 font-medium">الحالة:</span>
+                      <span className="badge badge-warning text-xs">مستحق</span>
+                    </div>
+                  </div>
+
+                  {/* Collect Button */}
+                  <button 
+                    onClick={() => openCollectForm(inst)} 
+                    className="btn-primary w-full mt-3 py-2.5 text-sm"
+                  >
                     <DollarSign className="w-4 h-4" /> تحصيل
                   </button>
                 </div>
@@ -270,39 +296,54 @@ export default function CollectionsPage({ showSuccess, showError }: PageProps) {
         ) : (
           <div className="space-y-3">
             {filteredCollections.map((coll) => {
-              const isExpanded = expandedItem === coll.id;
               const policyNum = (coll as unknown as { policies?: { policy_number: string } }).policies?.policy_number || '-';
               const clientName = (coll as unknown as { clients?: { full_name: string } }).clients?.full_name || '-';
               const collectorName = (coll as unknown as { users?: { full_name: string } }).users?.full_name || '-';
               return (
-                <div key={coll.id} className="card-hover border-l-4 border-l-emerald-400">
-                  <div className="flex items-start gap-3">
-                    <div className="w-12 h-12 bg-emerald-100 rounded-2xl flex items-center justify-center shrink-0">
-                      <DollarSign className="w-6 h-6 text-emerald-600" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="badge badge-success">تم التحصيل</span>
+                <div key={coll.id} className="card-hover border-l-4 border-l-emerald-400 p-4">
+                  <div className="space-y-3">
+                    {/* Header with icon */}
+                    <div className="flex items-start gap-3">
+                      <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center shrink-0">
+                        <DollarSign className="w-5 h-5 text-emerald-600" />
                       </div>
-                      <p className="font-bold text-slate-900 text-base mt-1">{policyNum}</p>
-                      <p className="text-sm text-slate-500">{clientName}</p>
-                      <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-slate-400">
-                        <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />{new Date(coll.collection_date).toLocaleDateString('ar-EG')}</span>
-                        <span className="flex items-center gap-1"><DollarSign className="w-3 h-3" />{coll.amount.toLocaleString()}</span>
-                        <span className="flex items-center gap-1"><UserCircle className="w-3 h-3" />{collectorName}</span>
+                      <div className="flex-1 min-w-0">
+                        <span className="badge badge-success text-xs">تم التحصيل</span>
                       </div>
                     </div>
-                    <button onClick={() => setExpandedItem(isExpanded ? null : coll.id)} className="btn-icon">
-                      {isExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+
+                    {/* Data rows - vertical layout */}
+                    <div className="space-y-2 pl-2 border-r-2 border-emerald-200">
+                      <div className="flex justify-between items-start gap-2">
+                        <span className="text-xs text-slate-500 font-medium">اسم العميل:</span>
+                        <span className="text-sm font-bold text-slate-900 text-right">{clientName}</span>
+                      </div>
+                      <div className="flex justify-between items-start gap-2">
+                        <span className="text-xs text-slate-500 font-medium">رقم الوثيقة:</span>
+                        <span className="text-sm font-bold text-slate-900 text-right">{policyNum}</span>
+                      </div>
+                      <div className="flex justify-between items-start gap-2">
+                        <span className="text-xs text-slate-500 font-medium">المبلغ:</span>
+                        <span className="text-sm font-bold text-emerald-700 text-right">{coll.amount.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between items-start gap-2">
+                        <span className="text-xs text-slate-500 font-medium">تاريخ التحصيل:</span>
+                        <span className="text-sm font-bold text-slate-900 text-right">{new Date(coll.collection_date).toLocaleDateString('ar-EG')}</span>
+                      </div>
+                      <div className="flex justify-between items-start gap-2">
+                        <span className="text-xs text-slate-500 font-medium">المحصل:</span>
+                        <span className="text-sm font-bold text-slate-900 text-right">{collectorName}</span>
+                      </div>
+                    </div>
+
+                    {/* Undo Button */}
+                    <button 
+                      onClick={() => handleUndoCollection(coll.id)} 
+                      className="btn-secondary w-full mt-3 py-2.5 text-sm"
+                    >
+                      <RotateCcw className="w-4 h-4" /> تراجع
                     </button>
                   </div>
-                  {isExpanded && (
-                    <div className="mt-3 pt-3 border-t border-slate-50 flex justify-end">
-                      <button onClick={() => handleUndoCollection(coll.id)} className="btn-danger text-sm">
-                        <RotateCcw className="w-4 h-4" /> تراجع عن التحصيل
-                      </button>
-                    </div>
-                  )}
                 </div>
               );
             })}

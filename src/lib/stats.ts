@@ -102,8 +102,9 @@ export async function fetchDashboardStats(userId: string, role: UserRole): Promi
   const { data: monthlyCollData } = await monthlyCollQuery;
   const monthlyCollections = monthlyCollData?.reduce((s, c) => s + (c.amount || 0), 0) || 0;
 
-  // Due installments
-  let dueQuery = supabase.from('installments').select('*', { count: 'exact', head: true }).eq('status', 'due');
+  // Due installments (current month only)
+  const endOfMonth = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).toISOString().split('T')[0];
+  let dueQuery = supabase.from('installments').select('*', { count: 'exact', head: true }).eq('status', 'due').gte('due_date', startOfMonth.split('T')[0]).lte('due_date', endOfMonth);
   if (policyFilter) {
     const { data: policyIds } = await supabase.from('policies').select('id').or(policyFilter);
     const ids = policyIds?.map((p) => p.id) || [];

@@ -42,11 +42,16 @@ export default function DashboardPage(_props: PageProps) {
         .limit(5);
       setRecentPolicies((recentPoliciesData as unknown as Policy[]) || []);
 
-      // Due installments
+      // Due installments (current month only)
+      const now = new Date();
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+      const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
       const { data: dueData } = await supabase
         .from('installments')
         .select('*, policies(policy_number, client_id, clients(full_name))')
         .eq('status', 'due')
+        .gte('due_date', startOfMonth)
+        .lte('due_date', endOfMonth)
         .order('due_date', { ascending: true })
         .limit(5);
       
