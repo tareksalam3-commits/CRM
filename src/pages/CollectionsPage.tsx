@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { supabase, type Collection, type Installment, type User } from '../lib/supabase';
+import { supabase, type Collection, type Installment, type User, type Policy } from '../lib/supabase';
 import { useAuthContext } from '../contexts/AuthContext';
 import type { PageProps } from '../types';
 import {
@@ -10,6 +10,11 @@ import {
 interface DueInstallment extends Installment {
   policies?: { policy_number: string; client_id: string; agent_id: string };
   clients?: { full_name: string };
+}
+
+interface PolicyDetail extends Policy {
+  clients?: { full_name: string };
+  all_installments?: Installment[];
 }
 
 export default function CollectionsPage({ showSuccess, showError }: PageProps) {
@@ -27,6 +32,9 @@ export default function CollectionsPage({ showSuccess, showError }: PageProps) {
   const [activeTab, setActiveTab] = useState<'due' | 'collected'>('due');
   const [expandedItem, setExpandedItem] = useState<string | null>(null);
   const [stats, setStats] = useState({ totalDue: 0, totalCollected: 0, todayCollected: 0 });
+  const [showPolicyModal, setShowPolicyModal] = useState(false);
+  const [selectedPolicy, setSelectedPolicy] = useState<PolicyDetail | null>(null);
+  const [policyInstallments, setPolicyInstallments] = useState<Installment[]>([]);
 
   useEffect(() => {
     if (currentUser) {
@@ -36,12 +44,24 @@ export default function CollectionsPage({ showSuccess, showError }: PageProps) {
     }
   }, [currentUser]);
 
+  // Get current month range
+  const getCurrentMonthRange = () => {
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    return {
+      start: startOfMonth.toISOString().split('T')[0],
+      end: endOfMonth.toISOString().split('T')[0]
+    };
+  };
+
   const fetchDueInstallments = async () => {
     setLoading(true);
     if (!currentUser) return;
     
     const { getAccessibleUserIds } = await import('../lib/permissions');
     const accessibleIds = await getAccessibleUserIds(currentUser);
+    const monthRange = getCurrentMonthRange();
     
     // Get accessible policies
     let policiesQuery = supabase.from('policies').select('id').order('created_at', { ascending: false });
@@ -55,6 +75,8 @@ export default function CollectionsPage({ showSuccess, showError }: PageProps) {
       .from('installments')
       .select('*, policies(policy_number, client_id, agent_id, clients(full_name))')
       .eq('status', 'due')
+      // Filter by current month or overdue (before current month)
+      .lte('due_date', monthRange.end)
       .order('due_date', { ascending: true });
     
     if (policyIds.length > 0) {
@@ -128,6 +150,39 @@ export default function CollectionsPage({ showSuccess, showError }: PageProps) {
     setCollectors((data as User[]) || []);
   };
 
+  const fetchPolicyInstallments = async (policyId: string) => {
+    try {
+      const { data } = await supabase
+        .from('installments')
+        .select('*')
+        .eq('policy_id', policyId)
+        .gte('due_date', new Date().toISOString().split('T')[0]) // Only future installments
+        .order('due_date', { ascending: true });
+      
+      setPolicyInstallments((data as Installment[]) || []);
+    } catch (err) {
+      showError('خطأ في جلب الأقساط');
+    }
+  };
+
+  const openPolicyModal = async (inst: DueInstallment) => {
+    try {
+      const { data: policy } = await supabase
+        .from('policies')
+        .select('*, clients(full_name)')
+        .eq('id', inst.policy_id)
+        .single();
+      
+      if (policy) {
+        setSelectedPolicy(policy as PolicyDetail);
+        await fetchPolicyInstallments(inst.policy_id);
+        setShowPolicyModal(true);
+      }
+    } catch (err) {
+      showError('خطأ في جلب بيانات الوثيقة');
+    }
+  };
+
   const handleCollect = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedInstallment || !collectorId) return;
@@ -146,6 +201,22 @@ export default function CollectionsPage({ showSuccess, showError }: PageProps) {
       fetchDueInstallments(); fetchCollections();
       showSuccess('تم التحصيل بنجاح');
     } catch (err: unknown) { showError(err instanceof Error ? err.message : 'حدث خطأ'); }
+  };
+
+  const handleCollectFromModal = async (installment: Installment) => {
+    setSelectedInstallment({
+      ...installment,
+      policies: selectedPolicy ? { 
+        policy_number: (selectedPolicy as any).policy_number, 
+        client_id: (selectedPolicy as any).client_id, 
+        agent_id: (selectedPolicy as any).agent_id 
+      } : undefined,
+      clients: selectedPolicy?.clients
+    } as DueInstallment);
+    setCollectorId(currentUser?.id || '');
+    setCollectionDate(new Date().toISOString().split('T')[0]);
+    setNotes('');
+    setShowForm(true);
   };
 
   const handleUndoCollection = async (collectionId: string) => {
@@ -271,6 +342,78 @@ export default function CollectionsPage({ showSuccess, showError }: PageProps) {
         </>
       )}
 
+      {/* Policy Details Modal */}
+      {showPolicyModal && selectedPolicy && (
+        <>
+          <div className="bottom-sheet-overlay" onClick={() => setShowPolicyModal(false)} />
+          <div className="bottom-sheet p-5 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <h3 className="text-lg font-extrabold text-slate-900">الأقساط المستقبلية</h3>
+              <button onClick={() => setShowPolicyModal(false)} className="btn-icon"><X className="w-5 h-5" /></button>
+            </div>
+            
+            {/* Policy Info */}
+            <div className="space-y-2 p-3 bg-slate-50 rounded-xl">
+              <div className="flex justify-between items-start gap-2">
+                <span className="text-xs text-slate-500 font-medium">رقم الوثيقة:</span>
+                <span className="text-sm font-bold text-slate-900">{(selectedPolicy as any).policy_number}</span>
+              </div>
+              <div className="flex justify-between items-start gap-2">
+                <span className="text-xs text-slate-500 font-medium">العميل:</span>
+                <span className="text-sm font-bold text-slate-900">{selectedPolicy.clients?.full_name}</span>
+              </div>
+            </div>
+
+            {/* Installments List */}
+            <div className="space-y-3">
+              <h4 className="text-sm font-bold text-slate-900">الأقساط المستقبلية:</h4>
+              {policyInstallments.length === 0 ? (
+                <div className="empty-state">
+                  <Clock className="empty-state-icon" />
+                  <p className="text-sm">لا توجد أقساط مستقبلية</p>
+                </div>
+              ) : (
+                policyInstallments.map((inst) => (
+                  <div key={inst.id} className="card-hover border-l-4 border-l-blue-400 p-3">
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-start gap-2">
+                        <span className="text-xs text-slate-500 font-medium">القسط:</span>
+                        <span className="badge badge-info text-xs">قسط {inst.installment_number}</span>
+                      </div>
+                      <div className="flex justify-between items-start gap-2">
+                        <span className="text-xs text-slate-500 font-medium">المبلغ:</span>
+                        <span className="text-sm font-bold text-emerald-700">{inst.amount.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between items-start gap-2">
+                        <span className="text-xs text-slate-500 font-medium">تاريخ الاستحقاق:</span>
+                        <span className="text-sm font-bold text-slate-900">{new Date(inst.due_date).toLocaleDateString('ar-EG')}</span>
+                      </div>
+                      <div className="flex justify-between items-start gap-2">
+                        <span className="text-xs text-slate-500 font-medium">الحالة:</span>
+                        <span className={`badge ${inst.status === 'due' ? 'badge-warning' : 'badge-info'} text-xs`}>
+                          {inst.status === 'due' ? 'مستحق' : 'مستقبلي'}
+                        </span>
+                      </div>
+                      {inst.status === 'due' && (
+                        <button 
+                          onClick={() => {
+                            handleCollectFromModal(inst);
+                            setShowPolicyModal(false);
+                          }}
+                          className="btn-primary w-full mt-2 py-2 text-sm"
+                        >
+                          <DollarSign className="w-4 h-4" /> سداد
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
       {/* Due Installments List */}
       {activeTab === 'due' && (
         loading ? (
@@ -322,13 +465,21 @@ export default function CollectionsPage({ showSuccess, showError }: PageProps) {
                     </div>
                   </div>
 
-                  {/* Collect Button */}
-                  <button 
-                    onClick={() => openCollectForm(inst)} 
-                    className="btn-primary w-full mt-3 py-2.5 text-sm"
-                  >
-                    <DollarSign className="w-4 h-4" /> تحصيل
-                  </button>
+                  {/* Action Buttons */}
+                  <div className="flex gap-2 mt-3">
+                    <button 
+                      onClick={() => openPolicyModal(inst)} 
+                      className="btn-secondary flex-1 py-2.5 text-sm"
+                    >
+                      <FileText className="w-4 h-4" /> تفاصيل الوثيقة
+                    </button>
+                    <button 
+                      onClick={() => openCollectForm(inst)} 
+                      className="btn-primary flex-1 py-2.5 text-sm"
+                    >
+                      <DollarSign className="w-4 h-4" /> تحصيل
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}
