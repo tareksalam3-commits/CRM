@@ -38,19 +38,32 @@ export default function CollectionsPage({ showSuccess, showError }: PageProps) {
     setLoading(true);
     const { data } = await supabase
       .from('installments')
-      .select('*, policies(policy_number, client_id, agent_id), clients(full_name)')
+      .select('*, policies(policy_number, client_id, agent_id, clients(full_name))')
       .eq('status', 'due')
       .order('due_date', { ascending: true });
-    setDueInstallments((data as unknown as DueInstallment[]) || []);
+    
+    // Transform data to match DueInstallment interface if needed
+    const transformedData = (data as any[])?.map(inst => ({
+      ...inst,
+      clients: inst.policies?.clients // Map nested client data to top level for UI compatibility
+    })) || [];
+
+    setDueInstallments(transformedData as DueInstallment[]);
     setLoading(false);
   };
 
   const fetchCollections = async () => {
     const { data } = await supabase
       .from('collections')
-      .select('*, policies(policy_number), clients(full_name), users(full_name)')
+      .select('*, policies(policy_number, clients(full_name)), users(full_name)')
       .order('created_at', { ascending: false });
-    setCollections((data as unknown as Collection[]) || []);
+    
+    const transformedData = (data as any[])?.map(coll => ({
+      ...coll,
+      clients: coll.policies?.clients
+    })) || [];
+
+    setCollections(transformedData as Collection[]);
 
     // Calculate stats
     const totalDue = dueInstallments.reduce((s, i) => s + (i.amount || 0), 0);

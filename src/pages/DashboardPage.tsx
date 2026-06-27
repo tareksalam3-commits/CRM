@@ -45,11 +45,16 @@ export default function DashboardPage(_props: PageProps) {
       // Due installments
       const { data: dueData } = await supabase
         .from('installments')
-        .select('*, policies(policy_number, client_id), clients(full_name)')
+        .select('*, policies(policy_number, client_id, clients(full_name))')
         .eq('status', 'due')
         .order('due_date', { ascending: true })
         .limit(5);
-      setDueInstallments((dueData as unknown as Installment[]) || []);
+      
+      const transformedDue = (dueData as any[])?.map(inst => ({
+        ...inst,
+        clients: inst.policies?.clients
+      })) || [];
+      setDueInstallments(transformedDue as unknown as Installment[]);
 
       // Collections by month (current year)
       const year = new Date().getFullYear();
