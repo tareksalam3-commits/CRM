@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuthContext } from '../contexts/AuthContext';
-import { Download, TrendingUp, Users, FileText, Receipt, Calendar, AlertCircle } from 'lucide-react';
+import { Download, TrendingUp, Users, FileText, Receipt, Calendar, AlertCircle, BarChart3 } from 'lucide-react';
 import type { PageProps } from '../types';
 
 interface ReportData {
@@ -28,48 +28,106 @@ export default function ReportsPage({ showError }: PageProps) {
   const fetchReportData = async () => {
     setLoading(true);
     try {
+      const { getAccessibleUserIds } = await import('../lib/permissions');
+      const accessibleIds = await getAccessibleUserIds(user!);
+
       const startOfYear = `${year}-01-01`;
       const endOfYear = `${year}-12-31`;
 
-      const { count: policiesCount } = await supabase
+      // الحصول على الوثائق المتاحة
+      let policiesQuery = supabase
         .from('policies')
         .select('*', { count: 'exact', head: true })
         .gte('created_at', startOfYear)
         .lte('created_at', endOfYear);
+      if (accessibleIds.length > 0) {
+        policiesQuery = policiesQuery.in('agent_id', accessibleIds);
+      }
+      const { count: policiesCount } = await policiesQuery;
 
-      const { count: clientsCount } = await supabase
+      // الحصول على العملاء المتاحين
+      let clientsQuery = supabase
         .from('clients')
         .select('*', { count: 'exact', head: true });
+      if (accessibleIds.length > 0) {
+        clientsQuery = clientsQuery.in('agent_id', accessibleIds);
+      }
+      const { count: clientsCount } = await clientsQuery;
 
-      const { data: collectionsData } = await supabase
+      // الحصول على الوثائق المتاحة للاستعلام عن الأقساط
+      const { data: accessiblePolicies } = await supabase
+        .from('policies')
+        .select('id')
+        .in('agent_id', accessibleIds);
+      const policyIds = accessiblePolicies?.map(p => p.id) || [];
+
+      // التحصيلات في السنة الأولى فقط
+      let collectionsQuery = supabase
         .from('collections')
         .select('amount')
         .gte('collection_date', startOfYear)
         .lte('collection_date', endOfYear);
+      if (policyIds.length > 0) {
+        collectionsQuery = collectionsQuery.in('policy_id', policyIds);
+      }
+      const { data: collectionsData } = await collectionsQuery;
 
-      const { data: dueData } = await supabase
+      // الأقساط المستحقة (السنة الأولى فقط)
+      let dueQuery = supabase
         .from('installments')
         .select('amount')
-        .eq('status', 'due');
+        .eq('status', 'due')
+        .eq('insurance_year', 1);
+      if (policyIds.length > 0) {
+        dueQuery = dueQuery.in('policy_id', policyIds);
+      }
+      const { data: dueData } = await dueQuery;
 
-      const { data: overdueData } = await supabase
+      // الأقساط المتأخرة (الشهر السابق فقط - السنة الأولى)
+      const now = new Date();
+      const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().split('T')[0];
+      const prevMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0).toISOString().split('T')[0];
+      
+      let overdueQuery = supabase
         .from('installments')
         .select('amount')
-        .eq('status', 'overdue');
+        .eq('status', 'due')
+        .eq('insurance_year', 1)
+        .gte('due_date', prevMonthStart)
+        .lte('due_date', prevMonthEnd);
+      if (policyIds.length > 0) {
+        overdueQuery = overdueQuery.in('policy_id', policyIds);
+      }
+      const { data: overdueData } = await overdueQuery;
 
-      const { data: policiesByTypeData } = await supabase
+      // الوثائق حسب النوع
+      let policiesByTypeQuery = supabase
         .from('policies')
         .select('policy_type_id, policy_types(name)');
+      if (accessibleIds.length > 0) {
+        policiesByTypeQuery = policiesByTypeQuery.in('agent_id', accessibleIds);
+      }
+      const { data: policiesByTypeData } = await policiesByTypeQuery;
 
-      const { data: collectionsByMonthData } = await supabase
+      // التحصيلات حسب الشهر
+      let collectionsByMonthQuery = supabase
         .from('collections')
         .select('collection_date, amount')
         .gte('collection_date', startOfYear)
         .lte('collection_date', endOfYear);
+      if (policyIds.length > 0) {
+        collectionsByMonthQuery = collectionsByMonthQuery.in('policy_id', policyIds);
+      }
+      const { data: collectionsByMonthData } = await collectionsByMonthQuery;
 
-      const { data: agentPerfData } = await supabase
+      // أداء الوكلاء
+      let agentPerfQuery = supabase
         .from('policies')
         .select('agent_id, users!policies_agent_id_fkey(full_name), sum_insured');
+      if (accessibleIds.length > 0) {
+        agentPerfQuery = agentPerfQuery.in('agent_id', accessibleIds);
+      }
+      const { data: agentPerfData } = await agentPerfQuery;
 
       const totalCollections = collectionsData?.reduce((sum, c) => sum + (c.amount || 0), 0) || 0;
       const totalDue = dueData?.reduce((sum, d) => sum + (d.amount || 0), 0) || 0;
@@ -95,261 +153,250 @@ export default function ReportsPage({ showError }: PageProps) {
         agentMap.set(name, existing);
       });
 
-      // Get collections per agent
-      const { data: agentCollections } = await supabase
+      // الحصول على التحصيلات لكل وكيل
+      let agentCollectionsQuery = supabase
         .from('collections')
-        .select('agent_id, amount, users!collections_agent_id_fkey(full_name)')
+        .select('policies(agent_id, users!policies_agent_id_fkey(full_name)), amount')
         .gte('collection_date', startOfYear)
         .lte('collection_date', endOfYear);
+      if (policyIds.length > 0) {
+        agentCollectionsQuery = agentCollectionsQuery.in('policy_id', policyIds);
+      }
+      const { data: agentCollections } = await agentCollectionsQuery;
 
-      (agentCollections as unknown as { users?: { full_name: string }; amount: number }[])?.forEach((c) => {
-        const name = c.users?.full_name || 'غير محدد';
+      agentCollections?.forEach((c: any) => {
+        const name = c.policies?.users?.full_name || 'غير محدد';
         const existing = agentMap.get(name) || { name, policies: 0, collections: 0 };
-        existing.collections += (c.amount || 0);
+        existing.collections += c.amount || 0;
         agentMap.set(name, existing);
       });
 
       setReportData({
         totalPolicies: policiesCount || 0,
         totalClients: clientsCount || 0,
-        totalCollections: totalCollections,
+        totalCollections,
         totalDueAmount: totalDue,
         totalOverdueAmount: totalOverdue,
         policiesByType: Array.from(typeMap.entries()).map(([name, count]) => ({ name, count })),
         collectionsByMonth: Array.from(monthMap.entries()).map(([month, amount]) => ({ month, amount })),
         agentPerformance: Array.from(agentMap.values()),
       });
+
+      setLoading(false);
     } catch (err) {
-      showError(err instanceof Error ? err.message : 'حدث خطأ في تحميل التقرير');
-    } finally {
+      console.error('Error fetching report data:', err);
+      showError('خطأ في جلب بيانات التقرير');
       setLoading(false);
     }
   };
 
-  const exportCSV = () => {
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('ar-EG', {
+      style: 'currency',
+      currency: 'EGP'
+    }).format(amount);
+  };
+
+  const downloadReport = () => {
     if (!reportData) return;
-    const rows = [
-      ['التقرير السنوي', year.toString()],
-      ['إجمالي الوثائق', reportData.totalPolicies.toString()],
-      ['إجمالي العملاء', reportData.totalClients.toString()],
-      ['إجمالي التحصيل', reportData.totalCollections.toString()],
-      ['إجمالي المستحق', reportData.totalDueAmount.toString()],
-      ['إجمالي المتأخر', reportData.totalOverdueAmount.toString()],
-      [],
-      ['الوثائق حسب النوع'],
-      ['النوع', 'العدد'],
-      ...reportData.policiesByType.map((t) => [t.name, t.count.toString()]),
-      [],
-      ['التحصيل الشهري'],
-      ['الشهر', 'المبلغ'],
-      ...reportData.collectionsByMonth.map((m) => [m.month, m.amount.toString()]),
-    ];
-    const csv = rows.map((r) => r.join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `report_${year}.csv`;
-    link.click();
+
+    const reportContent = `
+تقرير الأداء - السنة الأولى
+التاريخ: ${new Date().toLocaleDateString('ar-EG')}
+
+=== ملخص الإحصائيات ===
+إجمالي الوثائق: ${reportData.totalPolicies}
+إجمالي العملاء: ${reportData.totalClients}
+إجمالي المحصل: ${formatCurrency(reportData.totalCollections)}
+إجمالي الأقساط المستحقة: ${formatCurrency(reportData.totalDueAmount)}
+إجمالي الأقساط المتأخرة: ${formatCurrency(reportData.totalOverdueAmount)}
+
+=== الوثائق حسب النوع ===
+${reportData.policiesByType.map(p => `${p.name}: ${p.count}`).join('\n')}
+
+=== التحصيلات حسب الشهر ===
+${reportData.collectionsByMonth.map(c => `${c.month}: ${formatCurrency(c.amount)}`).join('\n')}
+
+=== أداء الوكلاء ===
+${reportData.agentPerformance.map(a => `${a.name}: ${a.policies} وثيقة، ${formatCurrency(a.collections)} محصل`).join('\n')}
+    `;
+
+    const element = document.createElement('a');
+    element.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(reportContent));
+    element.setAttribute('download', `report-${year}.txt`);
+    element.style.display = 'none';
+    document.body.appendChild(element);
+    element.click();
+    document.body.removeChild(element);
   };
 
   if (loading) {
     return (
       <div className="flex items-center justify-center h-96">
-        <div className="animate-spin w-8 h-8 border-2 border-emerald-600 border-t-transparent rounded-full" />
+        <div className="text-center space-y-4">
+          <div className="animate-spin w-12 h-12 border-4 border-blue-200 border-t-blue-600 rounded-full mx-auto"></div>
+          <p className="text-slate-600">جاري تحميل التقرير...</p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       {/* Page Header */}
-      <div className="page-header flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="page-header flex items-center justify-between">
         <div>
           <h2 className="page-title">التقارير</h2>
-          <p className="page-subtitle">تقارير وإحصائيات النظام</p>
+          <p className="page-subtitle">تقارير الأداء والإحصائيات للسنة الأولى</p>
         </div>
-        <div className="flex items-center gap-3">
-          <div className="relative flex-1 sm:flex-none">
-            <Calendar className="absolute right-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 pointer-events-none" />
-            <select
-              value={year}
-              onChange={(e) => setYear(Number(e.target.value))}
-              className="input-field pr-11 w-full sm:w-auto"
-            >
-              {[2024, 2025, 2026].map((y) => (
-                <option key={y} value={y}>{y}</option>
-              ))}
-            </select>
+        <button onClick={downloadReport} className="btn-primary">
+          <Download className="w-5 h-5" />
+          <span className="hidden sm:inline">تحميل التقرير</span>
+        </button>
+      </div>
+
+      {/* Year Filter */}
+      <div className="card p-4">
+        <label className="label">السنة</label>
+        <select 
+          value={year} 
+          onChange={(e) => setYear(Number(e.target.value))}
+          className="input-field"
+        >
+          {[2024, 2025, 2026, 2027].map(y => (
+            <option key={y} value={y}>{y}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Statistics Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="card p-6 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-slate-600">إجمالي الوثائق</span>
+            <FileText className="w-5 h-5 text-blue-600" />
           </div>
-          <button onClick={exportCSV} className="btn-secondary">
-            <Download className="w-5 h-5" />
-            <span className="hidden sm:inline">تصدير</span>
-          </button>
+          <p className="text-3xl font-bold text-slate-900">{reportData?.totalPolicies || 0}</p>
+        </div>
+
+        <div className="card p-6 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-slate-600">إجمالي العملاء</span>
+            <Users className="w-5 h-5 text-green-600" />
+          </div>
+          <p className="text-3xl font-bold text-slate-900">{reportData?.totalClients || 0}</p>
+        </div>
+
+        <div className="card p-6 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-slate-600">إجمالي المحصل</span>
+            <TrendingUp className="w-5 h-5 text-purple-600" />
+          </div>
+          <p className="text-3xl font-bold text-slate-900">{formatCurrency(reportData?.totalCollections || 0)}</p>
+        </div>
+
+        <div className="card p-6 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-slate-600">الأقساط المستحقة</span>
+            <Receipt className="w-5 h-5 text-yellow-600" />
+          </div>
+          <p className="text-3xl font-bold text-slate-900">{formatCurrency(reportData?.totalDueAmount || 0)}</p>
+        </div>
+
+        <div className="card p-6 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-slate-600">الأقساط المتأخرة</span>
+            <AlertCircle className="w-5 h-5 text-red-600" />
+          </div>
+          <p className="text-3xl font-bold text-slate-900">{formatCurrency(reportData?.totalOverdueAmount || 0)}</p>
+        </div>
+
+        <div className="card p-6 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-slate-600">نسبة التحصيل</span>
+            <BarChart3 className="w-5 h-5 text-indigo-600" />
+          </div>
+          <p className="text-3xl font-bold text-slate-900">
+            {reportData && reportData.totalDueAmount + reportData.totalCollections > 0
+              ? ((reportData.totalCollections / (reportData.totalDueAmount + reportData.totalCollections)) * 100).toFixed(1)
+              : '0'}%
+          </p>
         </div>
       </div>
 
-      {reportData && (
-        <>
-          {/* Stats Cards */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-            <div className="stat-card">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs text-slate-500 mb-1">إجمالي الوثائق</p>
-                  <p className="text-xl sm:text-2xl font-bold text-slate-900">{reportData.totalPolicies}</p>
-                </div>
-                <div className="stat-icon bg-sky-50 text-sky-700">
-                  <FileText className="w-6 h-6" />
-                </div>
-              </div>
-            </div>
-            <div className="stat-card">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs text-slate-500 mb-1">إجمالي العملاء</p>
-                  <p className="text-xl sm:text-2xl font-bold text-slate-900">{reportData.totalClients}</p>
-                </div>
-                <div className="stat-icon bg-emerald-50 text-emerald-700">
-                  <Users className="w-6 h-6" />
-                </div>
-              </div>
-            </div>
-            <div className="stat-card">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs text-slate-500 mb-1">إجمالي التحصيل</p>
-                  <p className="text-xl sm:text-2xl font-bold text-slate-900">{reportData.totalCollections.toLocaleString()}</p>
-                </div>
-                <div className="stat-icon bg-emerald-50 text-emerald-700">
-                  <Receipt className="w-6 h-6" />
-                </div>
-              </div>
-            </div>
-            <div className="stat-card">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs text-slate-500 mb-1">المستحق</p>
-                  <p className="text-xl sm:text-2xl font-bold text-slate-900">{reportData.totalDueAmount.toLocaleString()}</p>
-                </div>
-                <div className="stat-icon bg-amber-50 text-amber-700">
-                  <TrendingUp className="w-6 h-6" />
-                </div>
-              </div>
-            </div>
+      {/* Detailed Tables */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Policies by Type */}
+        <div className="card p-6 space-y-4">
+          <h3 className="text-lg font-bold text-slate-900">الوثائق حسب النوع</h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="border-b border-slate-200">
+                <tr>
+                  <th className="text-right py-2 px-4 font-semibold text-slate-900">النوع</th>
+                  <th className="text-right py-2 px-4 font-semibold text-slate-900">العدد</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reportData?.policiesByType.map((type) => (
+                  <tr key={type.name} className="border-b border-slate-100 hover:bg-slate-50">
+                    <td className="py-3 px-4 text-slate-900">{type.name}</td>
+                    <td className="py-3 px-4 text-slate-900 font-semibold">{type.count}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
+        </div>
 
-          {/* Overdue Alert */}
-          {reportData.totalOverdueAmount > 0 && (
-            <div className="card bg-red-50 border-red-100">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-red-100 rounded-xl flex items-center justify-center shrink-0">
-                  <AlertCircle className="w-5 h-5 text-red-700" />
-                </div>
-                <div>
-                  <p className="font-bold text-red-900">إجمالي المتأخرات</p>
-                  <p className="text-lg font-bold text-red-700">{reportData.totalOverdueAmount.toLocaleString()}</p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {/* Policies by Type */}
-            <div className="card">
-              <h3 className="section-title">الوثائق حسب النوع</h3>
-              {reportData.policiesByType.length === 0 ? (
-                <div className="empty-state py-8">
-                  <FileText className="empty-state-icon" />
-                  <p>لا توجد بيانات</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {reportData.policiesByType.map((type) => {
-                    const maxCount = Math.max(...reportData.policiesByType.map((t) => t.count));
-                    const pct = maxCount > 0 ? (type.count / maxCount) * 100 : 0;
-                    return (
-                      <div key={type.name} className="flex items-center gap-3">
-                        <span className="text-sm text-slate-600 w-24 sm:w-32 truncate">{type.name}</span>
-                        <div className="flex-1 h-5 sm:h-6 bg-slate-100 rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-emerald-500 rounded-full transition-all duration-500"
-                            style={{ width: `${Math.min(pct, 100)}%` }}
-                          />
-                        </div>
-                        <span className="text-sm font-bold text-slate-900 w-8 text-left">{type.count}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            {/* Collections by Month */}
-            <div className="card">
-              <h3 className="section-title">التحصيل الشهري</h3>
-              {reportData.collectionsByMonth.length === 0 ? (
-                <div className="empty-state py-8">
-                  <Receipt className="empty-state-icon" />
-                  <p>لا توجد بيانات</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {reportData.collectionsByMonth.map((month) => {
-                    const maxAmount = Math.max(...reportData.collectionsByMonth.map((m) => m.amount));
-                    const pct = maxAmount > 0 ? (month.amount / maxAmount) * 100 : 0;
-                    return (
-                      <div key={month.month} className="flex items-center gap-3">
-                        <span className="text-sm text-slate-600 w-16 sm:w-20">{month.month}</span>
-                        <div className="flex-1 h-5 sm:h-6 bg-slate-100 rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-sky-500 rounded-full transition-all duration-500"
-                            style={{ width: `${Math.min(pct, 100)}%` }}
-                          />
-                        </div>
-                        <span className="text-sm font-bold text-slate-900 w-16 text-left">{month.amount.toLocaleString()}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+        {/* Collections by Month */}
+        <div className="card p-6 space-y-4">
+          <h3 className="text-lg font-bold text-slate-900">التحصيلات حسب الشهر</h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="border-b border-slate-200">
+                <tr>
+                  <th className="text-right py-2 px-4 font-semibold text-slate-900">الشهر</th>
+                  <th className="text-right py-2 px-4 font-semibold text-slate-900">المبلغ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reportData?.collectionsByMonth.map((month) => (
+                  <tr key={month.month} className="border-b border-slate-100 hover:bg-slate-50">
+                    <td className="py-3 px-4 text-slate-900">{month.month}</td>
+                    <td className="py-3 px-4 text-slate-900 font-semibold">{formatCurrency(month.amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
+        </div>
+      </div>
 
-          {/* Agent Performance */}
-          <div className="card">
-            <h3 className="section-title">أداء الوكلاء</h3>
-            {reportData.agentPerformance.length === 0 ? (
-              <div className="empty-state py-8">
-                <Users className="empty-state-icon" />
-                <p>لا توجد بيانات</p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr>
-                      <th className="table-header">الوكيل</th>
-                      <th className="table-header">عدد الوثائق</th>
-                      <th className="table-header">إجمالي التحصيل</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {reportData.agentPerformance.map((agent) => (
-                      <tr key={agent.name} className="hover:bg-slate-50 transition-colors">
-                        <td className="table-cell font-medium">{agent.name}</td>
-                        <td className="table-cell">
-                          <span className="badge badge-info">{agent.policies}</span>
-                        </td>
-                        <td className="table-cell font-bold">{agent.collections.toLocaleString()}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </>
-      )}
+      {/* Agent Performance */}
+      <div className="card p-6 space-y-4">
+        <h3 className="text-lg font-bold text-slate-900">أداء الوكلاء</h3>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="border-b border-slate-200">
+              <tr>
+                <th className="text-right py-2 px-4 font-semibold text-slate-900">اسم الوكيل</th>
+                <th className="text-right py-2 px-4 font-semibold text-slate-900">عدد الوثائق</th>
+                <th className="text-right py-2 px-4 font-semibold text-slate-900">إجمالي المحصل</th>
+              </tr>
+            </thead>
+            <tbody>
+              {reportData?.agentPerformance.map((agent) => (
+                <tr key={agent.name} className="border-b border-slate-100 hover:bg-slate-50">
+                  <td className="py-3 px-4 text-slate-900">{agent.name}</td>
+                  <td className="py-3 px-4 text-slate-900 font-semibold">{agent.policies}</td>
+                  <td className="py-3 px-4 text-slate-900 font-semibold">{formatCurrency(agent.collections)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }

@@ -34,7 +34,7 @@ export default function DashboardPage(_props: PageProps) {
       const statsData = await fetchDashboardStats(user!);
       setStats(statsData);
 
-      // Recent policies - filtered by hierarchy
+      // الوثائق الحديثة - مرشحة حسب الهرمية
       const { getAccessibleUserIds } = await import('../lib/permissions');
       const accessibleIds = await getAccessibleUserIds(user!);
       let recentPoliciesQuery = supabase
@@ -48,12 +48,12 @@ export default function DashboardPage(_props: PageProps) {
       const { data: recentPoliciesData } = await recentPoliciesQuery;
       setRecentPolicies((recentPoliciesData as unknown as Policy[]) || []);
 
-      // Due installments (current month only) - filtered by hierarchy
+      // الأقساط المستحقة (الشهر الحالي فقط - السنة الأولى) - مرشحة حسب الهرمية
       const now = new Date();
       const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
       const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
       
-      // Get accessible policies
+      // الحصول على الوثائق المتاحة
       const { data: accessiblePolicies } = await supabase
         .from('policies')
         .select('id')
@@ -64,6 +64,7 @@ export default function DashboardPage(_props: PageProps) {
         .from('installments')
         .select('*, policies(policy_number, client_id, clients(full_name))')
         .eq('status', 'due')
+        .eq('insurance_year', 1)
         .gte('due_date', startOfMonth)
         .lte('due_date', endOfMonth)
         .order('due_date', { ascending: true })
@@ -79,7 +80,7 @@ export default function DashboardPage(_props: PageProps) {
       })) || [];
       setDueInstallments(transformedDue as unknown as Installment[]);
 
-      // Collections by month (current year) - filtered by hierarchy
+      // التحصيلات حسب الشهر (السنة الحالية - السنة الأولى فقط) - مرشحة حسب الهرمية
       const year = new Date().getFullYear();
       let collQuery = supabase
         .from('collections')
@@ -97,248 +98,224 @@ export default function DashboardPage(_props: PageProps) {
       });
       setCollectionsByMonth(Array.from(monthMap.entries()).map(([month, amount]) => ({ month, amount })));
 
-      // Policies by type - filtered by hierarchy
-      let typeQuery = supabase
+      // الوثائق حسب النوع - مرشحة حسب الهرمية
+      let typesQuery = supabase
         .from('policies')
-        .select('policy_type_id, policy_types(name)');
+        .select('policy_types(name)')
+        .order('created_at', { ascending: false });
       if (accessibleIds.length > 0) {
-        typeQuery = typeQuery.in('agent_id', accessibleIds);
+        typesQuery = typesQuery.in('agent_id', accessibleIds);
       }
-      const { data: typeData } = await typeQuery;
+      const { data: typesData } = await typesQuery;
       const typeMap = new Map<string, number>();
-      (typeData as unknown as { policy_types?: { name: string } }[])?.forEach((p) => {
-        const name = p.policy_types?.name || 'غير محدد';
-        typeMap.set(name, (typeMap.get(name) || 0) + 1);
+      (typesData as any[])?.forEach((p) => {
+        const type = p.policy_types?.name || 'غير محدد';
+        typeMap.set(type, (typeMap.get(type) || 0) + 1);
       });
       setPoliciesByType(Array.from(typeMap.entries()).map(([name, count]) => ({ name, count })));
+
+      setLoading(false);
     } catch (err) {
-      console.error('Dashboard error:', err);
-    } finally {
+      console.error('Error fetching dashboard data:', err);
       setLoading(false);
     }
   };
 
-  const statCards = stats ? [
-    { label: 'العملاء', value: stats.totalClients, icon: Users, color: 'bg-blue-500', lightColor: 'bg-blue-50 text-blue-700' },
-    { label: 'الوثائق', value: stats.totalPolicies, icon: FileText, color: 'bg-emerald-500', lightColor: 'bg-emerald-50 text-emerald-700' },
-    { label: 'إجمالي التحصيل', value: stats.totalCollections.toLocaleString(), icon: Receipt, color: 'bg-teal-500', lightColor: 'bg-teal-50 text-teal-700' },
-    { label: 'التحصيل الشهري', value: stats.monthlyCollections.toLocaleString(), icon: TrendingUp, color: 'bg-amber-500', lightColor: 'bg-amber-50 text-amber-700' },
-  ] : [];
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('ar-EG', {
+      style: 'currency',
+      currency: 'EGP'
+    }).format(amount);
+  };
 
   if (loading) {
     return (
       <div className="flex items-center justify-center h-96">
-        <div className="animate-spin w-10 h-10 border-3 border-emerald-600 border-t-transparent rounded-full" />
+        <div className="text-center space-y-4">
+          <div className="animate-spin w-12 h-12 border-4 border-blue-200 border-t-blue-600 rounded-full mx-auto"></div>
+          <p className="text-slate-600">جاري تحميل البيانات...</p>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      {/* Stats Grid */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        {statCards.map((card) => {
-          const Icon = card.icon;
-          return (
-            <div key={card.label} className="stat-card">
-              <div className="flex items-start justify-between">
-                <div className="min-w-0">
-                  <p className="text-xs text-slate-500 font-medium mb-1">{card.label}</p>
-                  <p className="text-xl lg:text-2xl font-extrabold text-slate-900">{card.value}</p>
-                </div>
-                <div className={`stat-icon ${card.lightColor}`}>
-                  <Icon className="w-6 h-6" />
-                </div>
-              </div>
-            </div>
-          );
-        })}
+      {/* Page Header */}
+      <div className="page-header">
+        <div>
+          <h2 className="page-title">لوحة التحكم</h2>
+          <p className="page-subtitle">ملخص الأداء والإحصائيات للسنة الأولى</p>
+        </div>
       </div>
 
-      {/* Target Progress */}
-      {stats && stats.targetAmount > 0 && (
-        <div className="card">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <Target className="w-5 h-5 text-emerald-600" />
-              <h3 className="font-bold text-slate-900">تحقيق التارجت السنوي</h3>
-            </div>
-            <span className="text-2xl font-extrabold text-emerald-600">{stats.achievementRate}%</span>
+      {/* Key Statistics */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="card p-6 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-slate-600">إجمالي الوثائق</span>
+            <FileText className="w-5 h-5 text-blue-600" />
           </div>
-          <div className="progress-bar mb-3">
-            <div className="progress-bar-fill bg-emerald-500" style={{ width: `${Math.min(stats.achievementRate, 100)}%` }} />
-          </div>
-          <div className="flex justify-between text-sm">
-            <span className="text-slate-500">المحقق: <span className="font-bold text-slate-800">{stats.achievedAmount.toLocaleString()}</span></span>
-            <span className="text-slate-500">التارجت: <span className="font-bold text-slate-800">{stats.targetAmount.toLocaleString()}</span></span>
-          </div>
+          <p className="text-3xl font-bold text-slate-900">{stats?.totalPolicies || 0}</p>
+          <p className="text-xs text-slate-500">في السنة الأولى</p>
         </div>
-      )}
 
-      {/* Alerts */}
-      {(stats && (stats.totalDueInstallments > 0 || stats.totalOverdueInstallments > 0)) && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {stats.totalDueInstallments > 0 && (
-            <div className="card bg-amber-50 border-amber-100">
-              <div className="flex items-center gap-3">
-                <Clock className="w-5 h-5 text-amber-600 shrink-0" />
-                <div>
-                  <p className="font-bold text-amber-900 text-sm">أقساط مستحقة</p>
-                  <p className="text-xs text-amber-700 mt-0.5">{stats.totalDueInstallments} قسط للتحصيل</p>
-                </div>
-              </div>
-            </div>
-          )}
-          {stats.totalOverdueInstallments > 0 && (
-            <div className="card bg-red-50 border-red-100">
-              <div className="flex items-center gap-3">
-                <AlertCircle className="w-5 h-5 text-red-600 shrink-0" />
-                <div>
-                  <p className="font-bold text-red-900 text-sm">أقساط متأخرة</p>
-                  <p className="text-xs text-red-700 mt-0.5">{stats.totalOverdueInstallments} قسط متأخر</p>
-                </div>
-              </div>
-            </div>
-          )}
+        <div className="card p-6 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-slate-600">إجمالي الأقساط المستحقة</span>
+            <Clock className="w-5 h-5 text-yellow-600" />
+          </div>
+          <p className="text-3xl font-bold text-slate-900">{formatCurrency(stats?.totalDueAmount || 0)}</p>
+          <p className="text-xs text-slate-500">{stats?.totalDueInstallments || 0} قسط</p>
         </div>
-      )}
+
+        <div className="card p-6 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-slate-600">إجمالي المحصل</span>
+            <TrendingUp className="w-5 h-5 text-green-600" />
+          </div>
+          <p className="text-3xl font-bold text-slate-900">{formatCurrency(stats?.totalCollectedAmount || 0)}</p>
+          <p className="text-xs text-slate-500">من التحصيلات</p>
+        </div>
+
+        <div className="card p-6 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-slate-600">نسبة التحصيل</span>
+            <Award className="w-5 h-5 text-purple-600" />
+          </div>
+          <p className="text-3xl font-bold text-slate-900">
+            {stats && stats.totalDueAmount + stats.totalCollectedAmount > 0
+              ? ((stats.totalCollectedAmount / (stats.totalDueAmount + stats.totalCollectedAmount)) * 100).toFixed(1)
+              : '0'}%
+          </p>
+          <p className="text-xs text-slate-500">من إجمالي الأقساط</p>
+        </div>
+      </div>
 
       {/* Charts Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Collections Chart */}
-        {collectionsByMonth.length > 0 && (
-          <div className="card">
-            <h3 className="section-title flex items-center gap-2">
-              <TrendingUp className="w-4 h-4 text-emerald-600" />
-              التحصيل الشهري
-            </h3>
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={collectionsByMonth}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                  <XAxis dataKey="month" tick={{ fontSize: 12 }} />
-                  <YAxis tick={{ fontSize: 12 }} />
-                  <Tooltip formatter={(value: number) => value.toLocaleString()} />
-                  <Bar dataKey="amount" fill="#059669" radius={[6, 6, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Collections by Month */}
+        <div className="card p-6 space-y-4">
+          <h3 className="text-lg font-bold text-slate-900">التحصيلات حسب الشهر</h3>
+          {collectionsByMonth.length > 0 ? (
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={collectionsByMonth}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                <XAxis dataKey="month" stroke="#64748b" />
+                <YAxis stroke="#64748b" />
+                <Tooltip 
+                  formatter={(value) => formatCurrency(value as number)}
+                  contentStyle={{ backgroundColor: '#1e293b', border: 'none', borderRadius: '8px', color: '#fff' }}
+                />
+                <Bar dataKey="amount" fill="#3b82f6" radius={[8, 8, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="h-64 flex items-center justify-center text-slate-500">
+              لا توجد بيانات تحصيلات
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
         {/* Policies by Type */}
-        {policiesByType.length > 0 && (
-          <div className="card">
-            <h3 className="section-title flex items-center gap-2">
-              <FileText className="w-4 h-4 text-emerald-600" />
-              الوثائق حسب النوع
-            </h3>
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={policiesByType} dataKey="count" nameKey="name" cx="50%" cy="50%" outerRadius={80} label>
-                    {policiesByType.map((_, i) => (
-                      <Cell key={i} fill={COLORS[i % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip />
-                </PieChart>
-              </ResponsiveContainer>
+        <div className="card p-6 space-y-4">
+          <h3 className="text-lg font-bold text-slate-900">الوثائق حسب النوع</h3>
+          {policiesByType.length > 0 ? (
+            <ResponsiveContainer width="100%" height={300}>
+              <PieChart>
+                <Pie
+                  data={policiesByType}
+                  cx="50%"
+                  cy="50%"
+                  labelLine={false}
+                  label={({ name, count }) => `${name}: ${count}`}
+                  outerRadius={80}
+                  fill="#8884d8"
+                  dataKey="count"
+                >
+                  {policiesByType.map((_, index) => (
+                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip />
+              </PieChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="h-64 flex items-center justify-center text-slate-500">
+              لا توجد بيانات وثائق
             </div>
-            <div className="flex flex-wrap gap-2 mt-3 justify-center">
-              {policiesByType.map((t, i) => (
-                <span key={t.name} className="chip" style={{ backgroundColor: COLORS[i % COLORS.length] + '20', color: COLORS[i % COLORS.length] }}>
-                  {t.name}: {t.count}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
-      {/* Best Agents */}
-      {stats && stats.bestAgents.length > 0 && (
-        <div className="card">
-          <h3 className="section-title flex items-center gap-2">
-            <Award className="w-4 h-4 text-amber-500" />
-            أفضل الوكلاء
-          </h3>
+      {/* Recent Data Sections */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Recent Policies */}
+        <div className="card p-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-bold text-slate-900">الوثائق الحديثة</h3>
+            <ChevronLeft className="w-5 h-5 text-slate-400" />
+          </div>
           <div className="space-y-3">
-            {stats.bestAgents.map((agent, i) => (
-              <div key={agent.name} className="flex items-center gap-3">
-                <span className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${i === 0 ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>
-                  {i + 1}
-                </span>
-                <span className="flex-1 text-sm font-semibold text-slate-800">{agent.name}</span>
-                <span className="text-xs text-slate-500">{agent.policies} وثيقة</span>
-                <ArrowUpRight className="w-4 h-4 text-emerald-500" />
+            {recentPolicies.length > 0 ? (
+              recentPolicies.map((policy) => (
+                <div key={policy.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                  <div>
+                    <p className="font-semibold text-slate-900">{policy.policy_number}</p>
+                    <p className="text-xs text-slate-600">
+                      {(policy as unknown as { clients?: { full_name: string } }).clients?.full_name}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-semibold text-slate-900">{formatCurrency(policy.annual_premium)}</p>
+                    <p className="text-xs text-slate-500">
+                      {new Date(policy.start_date).toLocaleDateString('ar-EG')}
+                    </p>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="text-center py-8 text-slate-500">
+                لا توجد وثائق حديثة
               </div>
-            ))}
+            )}
           </div>
         </div>
-      )}
 
-      {/* Recent Policies */}
-      <div className="card">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="section-title mb-0">آخر الوثائق</h3>
-          <span className="text-xs text-slate-400">آخر 5</span>
-        </div>
-        {recentPolicies.length === 0 ? (
-          <div className="empty-state">
-            <FileText className="empty-state-icon" />
-            <p className="text-sm">لا توجد وثائق مسجلة</p>
+        {/* Due Installments */}
+        <div className="card p-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-bold text-slate-900">الأقساط المستحقة</h3>
+            <AlertCircle className="w-5 h-5 text-red-600" />
           </div>
-        ) : (
           <div className="space-y-3">
-            {recentPolicies.map((policy: unknown) => {
-              const p = policy as Policy & { clients?: { full_name: string }; policy_types?: { name: string } };
-              return (
-                <div key={p.id} className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl">
-                  <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center shrink-0">
-                    <FileText className="w-5 h-5 text-emerald-600" />
+            {dueInstallments.length > 0 ? (
+              dueInstallments.map((installment) => (
+                <div key={installment.id} className="flex items-center justify-between p-3 bg-red-50 rounded-lg border-l-4 border-red-600">
+                  <div>
+                    <p className="font-semibold text-slate-900">
+                      {(installment as unknown as { policies?: { policy_number: string } }).policies?.policy_number}
+                    </p>
+                    <p className="text-xs text-slate-600">
+                      {(installment as unknown as { clients?: { full_name: string } }).clients?.full_name}
+                    </p>
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-bold text-slate-900 truncate">{p.policy_number}</p>
-                    <p className="text-xs text-slate-500">{p.clients?.full_name || '-'} · {p.policy_types?.name || '-'}</p>
+                  <div className="text-right">
+                    <p className="font-semibold text-slate-900">{formatCurrency(installment.amount || 0)}</p>
+                    <p className="text-xs text-red-600">
+                      {new Date(installment.due_date).toLocaleDateString('ar-EG')}
+                    </p>
                   </div>
-                  <span className="text-sm font-bold text-slate-800">{p.sum_insured.toLocaleString()}</span>
                 </div>
-              );
-            })}
+              ))
+            ) : (
+              <div className="text-center py-8 text-slate-500">
+                لا توجد أقساط مستحقة
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </div>
-
-      {/* Due Installments */}
-      {dueInstallments.length > 0 && (
-        <div className="card border-amber-100">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="section-title mb-0 flex items-center gap-2">
-              <Clock className="w-4 h-4 text-amber-500" />
-              أقساط مستحقة
-            </h3>
-            <ChevronLeft className="w-4 h-4 text-slate-400" />
-          </div>
-          <div className="space-y-3">
-            {dueInstallments.map((inst: unknown) => {
-              const i = inst as Installment & { policies?: { policy_number: string }; clients?: { full_name: string } };
-              return (
-                <div key={i.id} className="flex items-center gap-3 p-3 bg-amber-50/50 rounded-xl border border-amber-100">
-                  <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center shrink-0">
-                    <Receipt className="w-5 h-5 text-amber-600" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-bold text-slate-900 truncate">{i.policies?.policy_number || '-'}</p>
-                    <p className="text-xs text-slate-500">{i.clients?.full_name || '-'} · {new Date(i.due_date).toLocaleDateString('ar-EG')}</p>
-                  </div>
-                  <span className="text-sm font-bold text-amber-700">{i.amount.toLocaleString()}</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
