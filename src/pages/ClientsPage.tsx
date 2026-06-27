@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { supabase, type Client, type User, resolveHierarchy } from '../lib/supabase';
+import { supabase, type Client, type User, resolveHierarchy, ROLE_LABELS, type UserRole } from '../lib/supabase';
 import { useAuthContext } from '../contexts/AuthContext';
 import type { PageProps } from '../types';
 import {
@@ -32,7 +32,40 @@ export default function ClientsPage({ showSuccess, showError }: PageProps) {
   };
 
   const fetchAgents = async () => {
-    const { data } = await supabase.from('users').select('*').eq('role', 'agent');
+    if (!currentUser) return;
+
+    let query = supabase.from('users').select('*').eq('is_active', true);
+
+    // Filter based on role
+    if (currentUser.role === 'group_leader') {
+      // Agents under this group leader + the group leader themselves
+      query = query.or(`manager_id.eq.${currentUser.id},id.eq.${currentUser.id}`);
+    } else if (currentUser.role === 'general_supervisor' || currentUser.role === 'supervisor') {
+      // For both supervisor and general supervisor, fetch the full tree below them
+      const { data: allUsers } = await supabase.from('users').select('*').eq('is_active', true);
+      if (allUsers) {
+        const getHierarchy = (managerId: string): string[] => {
+          const children = allUsers.filter(u => u.manager_id === managerId);
+          let ids = children.map(c => c.id);
+          children.forEach(c => {
+            ids = [...ids, ...getHierarchy(c.id)];
+          });
+          return ids;
+        };
+        const hierarchyIds = [currentUser.id, ...getHierarchy(currentUser.id)];
+        setAgents(allUsers.filter(u => hierarchyIds.includes(u.id)));
+        return;
+      }
+    } else if (currentUser.role === 'dev_manager' || currentUser.role === 'super_admin') {
+      // Dev manager or Super Admin: can see everyone who can own a client
+      // Usually everyone except super_admin themselves unless specified
+      query = query.neq('role', 'super_admin').or(`role.neq.super_admin,id.eq.${currentUser.id}`);
+    } else if (currentUser.role === 'agent') {
+      setAgents([currentUser]);
+      return;
+    }
+
+    const { data } = await query.order('full_name');
     setAgents((data as User[]) || []);
   };
 
@@ -155,13 +188,17 @@ export default function ClientsPage({ showSuccess, showError }: PageProps) {
                   <input type="date" value={formData.date_of_birth} onChange={(e) => setFormData({ ...formData, date_of_birth: e.target.value })} className="input-field" />
                 </div>
                 <div>
-                  <label className="label">الوكيل *</label>
+                  <label className="label">الشخص المسؤول (الوكيل) *</label>
                   {isAgent ? (
                     <input value={currentUser?.full_name || ''} className="input-field bg-slate-50 text-slate-500" readOnly disabled />
                   ) : (
                     <select value={formData.agent_id} onChange={(e) => setFormData({ ...formData, agent_id: e.target.value })} className="input-field" required>
-                      <option value="">اختر الوكيل</option>
-                      {agents.map((a) => <option key={a.id} value={a.id}>{a.full_name}</option>)}
+                      <option value="">اختر الشخص المسؤول</option>
+                      {agents.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.full_name} ({ROLE_LABELS[a.role as UserRole] || a.role})
+                        </option>
+                      ))}
                     </select>
                   )}
                 </div>

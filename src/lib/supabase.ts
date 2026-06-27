@@ -160,47 +160,37 @@ export function canManageRole(currentRole: UserRole, targetRole: UserRole): bool
   return ROLE_HIERARCHY[currentRole] > ROLE_HIERARCHY[targetRole];
 }
 
-export async function resolveHierarchy(agentId: string): Promise<{ group_leader_id: string | null; supervisor_id: string | null; general_supervisor_id: string | null; dev_manager_id: string | null }> {
-  const { data: agent } = await supabase.from('users').select('manager_id').eq('id', agentId).maybeSingle();
-  if (!agent?.manager_id) return { group_leader_id: null, supervisor_id: null, general_supervisor_id: null, dev_manager_id: null };
+export async function resolveHierarchy(userId: string): Promise<{ group_leader_id: string | null; supervisor_id: string | null; general_supervisor_id: string | null; dev_manager_id: string | null }> {
+  const hierarchy = {
+    group_leader_id: null as string | null,
+    supervisor_id: null as string | null,
+    general_supervisor_id: null as string | null,
+    dev_manager_id: null as string | null,
+  };
 
-  const { data: groupLeader } = await supabase.from('users').select('id, manager_id, role').eq('id', agent.manager_id).maybeSingle();
-  if (!groupLeader) return { group_leader_id: null, supervisor_id: null, general_supervisor_id: null, dev_manager_id: null };
+  const { data: user } = await supabase.from('users').select('id, role, manager_id').eq('id', userId).maybeSingle();
+  if (!user) return hierarchy;
 
-  if (groupLeader.role === 'group_leader') {
-    if (!groupLeader.manager_id) {
-      return { group_leader_id: groupLeader.id, supervisor_id: null, general_supervisor_id: null, dev_manager_id: null };
-    }
-    const { data: supervisor } = await supabase.from('users').select('id, manager_id, role').eq('id', groupLeader.manager_id).maybeSingle();
-    if (!supervisor) return { group_leader_id: groupLeader.id, supervisor_id: null, general_supervisor_id: null, dev_manager_id: null };
+  // If the user itself has a role, set it in the hierarchy
+  if (user.role === 'group_leader') hierarchy.group_leader_id = user.id;
+  else if (user.role === 'supervisor') hierarchy.supervisor_id = user.id;
+  else if (user.role === 'general_supervisor') hierarchy.general_supervisor_id = user.id;
+  else if (user.role === 'dev_manager') hierarchy.dev_manager_id = user.id;
 
-    if (supervisor.role === 'supervisor') {
-      if (!supervisor.manager_id) {
-        return { group_leader_id: groupLeader.id, supervisor_id: supervisor.id, general_supervisor_id: null, dev_manager_id: null };
-      }
-      const { data: generalSupervisor } = await supabase.from('users').select('id, manager_id, role').eq('id', supervisor.manager_id).maybeSingle();
-      if (!generalSupervisor) return { group_leader_id: groupLeader.id, supervisor_id: supervisor.id, general_supervisor_id: null, dev_manager_id: null };
+  let currentManagerId = user.manager_id;
+  while (currentManagerId) {
+    const { data: manager } = await supabase.from('users').select('id, role, manager_id').eq('id', currentManagerId).maybeSingle();
+    if (!manager) break;
 
-      if (generalSupervisor.role === 'general_supervisor') {
-        if (!generalSupervisor.manager_id) {
-          return { group_leader_id: groupLeader.id, supervisor_id: supervisor.id, general_supervisor_id: generalSupervisor.id, dev_manager_id: null };
-        }
-        const { data: devManager } = await supabase.from('users').select('id, role').eq('id', generalSupervisor.manager_id).maybeSingle();
-        return {
-          group_leader_id: groupLeader.id,
-          supervisor_id: supervisor.id,
-          general_supervisor_id: generalSupervisor.id,
-          dev_manager_id: devManager?.role === 'dev_manager' ? devManager.id : null,
-        };
-      } else {
-        return { group_leader_id: groupLeader.id, supervisor_id: supervisor.id, general_supervisor_id: null, dev_manager_id: null };
-      }
-    } else {
-      return { group_leader_id: groupLeader.id, supervisor_id: null, general_supervisor_id: null, dev_manager_id: null };
-    }
+    if (manager.role === 'group_leader' && !hierarchy.group_leader_id) hierarchy.group_leader_id = manager.id;
+    else if (manager.role === 'supervisor' && !hierarchy.supervisor_id) hierarchy.supervisor_id = manager.id;
+    else if (manager.role === 'general_supervisor' && !hierarchy.general_supervisor_id) hierarchy.general_supervisor_id = manager.id;
+    else if (manager.role === 'dev_manager' && !hierarchy.dev_manager_id) hierarchy.dev_manager_id = manager.id;
+
+    currentManagerId = manager.manager_id;
   }
 
-  return { group_leader_id: null, supervisor_id: null, general_supervisor_id: null, dev_manager_id: null };
+  return hierarchy;
 }
 
 export function getRoleLabel(role: UserRole): string {
