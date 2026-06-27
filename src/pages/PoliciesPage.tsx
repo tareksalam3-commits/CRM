@@ -57,40 +57,12 @@ export default function PoliciesPage({ showSuccess, showError }: PageProps) {
     }
   };
 
-  const generateInstallments = async (policyId: string) => {
-    const installments = [];
-    const startDate = new Date(formData.start_date);
-    const duration = Number(formData.duration_years) || 1;
-    const periodic = calculatePeriodicPremium();
-
-    let frequencyMonths: number;
-    switch (formData.payment_method) {
-      case 'monthly': frequencyMonths = 1; break;
-      case 'quarterly': frequencyMonths = 3; break;
-      case 'semi_annual': frequencyMonths = 6; break;
-      case 'annual': frequencyMonths = 12; break;
-      default: frequencyMonths = 12;
-    }
-
-    const totalInstallments = Math.ceil((duration * 12) / frequencyMonths);
-
-    for (let i = 0; i < totalInstallments; i++) {
-      const dueDate = new Date(startDate);
-      dueDate.setMonth(dueDate.getMonth() + (i * frequencyMonths));
-      const insuranceYear = Math.floor((i * frequencyMonths) / 12) + 1;
-
-      installments.push({
-        policy_id: policyId,
-        installment_number: i + 1,
-        due_date: dueDate.toISOString().split('T')[0],
-        amount: periodic,
-        insurance_year: insuranceYear,
-      });
-    }
-
-    const { error } = await supabase.from('installments').insert(installments);
-    if (error) throw error;
-  };
+  // ملاحظة هامة: لا تقم بإدخال الأقساط يدويًا هنا. توليد الأقساط يتم تلقائيًا
+  // عبر Trigger في قاعدة البيانات (trigger_generate_installments على جدول policies،
+  // migration 004_functions_triggers.sql). أي محاولة إدخال يدوي إضافي من الواجهة
+  // ستتعارض مع قيد UNIQUE(policy_id, installment_number) وتفشل بخطأ "duplicate key"
+  // فور إنشاء كل وثيقة، رغم أن الوثيقة والأقساط الصحيحة قد حُفظت بالفعل من الـ Trigger.
+  // تم حذف الدالة المكررة بعد رصد هذا الخطأ في اختبار دورة عمل الوكيل.
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -120,9 +92,9 @@ export default function PoliciesPage({ showSuccess, showError }: PageProps) {
         if (error) throw error;
         showSuccess('تم تحديث الوثيقة بنجاح');
       } else {
-        const { data, error } = await supabase.from('policies').insert(payload).select('id').single();
+        const { error } = await supabase.from('policies').insert(payload);
         if (error) throw error;
-        if (data?.id) await generateInstallments(data.id);
+        // الأقساط تُنشأ تلقائيًا من Trigger في قاعدة البيانات (لا حاجة لإدخال يدوي هنا)
         showSuccess('تم إنشاء الوثيقة والأقساط بنجاح');
       }
       closeForm();

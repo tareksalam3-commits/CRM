@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase, type Client, type User, resolveHierarchy } from '../lib/supabase';
+import { useAuthContext } from '../contexts/AuthContext';
 import type { PageProps } from '../types';
 import {
   Users, Plus, Pencil, Trash2, X, Check, Search, Phone, Mail,
@@ -7,6 +8,8 @@ import {
 } from 'lucide-react';
 
 export default function ClientsPage({ showSuccess, showError }: PageProps) {
+  const { user: currentUser } = useAuthContext();
+  const isAgent = currentUser?.role === 'agent';
   const [clients, setClients] = useState<Client[]>([]);
   const [agents, setAgents] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
@@ -16,7 +19,7 @@ export default function ClientsPage({ showSuccess, showError }: PageProps) {
   const [editingClient, setEditingClient] = useState<Client | null>(null);
   const [search, setSearch] = useState('');
   const [formData, setFormData] = useState({
-    full_name: '', phone: '', email: '', id_number: '', address: '', date_of_birth: '', agent_id: '',
+    full_name: '', phone: '', email: '', id_number: '', address: '', date_of_birth: '', agent_id: isAgent ? currentUser!.id : '',
   });
 
   useEffect(() => { fetchClients(); fetchAgents(); }, []);
@@ -60,7 +63,7 @@ export default function ClientsPage({ showSuccess, showError }: PageProps) {
 
   const closeForm = () => {
     setShowForm(false); setEditingClient(null);
-    setFormData({ full_name: '', phone: '', email: '', id_number: '', address: '', date_of_birth: '', agent_id: '' });
+    setFormData({ full_name: '', phone: '', email: '', id_number: '', address: '', date_of_birth: '', agent_id: isAgent ? currentUser!.id : '' });
   };
 
   const handleEdit = (c: Client) => {
@@ -107,7 +110,7 @@ export default function ClientsPage({ showSuccess, showError }: PageProps) {
           <h2 className="page-title">العملاء</h2>
           <p className="page-subtitle">إدارة بيانات العملاء</p>
         </div>
-        <button onClick={() => { setShowForm(true); setEditingClient(null); setFormData({ full_name: '', phone: '', email: '', id_number: '', address: '', date_of_birth: '', agent_id: '' }); }} className="btn-primary">
+        <button onClick={() => { setShowForm(true); setEditingClient(null); setFormData({ full_name: '', phone: '', email: '', id_number: '', address: '', date_of_birth: '', agent_id: isAgent ? currentUser!.id : '' }); }} className="btn-primary">
           <Plus className="w-5 h-5" />
           <span className="hidden sm:inline">عميل جديد</span>
         </button>
@@ -153,10 +156,14 @@ export default function ClientsPage({ showSuccess, showError }: PageProps) {
                 </div>
                 <div>
                   <label className="label">الوكيل *</label>
-                  <select value={formData.agent_id} onChange={(e) => setFormData({ ...formData, agent_id: e.target.value })} className="input-field" required>
-                    <option value="">اختر الوكيل</option>
-                    {agents.map((a) => <option key={a.id} value={a.id}>{a.full_name}</option>)}
-                  </select>
+                  {isAgent ? (
+                    <input value={currentUser?.full_name || ''} className="input-field bg-slate-50 text-slate-500" readOnly disabled />
+                  ) : (
+                    <select value={formData.agent_id} onChange={(e) => setFormData({ ...formData, agent_id: e.target.value })} className="input-field" required>
+                      <option value="">اختر الوكيل</option>
+                      {agents.map((a) => <option key={a.id} value={a.id}>{a.full_name}</option>)}
+                    </select>
+                  )}
                 </div>
               </div>
               <div>
