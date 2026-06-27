@@ -6,6 +6,13 @@ module.exports = {
       fontFamily: {
         cairo: ['Cairo', 'sans-serif'],
       },
+      fontSize: {
+        'sidebar-label': ['0.875rem', { lineHeight: '1.25rem', fontWeight: '700' }],
+      },
+      boxShadow: {
+        'sidebar-active': '0 4px 12px rgba(16, 185, 129, 0.15)',
+        'sidebar-hover': '0 2px 8px rgba(0, 0, 0, 0.08)',
+      },
       colors: {
         primary: {
           50: '#ecfdf5',
