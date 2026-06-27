@@ -29,18 +29,39 @@ export default function CollectionsPage({ showSuccess, showError }: PageProps) {
   const [stats, setStats] = useState({ totalDue: 0, totalCollected: 0, todayCollected: 0 });
 
   useEffect(() => {
-    fetchDueInstallments();
-    fetchCollections();
-    fetchCollectors();
-  }, []);
+    if (currentUser) {
+      fetchDueInstallments();
+      fetchCollections();
+      fetchCollectors();
+    }
+  }, [currentUser]);
 
   const fetchDueInstallments = async () => {
     setLoading(true);
-    const { data } = await supabase
+    if (!currentUser) return;
+    
+    const { getAccessibleUserIds } = await import('../lib/permissions');
+    const accessibleIds = await getAccessibleUserIds(currentUser);
+    
+    // Get accessible policies
+    let policiesQuery = supabase.from('policies').select('id').order('created_at', { ascending: false });
+    if (accessibleIds.length > 0) {
+      policiesQuery = policiesQuery.in('agent_id', accessibleIds);
+    }
+    const { data: accessiblePolicies } = await policiesQuery;
+    const policyIds = accessiblePolicies?.map(p => p.id) || [];
+    
+    let query = supabase
       .from('installments')
       .select('*, policies(policy_number, client_id, agent_id, clients(full_name))')
       .eq('status', 'due')
       .order('due_date', { ascending: true });
+    
+    if (policyIds.length > 0) {
+      query = query.in('policy_id', policyIds);
+    }
+    
+    const { data } = await query;
     
     // Transform data to match DueInstallment interface if needed
     const transformedData = (data as any[])?.map(inst => ({
@@ -53,10 +74,29 @@ export default function CollectionsPage({ showSuccess, showError }: PageProps) {
   };
 
   const fetchCollections = async () => {
-    const { data } = await supabase
+    if (!currentUser) return;
+    
+    const { getAccessibleUserIds } = await import('../lib/permissions');
+    const accessibleIds = await getAccessibleUserIds(currentUser);
+    
+    // Get accessible policies
+    let policiesQuery = supabase.from('policies').select('id');
+    if (accessibleIds.length > 0) {
+      policiesQuery = policiesQuery.in('agent_id', accessibleIds);
+    }
+    const { data: accessiblePolicies } = await policiesQuery;
+    const policyIds = accessiblePolicies?.map(p => p.id) || [];
+    
+    let query = supabase
       .from('collections')
       .select('*, policies(policy_number, clients(full_name)), users(full_name)')
       .order('created_at', { ascending: false });
+    
+    if (policyIds.length > 0) {
+      query = query.in('policy_id', policyIds);
+    }
+    
+    const { data } = await query;
     
     const transformedData = (data as any[])?.map(coll => ({
       ...coll,
@@ -74,7 +114,17 @@ export default function CollectionsPage({ showSuccess, showError }: PageProps) {
   };
 
   const fetchCollectors = async () => {
-    const { data } = await supabase.from('users').select('*').eq('is_active', true);
+    if (!currentUser) return;
+    
+    const { getAccessibleUserIds } = await import('../lib/permissions');
+    const accessibleIds = await getAccessibleUserIds(currentUser);
+    
+    let query = supabase.from('users').select('*').eq('is_active', true);
+    if (accessibleIds.length > 0) {
+      query = query.in('id', accessibleIds);
+    }
+    
+    const { data } = await query;
     setCollectors((data as User[]) || []);
   };
 

@@ -22,11 +22,21 @@ export default function ClientsPage({ showSuccess, showError }: PageProps) {
     full_name: '', phone: '', email: '', id_number: '', address: '', date_of_birth: '', agent_id: isAgent ? currentUser!.id : '',
   });
 
-  useEffect(() => { fetchClients(); fetchAgents(); }, []);
+  useEffect(() => { if (currentUser) { fetchClients(); fetchAgents(); } }, [currentUser]);
 
   const fetchClients = async () => {
     setLoading(true);
-    const { data } = await supabase.from('clients').select('*, users!clients_agent_id_fkey(full_name)').order('created_at', { ascending: false });
+    if (!currentUser) return;
+    
+    const { getAccessibleUserIds } = await import('../lib/permissions');
+    const accessibleIds = await getAccessibleUserIds(currentUser);
+    
+    let query = supabase.from('clients').select('*, users!clients_agent_id_fkey(full_name)').order('created_at', { ascending: false });
+    if (accessibleIds.length > 0) {
+      query = query.in('agent_id', accessibleIds);
+    }
+    
+    const { data } = await query;
     setClients((data as unknown as Client[]) || []);
     setLoading(false);
   };
@@ -34,38 +44,21 @@ export default function ClientsPage({ showSuccess, showError }: PageProps) {
   const fetchAgents = async () => {
     if (!currentUser) return;
 
-    let query = supabase.from('users').select('*').eq('is_active', true);
-
-    // Filter based on role
-    if (currentUser.role === 'group_leader') {
-      // Agents under this group leader + the group leader themselves
-      query = query.or(`manager_id.eq.${currentUser.id},id.eq.${currentUser.id}`);
-    } else if (currentUser.role === 'general_supervisor' || currentUser.role === 'supervisor') {
-      // For both supervisor and general supervisor, fetch the full tree below them
-      const { data: allUsers } = await supabase.from('users').select('*').eq('is_active', true);
-      if (allUsers) {
-        const getHierarchy = (managerId: string): string[] => {
-          const children = allUsers.filter(u => u.manager_id === managerId);
-          let ids = children.map(c => c.id);
-          children.forEach(c => {
-            ids = [...ids, ...getHierarchy(c.id)];
-          });
-          return ids;
-        };
-        const hierarchyIds = [currentUser.id, ...getHierarchy(currentUser.id)];
-        setAgents(allUsers.filter(u => hierarchyIds.includes(u.id)));
-        return;
-      }
-    } else if (currentUser.role === 'dev_manager' || currentUser.role === 'super_admin') {
-      // Dev manager or Super Admin: can see everyone who can own a client
-      // Usually everyone except super_admin themselves unless specified
-      query = query.neq('role', 'super_admin').or(`role.neq.super_admin,id.eq.${currentUser.id}`);
-    } else if (currentUser.role === 'agent') {
-      setAgents([currentUser]);
+    const { getAccessibleUserIds } = await import('../lib/permissions');
+    const accessibleIds = await getAccessibleUserIds(currentUser);
+    
+    if (accessibleIds.length === 0) {
+      setAgents([]);
       return;
     }
 
-    const { data } = await query.order('full_name');
+    const { data } = await supabase
+      .from('users')
+      .select('*')
+      .in('id', accessibleIds)
+      .eq('is_active', true)
+      .order('full_name');
+    
     setAgents((data as User[]) || []);
   };
 

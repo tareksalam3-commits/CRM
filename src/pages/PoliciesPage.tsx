@@ -22,20 +22,43 @@ export default function PoliciesPage({ showSuccess, showError }: PageProps) {
     annual_premium: 0, periodic_premium: 0, sum_insured: 0,
   });
 
-  useEffect(() => { fetchPolicies(); fetchClients(); fetchPolicyTypes(); }, []);
+  const { user: currentUser } = useAuthContext();
+  
+  useEffect(() => { if (currentUser) { fetchPolicies(); fetchClients(); fetchPolicyTypes(); } }, [currentUser]);
 
   const fetchPolicies = async () => {
     setLoading(true);
-    const { data } = await supabase
+    if (!currentUser) return;
+    
+    const { getAccessibleUserIds } = await import('../lib/permissions');
+    const accessibleIds = await getAccessibleUserIds(currentUser);
+    
+    let query = supabase
       .from('policies')
       .select('*, clients(full_name), policy_types(name), agent:users!policies_agent_id_fkey(full_name), group_leader:users!policies_group_leader_id_fkey(full_name), supervisor:users!policies_supervisor_id_fkey(full_name)')
       .order('created_at', { ascending: false });
+    
+    if (accessibleIds.length > 0) {
+      query = query.in('agent_id', accessibleIds);
+    }
+    
+    const { data } = await query;
     setPolicies((data as unknown as Policy[]) || []);
     setLoading(false);
   };
 
   const fetchClients = async () => {
-    const { data } = await supabase.from('clients').select('*').order('full_name');
+    if (!currentUser) return;
+    
+    const { getAccessibleUserIds } = await import('../lib/permissions');
+    const accessibleIds = await getAccessibleUserIds(currentUser);
+    
+    let query = supabase.from('clients').select('*').order('full_name');
+    if (accessibleIds.length > 0) {
+      query = query.in('agent_id', accessibleIds);
+    }
+    
+    const { data } = await query;
     setClients((data as Client[]) || []);
   };
 

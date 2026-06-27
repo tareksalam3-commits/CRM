@@ -31,22 +31,36 @@ export default function DashboardPage(_props: PageProps) {
   const fetchAllData = async () => {
     setLoading(true);
     try {
-      const statsData = await fetchDashboardStats(user!.id, user!.role);
+      const statsData = await fetchDashboardStats(user!);
       setStats(statsData);
 
-      // Recent policies
-      const { data: recentPoliciesData } = await supabase
+      // Recent policies - filtered by hierarchy
+      const { getAccessibleUserIds } = await import('../lib/permissions');
+      const accessibleIds = await getAccessibleUserIds(user!);
+      let recentPoliciesQuery = supabase
         .from('policies')
         .select('*, clients(full_name), policy_types(name)')
         .order('created_at', { ascending: false })
         .limit(5);
+      if (accessibleIds.length > 0) {
+        recentPoliciesQuery = recentPoliciesQuery.in('agent_id', accessibleIds);
+      }
+      const { data: recentPoliciesData } = await recentPoliciesQuery;
       setRecentPolicies((recentPoliciesData as unknown as Policy[]) || []);
 
-      // Due installments (current month only)
+      // Due installments (current month only) - filtered by hierarchy
       const now = new Date();
       const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
       const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
-      const { data: dueData } = await supabase
+      
+      // Get accessible policies
+      const { data: accessiblePolicies } = await supabase
+        .from('policies')
+        .select('id')
+        .in('agent_id', accessibleIds);
+      const policyIds = accessiblePolicies?.map(p => p.id) || [];
+      
+      let dueQuery = supabase
         .from('installments')
         .select('*, policies(policy_number, client_id, clients(full_name))')
         .eq('status', 'due')
@@ -54,6 +68,10 @@ export default function DashboardPage(_props: PageProps) {
         .lte('due_date', endOfMonth)
         .order('due_date', { ascending: true })
         .limit(5);
+      if (policyIds.length > 0) {
+        dueQuery = dueQuery.in('policy_id', policyIds);
+      }
+      const { data: dueData } = await dueQuery;
       
       const transformedDue = (dueData as any[])?.map(inst => ({
         ...inst,
@@ -61,13 +79,17 @@ export default function DashboardPage(_props: PageProps) {
       })) || [];
       setDueInstallments(transformedDue as unknown as Installment[]);
 
-      // Collections by month (current year)
+      // Collections by month (current year) - filtered by hierarchy
       const year = new Date().getFullYear();
-      const { data: collData } = await supabase
+      let collQuery = supabase
         .from('collections')
         .select('collection_date, amount')
         .gte('collection_date', `${year}-01-01`)
         .lte('collection_date', `${year}-12-31`);
+      if (policyIds.length > 0) {
+        collQuery = collQuery.in('policy_id', policyIds);
+      }
+      const { data: collData } = await collQuery;
       const monthMap = new Map<string, number>();
       collData?.forEach((c) => {
         const month = new Date(c.collection_date).toLocaleDateString('ar-EG', { month: 'short' });
@@ -75,10 +97,14 @@ export default function DashboardPage(_props: PageProps) {
       });
       setCollectionsByMonth(Array.from(monthMap.entries()).map(([month, amount]) => ({ month, amount })));
 
-      // Policies by type
-      const { data: typeData } = await supabase
+      // Policies by type - filtered by hierarchy
+      let typeQuery = supabase
         .from('policies')
         .select('policy_type_id, policy_types(name)');
+      if (accessibleIds.length > 0) {
+        typeQuery = typeQuery.in('agent_id', accessibleIds);
+      }
+      const { data: typeData } = await typeQuery;
       const typeMap = new Map<string, number>();
       (typeData as unknown as { policy_types?: { name: string } }[])?.forEach((p) => {
         const name = p.policy_types?.name || 'غير محدد';
