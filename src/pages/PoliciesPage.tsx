@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase, type Policy, type Client, type PolicyType, PAYMENT_METHOD_LABELS } from '../lib/supabase';
+import { useAuthContext } from '../contexts/AuthContext';
 import type { PageProps } from '../types';
 import {
   FileText, Plus, Pencil, Trash2, X, Check, Search, Eye,

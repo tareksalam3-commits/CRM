@@ -4,7 +4,7 @@ import { useAuthContext } from '../contexts/AuthContext';
 import type { PageProps } from '../types';
 import {
   Receipt, X, Check, Search, RotateCcw, DollarSign, Clock, Calendar,
-  FileText, UserCircle, ChevronDown, ChevronUp, TrendingUp, AlertCircle,
+  FileText, UserCircle, ChevronDown, ChevronUp, TrendingUp, AlertCircle, Eye,
 } from 'lucide-react';
 
 interface DueInstallment extends Installment {
